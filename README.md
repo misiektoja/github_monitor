@@ -17,7 +17,7 @@ github_monitor is a Python script which allows for real-time monitoring of Githu
 - Possibility to control the running copy of the script via signals
 
 <p align="center">
-   <img src="./assets/github_monitor.png" alt="github_monitor_screenshot" width="80%"/>
+   <img src="./assets/github_monitor.png" alt="github_monitor_screenshot" width="90%"/>
 </p>
 
 ## Change Log
