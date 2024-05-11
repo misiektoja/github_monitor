@@ -191,7 +191,7 @@ Make sure you defined your SMTP settings earlier (see [SMTP settings](#smtp-sett
 Example email:
 
 <p align="center">
-   <img src="./assets/github_monitor_email_notifications.png" alt="github_monitor_email_notifications" width="85%"/>
+   <img src="./assets/github_monitor_email_notifications.png" alt="github_monitor_email_notifications" width="90%"/>
 </p>
 
 
