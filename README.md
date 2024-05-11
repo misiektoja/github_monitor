@@ -17,7 +17,7 @@ github_monitor is a Python script which allows for real-time monitoring of Githu
 - Possibility to control the running copy of the script via signals
 
 <p align="center">
-   <img src="./assets/github_monitor.png" alt="github_monitor_screenshot" width="90%"/>
+   <img src="./assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
 </p>
 
 ## Change Log
@@ -145,7 +145,7 @@ If you want to display list of public repositories for the user, then use **-r**
 ```
 
 <p align="center">
-   <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="80%"/>
+   <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="90%"/>
 </p>
 
 If you want to display list of repositories starred by the user, then use **-g** parameter:
