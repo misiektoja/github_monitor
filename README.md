@@ -82,7 +82,7 @@ EVENTS_TO_MONITOR=['PushEvent','PullRequestEvent', 'IssuesEvent', 'ForkEvent', '
 
 ### Timezone
 
-You can specify your local time zone so the tool converts Github API timestamps to your time:
+It is recommended to specify your local time zone so the tool converts Github API timestamps to your time:
 
 ```
 LOCAL_TIMEZONE='Europe/Warsaw'
