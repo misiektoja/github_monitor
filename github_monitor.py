@@ -10,6 +10,7 @@ Python pip3 requirements:
 
 PyGithub
 pytz
+tzlocal
 python-dateutil
 requests
 """
@@ -43,8 +44,9 @@ RECEIVER_EMAIL="your_receiver_email"
 # How often do we perform checks for user activity; in seconds
 GITHUB_CHECK_INTERVAL=600 # 10 mins
 
-# Specify your local time zone so we convert Github API timestamps to your time
-LOCAL_TIMEZONE='Europe/Warsaw'
+# Specify your local time zone so we convert Github API timestamps to your time (for example: 'Europe/Warsaw')
+# If you leave it as 'Auto' we will try to automatically detect the local timezone
+LOCAL_TIMEZONE='Auto'
 
 # What kind of events we want to monitor, if you put ALL then all of them will be monitored
 EVENTS_TO_MONITOR=['ALL','PushEvent','PullRequestReviewEvent','CreateEvent', 'DeleteEvent', 'PullRequestEvent', 'PullRequestReviewCommentEvent','IssuesEvent', 'WatchEvent', 'ForkEvent', 'ReleaseEvent']
@@ -97,6 +99,10 @@ import traceback
 import argparse
 import csv
 import pytz
+try:
+    from tzlocal import get_localzone
+except ImportError:
+    pass
 import platform
 import re
 import ipaddress
@@ -1471,6 +1477,18 @@ if __name__ == "__main__":
         parser.print_help(sys.stderr)
         sys.exit(1)
 
+    local_tz=None
+    if LOCAL_TIMEZONE=="Auto":
+        try:
+            local_tz = get_localzone()
+        except NameError:
+            pass
+        if local_tz:
+            LOCAL_TIMEZONE=str(local_tz)
+        else:
+            print("* Error: Cannot detect local timezone, consider setting LOCAL_TIMEZONE to your local timezone manually !")
+            sys.exit(1)
+
     if args.github_token:
         GITHUB_TOKEN=args.github_token
 
@@ -1558,6 +1576,7 @@ if __name__ == "__main__":
         print(f"* CSV logging enabled:\t\t{csv_enabled} ({args.csv_file})")
     else:
         print(f"* CSV logging enabled:\t\t{csv_enabled}")
+    print(f"* Local timezone:\t\t{LOCAL_TIMEZONE}")
 
     out=f"\nMonitoring Github user {args.GITHUB_USERNAME}"
     print(out)
