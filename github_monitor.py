@@ -1475,11 +1475,11 @@ if __name__ == "__main__":
         GITHUB_TOKEN=args.github_token
 
     if not GITHUB_TOKEN or GITHUB_TOKEN=="your_github_classic_personal_access_token":
-        print("* Error: GITHUB_TOKEN (-t / --github_token) value is empty or incorrect\n")
+        print("* Error: GITHUB_TOKEN (-t / --github_token) value is empty or incorrect")
         sys.exit(1)
 
     if not args.GITHUB_USERNAME:
-        print("* Error: GITHUB_USERNAME argument is required !\n")
+        print("* Error: GITHUB_USERNAME argument is required !")
         sys.exit(1)
 
     if args.followers_and_followings:
