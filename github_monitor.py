@@ -41,15 +41,15 @@ SENDER_EMAIL="your_sender_email"
 #SENDER_EMAIL="your_sender_email"
 RECEIVER_EMAIL="your_receiver_email"
 
-# How often do we perform checks for user activity; in seconds
+# How often do we perform checks for user activity, you can also use -c parameter; in seconds
 GITHUB_CHECK_INTERVAL=600 # 10 mins
 
 # Specify your local time zone so we convert Github API timestamps to your time (for example: 'Europe/Warsaw')
 # If you leave it as 'Auto' we will try to automatically detect the local timezone
 LOCAL_TIMEZONE='Auto'
 
-# What kind of events we want to monitor, if you put ALL then all of them will be monitored
-EVENTS_TO_MONITOR=['ALL','PushEvent','PullRequestReviewEvent','CreateEvent', 'DeleteEvent', 'PullRequestEvent', 'PullRequestReviewCommentEvent','IssuesEvent', 'WatchEvent', 'ForkEvent', 'ReleaseEvent']
+# What kind of events we want to monitor, if you put 'ALL' then all of them will be monitored
+EVENTS_TO_MONITOR=['ALL','PushEvent','PullRequestReviewEvent','CreateEvent', 'DeleteEvent', 'PullRequestEvent', 'PullRequestReviewCommentEvent','IssuesEvent', 'WatchEvent', 'ForkEvent', 'ReleaseEvent', 'IssueCommentEvent']
 
 # How many last events we check when we get signal that last event ID has changed
 EVENTS_NUMBER=10
@@ -550,10 +550,11 @@ def github_print_event(event, g, time_passed=False, ts=0):
 
     event_date_ts=convert_utc_str_to_tz_datetime(str(event.created_at), LOCAL_TIMEZONE, 1).timestamp()
     if time_passed and not ts:
-        tp=f" - {calculate_timespan(int(time.time()),int(event_date_ts),show_seconds=False)} ago"
+        tp=f" ({calculate_timespan(int(time.time()),int(event_date_ts),show_seconds=False,granularity=2)} ago)"
     elif time_passed and ts:
-        tp=f" - after {calculate_timespan(int(event_date_ts),int(ts),show_seconds=False)}"
-    st+=print_v(f"Event ID:\t\t\t{event.id} ({get_date_from_ts(event_date_ts)}{tp})")
+        tp=f" (after {calculate_timespan(int(event_date_ts),int(ts),show_seconds=False,granularity=2)}: {get_short_date_from_ts(int(ts))})"
+    st+=print_v(f"Event date:\t\t\t{get_date_from_ts(event_date_ts)}{tp}")
+    st+=print_v(f"Event ID:\t\t\t{event.id}")
     st+=print_v(f"Event type:\t\t\t{event.type}")            
 
     if event.repo.id:
