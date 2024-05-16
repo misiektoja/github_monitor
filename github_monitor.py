@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.0
+v1.1
 
 Script implementing real-time monitoring of Github users activity:
 https://github.com/misiektoja/github_monitor/
@@ -14,7 +14,7 @@ python-dateutil
 requests
 """
 
-VERSION=1.0
+VERSION=1.1
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -62,7 +62,7 @@ CHECK_INTERNET_URL='http://www.google.com/'
 CHECK_INTERNET_TIMEOUT=5
 
 # The name of the .log file; the tool by default will output its messages to github_monitor_username.log file
-github_logfile="github_monitor"
+GITHUB_LOGFILE="github_monitor"
 
 # Value used by signal handlers increasing/decreasing the user activity check (GITHUB_CHECK_INTERVAL); in seconds
 GITHUB_CHECK_SIGNAL_VALUE=60 # 1 minute
@@ -97,6 +97,7 @@ import traceback
 import argparse
 import csv
 import pytz
+import platform
 import re
 import ipaddress
 from github import Github
@@ -106,7 +107,7 @@ from github import Auth
 class Logger(object):
     def __init__(self, filename):
         self.terminal=sys.stdout
-        self.logfile=open(filename, "a", buffering=1)
+        self.logfile=open(filename, "a", buffering=1, encoding="utf-8")
 
     def write(self, message):
         global last_output
@@ -292,7 +293,7 @@ def send_email(subject,body,body_html,use_ssl):
 # Function to write CSV entry
 def write_csv_entry(csv_file_name, timestamp, object_type, old, new):
     try:
-        csv_file=open(csv_file_name, 'a', newline='', buffering=1)
+        csv_file=open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8")
         csvwriter=csv.DictWriter(csv_file, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
         csvwriter.writerow({'Date': timestamp, 'Type': object_type, 'Old': old, 'New': new})
         csv_file.close()
@@ -710,7 +711,7 @@ def github_monitor_user(user,error_notification,csv_file_name,csv_exists):
 
     try:
         if csv_file_name:
-            csv_file=open(csv_file_name, 'a', newline='', buffering=1)
+            csv_file=open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8")
             csvwriter=csv.DictWriter(csv_file, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
             if not csv_exists:
                 csvwriter.writeheader()
@@ -1441,38 +1442,49 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        os.system('clear')
+        if platform.system() == 'Windows':
+            os.system('cls')
+        else:
+            os.system('clear')
     except:
         print("* Cannot clear the screen contents")
 
     print(f"Github Monitoring Tool v{VERSION}\n")
 
     parser=argparse.ArgumentParser("github_monitor")
-    parser.add_argument("user", nargs="?", help="Github username", type=str)
+    parser.add_argument("GITHUB_USERNAME", nargs="?", help="Github username", type=str)
     parser.add_argument("-t","--github_token", help="Github personal access token (classic) to override the value defined within the script (GITHUB_TOKEN)", type=str)    
     parser.add_argument("-p","--profile_notification", help="Send email notification once user profile changes", action='store_true')
     parser.add_argument("-s","--event_notification", help="Send email notification once new event shows up", action='store_true')
     parser.add_argument("-e","--error_notification", help="Disable sending email notifications in case of errors like expired token", action='store_false')
     parser.add_argument("-c", "--check_interval", help="Time between monitoring checks, in seconds", type=int)
     parser.add_argument("-b", "--csv_file", help="Write info about new events & profile changes to CSV file", type=str, metavar="CSV_FILENAME")    
-    parser.add_argument("-r","--repos", help="List repositories for user", type=str, metavar="USER")
-    parser.add_argument("-g","--starred_repos", help="List repos starred by user", type=str, metavar="USER")    
-    parser.add_argument("-f","--followers_and_followings", help="List followers & followings for user", type=str, metavar="USER")
-    parser.add_argument("-l","--list_recent_events", help="List recent events for the user", type=str, metavar="USERNAME")
+    parser.add_argument("-r","--repos", help="List repositories for user", action='store_true')
+    parser.add_argument("-g","--starred_repos", help="List repos starred by user", action='store_true')    
+    parser.add_argument("-f","--followers_and_followings", help="List followers & followings for user", action='store_true')
+    parser.add_argument("-l","--list_recent_events", help="List recent events for the user", action='store_true')
     parser.add_argument("-n", "--number_of_recent_events", help="Number of events to display if used with -l", type=int)
     parser.add_argument("-d", "--disable_logging", help="Disable logging to file 'github_monitor_user.log' file", action='store_true')
     args=parser.parse_args()
+
+    if len(sys.argv)==1:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
 
     if args.github_token:
         GITHUB_TOKEN=args.github_token
 
     if not GITHUB_TOKEN or GITHUB_TOKEN=="your_github_classic_personal_access_token":
-        print("* GITHUB_TOKEN (-t / --github_token) value is empty or incorrect\n")
+        print("* Error: GITHUB_TOKEN (-t / --github_token) value is empty or incorrect\n")
+        sys.exit(1)
+
+    if not args.GITHUB_USERNAME:
+        print("* Error: GITHUB_USERNAME argument is required !\n")
         sys.exit(1)
 
     if args.followers_and_followings:
         try:
-            github_print_followers_and_followings(args.followers_and_followings)
+            github_print_followers_and_followings(args.GITHUB_USERNAME)
         except Exception as e:
             print(f"* Error - {e}")
             traceback.print_exc()
@@ -1481,7 +1493,7 @@ if __name__ == "__main__":
 
     if args.repos:
         try:
-            github_print_repos(args.repos)
+            github_print_repos(args.GITHUB_USERNAME)
         except Exception as e:
             print(f"* Error - {e}")
             traceback.print_exc()
@@ -1490,7 +1502,7 @@ if __name__ == "__main__":
 
     if args.starred_repos:
         try:
-            github_print_starred_repos(args.starred_repos)
+            github_print_starred_repos(args.GITHUB_USERNAME)
         except Exception as e:
             print(f"* Error - {e}")
             traceback.print_exc()
@@ -1502,17 +1514,12 @@ if __name__ == "__main__":
             events_n=args.number_of_recent_events
         else:
             events_n=5
-        print(f"* Listing {events_n} recent events for {args.list_recent_events}:\n")
+        print(f"* Listing {events_n} recent events for {args.GITHUB_USERNAME}:\n")
         auth=Auth.Token(GITHUB_TOKEN)
         g=Github(auth=auth) 
-        github_list_events(args.list_recent_events,events_n,g)
+        github_list_events(args.GITHUB_USERNAME,events_n,g)
         g.close()
         sys.exit(0)
-
-    if not args.user:
-        print("* user argument is required\n")
-        parser.print_help()
-        sys.exit(1)
 
     sys.stdout.write("* Checking internet connectivity ... ")
     sys.stdout.flush()
@@ -1527,7 +1534,7 @@ if __name__ == "__main__":
         csv_enabled=True
         csv_exists=os.path.isfile(args.csv_file)
         try:
-            csv_file=open(args.csv_file, 'a', newline='', buffering=1)
+            csv_file=open(args.csv_file, 'a', newline='', buffering=1, encoding="utf-8")
         except Exception as e:
             print("\n* Error, CSV file cannot be opened for writing -", e)
             sys.exit(1)
@@ -1538,8 +1545,8 @@ if __name__ == "__main__":
         csv_exists=False
 
     if not args.disable_logging:
-        github_logfile=f"{github_logfile}_{args.user}.log"
-        sys.stdout=Logger(github_logfile)
+        GITHUB_LOGFILE=f"{GITHUB_LOGFILE}_{args.GITHUB_USERNAME}.log"
+        sys.stdout=Logger(GITHUB_LOGFILE)
 
     event_notification=args.event_notification
     profile_notification=args.profile_notification
@@ -1552,17 +1559,18 @@ if __name__ == "__main__":
     else:
         print(f"* CSV logging enabled:\t\t{csv_enabled}")
 
-    out=f"\nMonitoring Github user {args.user}"
+    out=f"\nMonitoring Github user {args.GITHUB_USERNAME}"
     print(out)
     print("-" * len(out))
 
-    signal.signal(signal.SIGUSR1, toggle_profile_changes_notifications_signal_handler)
-    signal.signal(signal.SIGUSR2, toggle_new_events_notifications_signal_handler)
-    signal.signal(signal.SIGTRAP, increase_check_signal_handler)
-    signal.signal(signal.SIGABRT, decrease_check_signal_handler)
+    # We define signal handlers only for Linux, Unix & MacOS since Windows has limited number of signals supported
+    if platform.system() != 'Windows':
+        signal.signal(signal.SIGUSR1, toggle_profile_changes_notifications_signal_handler)
+        signal.signal(signal.SIGUSR2, toggle_new_events_notifications_signal_handler)
+        signal.signal(signal.SIGTRAP, increase_check_signal_handler)
+        signal.signal(signal.SIGABRT, decrease_check_signal_handler)
 
-    github_monitor_user(args.user,args.error_notification,args.csv_file,csv_exists)
+    github_monitor_user(args.GITHUB_USERNAME,args.error_notification,args.csv_file,csv_exists)
 
     sys.stdout=stdout_bck
     sys.exit(0)
-
