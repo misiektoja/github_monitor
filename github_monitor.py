@@ -247,8 +247,8 @@ def send_email(subject,body,body_html,use_ssl):
         if not (1 <= port <= 65535):
             raise ValueError
     except ValueError:
-            print("Error sending email - SMTP settings are incorrect (invalid port number in SMTP_PORT)")
-            return 1
+        print("Error sending email - SMTP settings are incorrect (invalid port number in SMTP_PORT)")
+        return 1
 
     if not email_re.search(str(SENDER_EMAIL)) or not email_re.search(str(RECEIVER_EMAIL)):
         print("Error sending email - SMTP settings are incorrect (invalid email in SENDER_EMAIL or RECEIVER_EMAIL)")
