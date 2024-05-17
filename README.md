@@ -4,7 +4,7 @@ github_monitor is a Python script which allows for real-time monitoring of Githu
 
 ## Features
 
-- Real-time monitoring of Github users activities & profile changes:
+- Real-time tracking of Github users activities & profile changes:
    - new events like new pushes, PRs, issues, forks, releases etc.
    - added/removed public repositories
    - added/removed starred repositories
@@ -32,18 +32,21 @@ I'm not a dev, project done as a hobby. Code is ugly and as-is, but it works (at
 
 The script requires Python 3.x.
 
-It uses [PyGithub](https://github.com/PyGithub/PyGithub) library, also requires requests, python-dateutil and pytz.
+It uses [PyGithub](https://github.com/PyGithub/PyGithub) library, also requires requests, python-dateutil, tzlocal and pytz.
 
-It has been tested succesfully on Linux (Raspberry Pi Bullseye & Bookworm based on Debian) and Mac OS (Ventura & Sonoma). 
+It has been tested succesfully on:
+- macOS (Ventura & Sonoma)
+- Linux (Raspberry Pi Bullseye & Bookworm based on Debian, Ubuntu 24)
+- Windows (10 & 11)
 
-Should work on any other Linux OS and Windows with Python.
+It should work on other versions of macOS, Linux, Unix and Windows as well.
 
 ## Installation
 
 Install the required Python packages:
 
 ```sh
-python3 -m pip install requests python-dateutil pytz PyGithub
+python3 -m pip install requests python-dateutil pytz tzlocal PyGithub
 ```
 
 Or from requirements.txt:
@@ -54,7 +57,7 @@ pip3 install -r requirements.txt
 
 Copy the *[github_monitor.py](github_monitor.py)* file to the desired location. 
 
-You might want to add executable rights if on Linux or MacOS:
+You might want to add executable rights if on Linux/Unix/macOS:
 
 ```sh
 chmod a+x github_monitor.py
@@ -82,11 +85,15 @@ EVENTS_TO_MONITOR=['PushEvent','PullRequestEvent', 'IssuesEvent', 'ForkEvent', '
 
 ### Timezone
 
-It is recommended to specify your local time zone so the tool converts Github API timestamps to your time:
+The tool will try to automatically detect your local time zone so it can convert Github API timestamps to your time. 
+
+In case you want to specify your timezone manually then change **LOCAL_TIMEZONE** variable from *'Auto'* to specific location, e.g.
 
 ```
 LOCAL_TIMEZONE='Europe/Warsaw'
 ```
+
+In such case it is not needed to install *tzlocal* pip module.
 
 ### SMTP settings
 
@@ -145,7 +152,7 @@ If you want to display list of public repositories for the user, then use **-r**
 ```
 
 <p align="center">
-   <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="90%"/>
+   <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="80%"/>
 </p>
 
 If you want to display list of repositories starred by the user, then use **-g** parameter:
@@ -213,7 +220,7 @@ If you want to change the check interval to 15 mins (900 seconds) use **-c** par
 
 It is generally not recommended to use values lower than 5 minutes as new events are very often delayed by 5 mins by Github API.
 
-### Controlling the script via signals
+### Controlling the script via signals (only macOS/Linux/Unix)
 
 The tool has several signal handlers implemented which allow to change behaviour of the tool without a need to restart it with new parameters.
 
@@ -233,6 +240,8 @@ I personally use **pkill** tool, so for example to toggle new events email notif
 ```sh
 pkill -f -USR2 "python3 ./github_monitor.py misiektoja"
 ```
+
+As Windows supports limited number of signals, this functionality is available only on Linux/Unix/macOS.
 
 ### Other
 
