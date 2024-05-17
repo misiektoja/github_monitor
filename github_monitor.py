@@ -137,7 +137,7 @@ def signal_handler(sig, frame):
 def check_internet():
     url=CHECK_INTERNET_URL
     try:
-        _ = req.get(url, timeout=CHECK_INTERNET_TIMEOUT)
+        _=req.get(url, timeout=CHECK_INTERNET_TIMEOUT)
         print("OK")
         return True
     except Exception as e:
@@ -147,7 +147,7 @@ def check_internet():
 
 # Function to convert absolute value of seconds to human readable format
 def display_time(seconds, granularity=2):
-    intervals = (
+    intervals=(
         ('years', 31556952), # approximation
         ('months', 2629746), # approximation
         ('weeks', 604800),  # 60 * 60 * 24 * 7
@@ -897,7 +897,7 @@ def github_monitor_user(user,error_notification,csv_file_name,csv_exists):
             email_sent=False
 
         except Exception as e:
-            print(f"Retrying in {display_time(GITHUB_CHECK_INTERVAL)}, error - {e}")
+            print(f"Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)} - {e}")
             if 'Redirected' in str(e) or 'login' in str(e) or 'Forbidden' in str(e) or 'Wrong' in str(e) or 'Bad Request' in str(e):
                 print("* Session might not be valid anymore!")
                 if error_notification and not email_sent:
@@ -1481,7 +1481,7 @@ if __name__ == "__main__":
     local_tz=None
     if LOCAL_TIMEZONE=="Auto":
         try:
-            local_tz = get_localzone()
+            local_tz=get_localzone()
         except NameError:
             pass
         if local_tz:
@@ -1506,7 +1506,6 @@ if __name__ == "__main__":
             github_print_followers_and_followings(args.GITHUB_USERNAME)
         except Exception as e:
             print(f"* Error - {e}")
-            traceback.print_exc()
             sys.exit(1)
         sys.exit(0) 
 
@@ -1515,7 +1514,6 @@ if __name__ == "__main__":
             github_print_repos(args.GITHUB_USERNAME)
         except Exception as e:
             print(f"* Error - {e}")
-            traceback.print_exc()
             sys.exit(1)
         sys.exit(0) 
 
@@ -1524,7 +1522,6 @@ if __name__ == "__main__":
             github_print_starred_repos(args.GITHUB_USERNAME)
         except Exception as e:
             print(f"* Error - {e}")
-            traceback.print_exc()
             sys.exit(1)
         sys.exit(0) 
 
@@ -1555,7 +1552,7 @@ if __name__ == "__main__":
         try:
             csv_file=open(args.csv_file, 'a', newline='', buffering=1, encoding="utf-8")
         except Exception as e:
-            print("\n* Error, CSV file cannot be opened for writing -", e)
+            print(f"* Error: CSV file cannot be opened for writing - {e}")
             sys.exit(1)
         csv_file.close()
     else:
