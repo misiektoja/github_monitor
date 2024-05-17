@@ -137,7 +137,7 @@ The tool will run infinitely and monitor the user until the script is interrupte
 
 You can monitor multiple Github users by spawning multiple copies of the script. 
 
-It is suggested to use sth like **tmux** or **screen** to have the script running after you log out from the server.
+It is suggested to use sth like **tmux** or **screen** to have the script running after you log out from the server (unless you are running it on your desktop).
 
 The tool automatically saves its output to *github_monitor_{username}.log* file (can be changed in the settings or disabled with **-d** parameter).
 
