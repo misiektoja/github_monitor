@@ -33,12 +33,12 @@ SMTP_USER = "your_smtp_user"
 SMTP_PASSWORD = "your_smtp_password"
 SMTP_SSL = True
 SENDER_EMAIL = "your_sender_email"
-#SMTP_HOST = "your_smtp_server_plaintext"
-#SMTP_PORT = 25
-#SMTP_USER = "your_smtp_user"
-#SMTP_PASSWORD = "your_smtp_password"
-#SMTP_SSL = False
-#SENDER_EMAIL = "your_sender_email"
+# SMTP_HOST = "your_smtp_server_plaintext"
+# SMTP_PORT = 25
+# SMTP_USER = "your_smtp_user"
+# SMTP_PASSWORD = "your_smtp_password"
+# SMTP_SSL = False
+# SENDER_EMAIL = "your_sender_email"
 RECEIVER_EMAIL = "your_receiver_email"
 
 # How often do we perform checks for user activity, you can also use -c parameter; in seconds
@@ -866,7 +866,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
     while True:
         try:
-            #auth=Auth.Token(GITHUB_TOKEN)
+            # auth=Auth.Token(GITHUB_TOKEN)
             g = Github(auth=auth)
             g_user = g.get_user(user)
             user_name = g_user.name
