@@ -2,7 +2,7 @@
 
 This is a high-level summary of the most important changes. 
 
-# Changes in 1.1 (17 May 2024)
+# Changes in 1.1 (18 May 2024)
 
 **Features and Improvements**:
 
@@ -11,6 +11,7 @@ This is a high-level summary of the most important changes.
 - Information about time zone is displayed in the start screen now
 - Event dates are displayed differently now, it also includes date of the previous event
 - Better checking for wrong command line arguments
+- pep8 style convention corrections
 
 # Changes in 1.0 (11 May 2024)
 
