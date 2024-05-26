@@ -6,7 +6,7 @@ This is a high-level summary of the most important changes.
 
 **Features and Improvements**:
 
-- New feature allowing to track changes for all user's public repos like new stargazers, forks, changed description etc.; it is disabled by default, you can enable it via **-j** / **--track_repos_changes** command line argument
+- New feature allowing to track changes of user's public repos like new stargazers, forks, changed description etc.; it is disabled by default, you can enable it via **-j** / **--track_repos_changes** command line argument
 - CSV file format changed slightly to accomodate new features
 - Rewritten date/time related functions to automatically detect it time object is timestamp (int / float) or datetime
 - Info about output log file name in the start screen
