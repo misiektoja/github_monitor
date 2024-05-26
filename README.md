@@ -1,16 +1,17 @@
 # github_monitor
 
-github_monitor is a Python script which allows for real-time monitoring of Github users activities & profile changes. 
+github_monitor is a Python script which allows for real-time monitoring of Github users activities including profile and repositories changes. 
 
 ## Features
 
-- Real-time tracking of Github users activities & profile changes:
+- Real-time tracking of Github users activities including profile and repos changes:
    - new events like new pushes, PRs, issues, forks, releases etc.
    - added/removed public repositories
    - added/removed starred repositories
    - added/removed followings and followers   
    - changed user name, email, location, company, bio, blog URL
    - detection of account changes
+   - repositories changes like new stargazers, forks, changed description etc.
 - Email notifications for different events (new events, changed followings, followers, repos, user name, email, location, company, bio, blog URL, errors)
 - Saving all user activities with timestamps to the CSV file
 - Clickable Github URLs printed in the console & included in email notifications (repos, PRs, commits, issues, releases etc.)
@@ -133,13 +134,19 @@ If you have not changed **GITHUB_TOKEN** variable in the *[github_monitor.py](gi
 ./github_monitor.py misiektoja -t "your_github_classic_personal_access_token"
 ```
 
+If you also want to monitor user's public repositories changes like new stargazers, forks, changed description etc., then use **-j-** parameter:
+
+```sh
+./github_monitor.py misiektoja -j
+```
+
 The tool will run infinitely and monitor the user until the script is interrupted (Ctrl+C) or killed the other way.
 
 You can monitor multiple Github users by spawning multiple copies of the script. 
 
 It is suggested to use sth like **tmux** or **screen** to have the script running after you log out from the server (unless you are running it on your desktop).
 
-The tool automatically saves its output to *github_monitor_{username}.log* file (can be changed in the settings or disabled with **-d** parameter).
+The tool automatically saves its output to *github_monitor_{username}.log* file (can be changed in the settings via **GITHUB_LOGFILE** variable or disabled completely with **-d** parameter).
 
 ### Listing mode
 
@@ -152,7 +159,7 @@ If you want to display list of public repositories for the user, then use **-r**
 ```
 
 <p align="center">
-   <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="80%"/>
+   <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="70%"/>
 </p>
 
 If you want to display list of repositories starred by the user, then use **-g** parameter:
@@ -179,7 +186,7 @@ You can use those functionalities in listing mode regardless if the monitoring i
 
 ### Email notifications
 
-If you want to get email notifications for all user profile changes use **-p** parameter:
+If you want to get email notifications for all user profile and repos changes use **-p** parameter:
 
 ```sh
 ./github_monitor.py misiektoja -p
@@ -204,7 +211,7 @@ Example email:
 
 ### Saving user activities to the CSV file
 
-If you want to save all Github user's events and profile changes in the CSV file, use **-b** parameter with the name of the file (it will be automatically created if it does not exist):
+If you want to save all Github user's events, profile and repo changes in the CSV file, use **-b** parameter with the name of the file (it will be automatically created if it does not exist):
 
 ```sh
 ./github_monitor.py misiektoja -b github_misiektoja.csv
