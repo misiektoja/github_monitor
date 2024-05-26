@@ -134,7 +134,7 @@ If you have not changed **GITHUB_TOKEN** variable in the *[github_monitor.py](gi
 ./github_monitor.py misiektoja -t "your_github_classic_personal_access_token"
 ```
 
-If you also want to monitor user's public repositories changes like new stargazers, forks, changed description etc., then use **-j-** parameter:
+If you also want to monitor user's public repositories changes like new stargazers, forks, changed description etc., then use **-j** parameter:
 
 ```sh
 ./github_monitor.py misiektoja -j
