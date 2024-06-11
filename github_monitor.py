@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.2
+v1.3
 
 Script implementing real-time monitoring of Github users activity:
 https://github.com/misiektoja/github_monitor/
@@ -15,7 +15,7 @@ python-dateutil
 requests
 """
 
-VERSION = 1.2
+VERSION = 1.3
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -752,7 +752,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
             st += print_v(f"Issue body:\n'{event.payload["issue"].get("body")}'")
 
     if event.payload.get("forkee"):
-        st += print_v(f"\nForked to repo:\t\t{event.payload["forkee"].get("full_name")}")
+        st += print_v(f"\nForked to repo:\t\t\t{event.payload["forkee"].get("full_name")}")
         st += print_v(f"Forked to repo (URL):\t\t{event.payload["forkee"].get("html_url")}")
 
     return event_date_ts, repo_name, repo_url, st
