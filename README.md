@@ -1,6 +1,6 @@
 # github_monitor
 
-github_monitor is a Python script which allows for real-time monitoring of Github users activities including profile and repositories changes. 
+github_monitor is an OSINT tool written in Python which allows for real-time monitoring of Github users activities including profile and repositories changes. 
 
 ## Features
 
