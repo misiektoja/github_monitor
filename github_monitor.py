@@ -3,7 +3,7 @@
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
 v1.3
 
-Script implementing real-time monitoring of Github users activity:
+OSINT tool implementing real-time tracking of Github users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
 
 Python pip3 requirements:
@@ -81,6 +81,9 @@ csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
 event_notification = False
 profile_notification = False
 track_repos_changes = False
+
+# to solve the issue: 'SyntaxError: f-string expression part cannot include a backslash'
+nl_ch = "\n"
 
 
 import sys
@@ -320,7 +323,7 @@ def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new
 
 # Function to return the timestamp in human readable format; eg. Sun, 21 Apr 2024, 15:08:45
 def get_cur_ts(ts_str=""):
-    return (f"{ts_str}{calendar.day_abbr[(datetime.fromtimestamp(int(time.time()))).weekday()]}, {datetime.fromtimestamp(int(time.time())).strftime("%d %b %Y, %H:%M:%S")}")
+    return (f'{ts_str}{calendar.day_abbr[(datetime.fromtimestamp(int(time.time()))).weekday()]}, {datetime.fromtimestamp(int(time.time())).strftime("%d %b %Y, %H:%M:%S")}')
 
 
 # Function to print the current timestamp in human readable format; eg. Sun, 21 Apr 2024, 15:08:45
@@ -340,7 +343,7 @@ def get_date_from_ts(ts):
     else:
         return ""
 
-    return (f"{calendar.day_abbr[(datetime.fromtimestamp(ts_new)).weekday()]} {datetime.fromtimestamp(ts_new).strftime("%d %b %Y, %H:%M:%S")}")
+    return (f'{calendar.day_abbr[(datetime.fromtimestamp(ts_new)).weekday()]} {datetime.fromtimestamp(ts_new).strftime("%d %b %Y, %H:%M:%S")}')
 
 
 # Function to return the timestamp/datetime object in human readable format (short version); eg.
@@ -367,9 +370,9 @@ def get_short_date_from_ts(ts, show_year=False, show_hour=True):
             hour_prefix = ","
         else:
             hour_prefix = ""
-        return (f"{calendar.day_abbr[(datetime.fromtimestamp(ts_new)).weekday()]} {datetime.fromtimestamp(ts_new).strftime(f"%d %b %y{hour_prefix}{hour_strftime}")}")
+        return (f'{calendar.day_abbr[(datetime.fromtimestamp(ts_new)).weekday()]} {datetime.fromtimestamp(ts_new).strftime(f"%d %b %y{hour_prefix}{hour_strftime}")}')
     else:
-        return (f"{calendar.day_abbr[(datetime.fromtimestamp(ts_new)).weekday()]} {datetime.fromtimestamp(ts_new).strftime(f"%d %b{hour_strftime}")}")
+        return (f'{calendar.day_abbr[(datetime.fromtimestamp(ts_new)).weekday()]} {datetime.fromtimestamp(ts_new).strftime(f"%d %b{hour_strftime}")}')
 
 
 # Function to convert UTC string returned by Github API to datetime object in specified timezone
@@ -630,130 +633,130 @@ def github_print_event(event, g, time_passed=False, ts=0):
             st += print_v(f"Event actor name:\t\t{event.actor.name}")
 
     if event.payload.get("ref"):
-        st += print_v(f"\nObject name:\t\t\t{event.payload.get("ref")}")
+        st += print_v(f"\nObject name:\t\t\t{event.payload.get('ref')}")
     if event.payload.get("ref_type"):
-        st += print_v(f"Object type:\t\t\t{event.payload.get("ref_type")}")
+        st += print_v(f"Object type:\t\t\t{event.payload.get('ref_type')}")
     if event.payload.get("description"):
-        st += print_v(f"Description:\t\t\t'{event.payload.get("description")}'")
+        st += print_v(f"Description:\t\t\t'{event.payload.get('description')}'")
 
     if event.payload.get("action"):
-        st += print_v(f"\nAction:\t\t\t\t{event.payload.get("action")}")
+        st += print_v(f"\nAction:\t\t\t\t{event.payload.get('action')}")
 
     if event.payload.get("commits"):
-        st += print_v(f"\nNumber of commits:\t\t{len(event.payload.get("commits"))}")
+        st += print_v(f"\nNumber of commits:\t\t{len(event.payload.get('commits'))}")
         commits = event.payload["commits"]
         for commit in commits:
             commit_details = repo.get_commit(sha=commit["sha"])
             commit_date_ts = convert_utc_str_to_tz_datetime(str(commit_details.commit.author.date), LOCAL_TIMEZONE, 1).timestamp()
             st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date_ts)}")
-            st += print_v(f" - Commit sha:\t\t\t{commit["sha"]}")
-            st += print_v(f" - Commit author:\t\t{commit["author"]["name"]}")
-            st += print_v(f" - Commit URL:\t\t\t{github_convert_api_to_html_url(commit["url"])}")
-            st += print_v(f" - Commit message:\t\t'{commit["message"]}'")
+            st += print_v(f" - Commit sha:\t\t\t{commit['sha']}")
+            st += print_v(f" - Commit author:\t\t{commit['author']['name']}")
+            st += print_v(f" - Commit URL:\t\t\t{github_convert_api_to_html_url(commit['url'])}")
+            st += print_v(f" - Commit message:\t\t'{commit['message']}'")
             if commit != commits[-1]:
                 st += print_v()
 
     if event.payload.get("release"):
-        st += print_v(f"\nRelease name:\t\t\t{event.payload["release"].get("name")}")
-        st += print_v(f"Release URL:\t\t\t{event.payload["release"].get("html_url")}")
-        st += print_v(f"Release tag name:\t\t{event.payload["release"].get("tag_name")}")
+        st += print_v(f"\nRelease name:\t\t\t{event.payload['release'].get('name')}")
+        st += print_v(f"Release URL:\t\t\t{event.payload['release'].get('html_url')}")
+        st += print_v(f"Release tag name:\t\t{event.payload['release'].get('tag_name')}")
 
         if event.payload["release"].get("assets"):
             assets = event.payload["release"].get("assets")
             for asset in assets:
-                st += print_v(f" - Asset name:\t\t\t{asset.get("name")}")
-                st += print_v(f" - Asset size:\t\t\t{asset.get("size")}")
-                st += print_v(f" - Download URL:\t\t{asset.get("browser_download_url")}")
+                st += print_v(f" - Asset name:\t\t\t{asset.get('name')}")
+                st += print_v(f" - Asset size:\t\t\t{asset.get('size')}")
+                st += print_v(f" - Download URL:\t\t{asset.get('browser_download_url')}")
                 if asset != assets[-1]:
                     st += print_v()
 
-        st += print_v(f"Release description:\n\n'{event.payload["release"].get("body")}'")
+        st += print_v(f"Release description:\n\n'{event.payload['release'].get('body')}'")
 
     if event.payload.get("pull_request"):
-        st += print_v(f"\nPR title:\t\t\t{event.payload["pull_request"].get("title")}")
+        st += print_v(f"\nPR title:\t\t\t{event.payload['pull_request'].get('title')}")
 
         pr_date_ts = convert_utc_str_to_tz_datetime(str(event.payload["pull_request"].get("created_at")), LOCAL_TIMEZONE, 2).timestamp()
         st += print_v(f"PR date:\t\t\t{get_date_from_ts(pr_date_ts)}")
 
-        st += print_v(f"PR URL:\t\t\t\t{event.payload["pull_request"].get("html_url")}")
+        st += print_v(f"PR URL:\t\t\t\t{event.payload['pull_request'].get('html_url')}")
 
         if event.payload["pull_request"].get("issue_url"):
-            st += print_v(f"Issue URL:\t\t\t{github_convert_api_to_html_url(event.payload["pull_request"].get("issue_url"))}")
+            st += print_v(f"Issue URL:\t\t\t{github_convert_api_to_html_url(event.payload['pull_request'].get('issue_url'))}")
 
         if event.payload["pull_request"].get("state"):
-            st += print_v(f"PR state:\t\t\t{event.payload["pull_request"].get("state")}")
+            st += print_v(f"PR state:\t\t\t{event.payload['pull_request'].get('state')}")
 
-        st += print_v(f"Commits:\t\t\t{event.payload["pull_request"].get("commits", 0)}")
+        st += print_v(f"Commits:\t\t\t{event.payload['pull_request'].get('commits', 0)}")
 
-        st += print_v(f"Comments:\t\t\t{event.payload["pull_request"].get("comments", 0)}")
+        st += print_v(f"Comments:\t\t\t{event.payload['pull_request'].get('comments', 0)}")
 
         additions = event.payload["pull_request"].get("additions", 0)
         deletions = event.payload["pull_request"].get("deletions", 0)
         st += print_v(f"Additions/deletions:\t\t{additions}/{deletions}")
 
-        st += print_v(f"Changed files:\t\t\t{event.payload["pull_request"].get("changed_files", 0)}")
+        st += print_v(f"Changed files:\t\t\t{event.payload['pull_request'].get('changed_files', 0)}")
 
         if event.payload["pull_request"].get("body"):
-            st += print_v(f"PR description:\n\n'{event.payload["pull_request"].get("body")}'")
+            st += print_v(f"PR description:\n\n'{event.payload['pull_request'].get('body')}'")
 
         if event.payload["pull_request"].get("requested_reviewers"):
             for requested_reviewer in event.payload["pull_request"].get("requested_reviewers"):
-                st += print_v(f"\n - Requested reviewer name:\t{requested_reviewer.get("login")}")
-                st += print_v(f" - Requested reviewer URL:\t{requested_reviewer.get("html_url")}")
+                st += print_v(f"\n - Requested reviewer name:\t{requested_reviewer.get('login')}")
+                st += print_v(f" - Requested reviewer URL:\t{requested_reviewer.get('html_url')}")
 
         if event.payload["pull_request"].get("assignees"):
             for assignee in event.payload["pull_request"].get("assignees"):
-                st += print_v(f"\n - Assignee name:\t\t{assignee.get("login")}")
-                st += print_v(f" - Assignee URL:\t\t{assignee.get("html_url")}")
+                st += print_v(f"\n - Assignee name:\t\t{assignee.get('login')}")
+                st += print_v(f" - Assignee URL:\t\t{assignee.get('html_url')}")
 
     if event.payload.get("review"):
         review_date_ts = convert_utc_str_to_tz_datetime(str(event.payload["review"].get("submitted_at")), LOCAL_TIMEZONE, 2).timestamp()
         st += print_v(f"\nRequested review date:\t\t{get_date_from_ts(review_date_ts)}")
-        st += print_v(f"Requested review URL:\t\t{event.payload["review"].get("html_url")}")
+        st += print_v(f"Requested review URL:\t\t{event.payload['review'].get('html_url')}")
 
         if event.payload["review"].get("state"):
-            st += print_v(f"Requested review state:\t\t{event.payload["review"].get("state")}")
+            st += print_v(f"Requested review state:\t\t{event.payload['review'].get('state')}")
 
         if event.payload["review"].get("body"):
-            st += print_v(f"Requested review description:\n'{event.payload["review"].get("body")}'")
+            st += print_v(f"Requested review description:\n'{event.payload['review'].get('body')}'")
 
     if event.payload.get("comment"):
         comment_date_ts = convert_utc_str_to_tz_datetime(str(event.payload["comment"].get("created_at")), LOCAL_TIMEZONE, 2).timestamp()
         st += print_v(f"\nComment date:\t\t\t{get_date_from_ts(comment_date_ts)}")
 
         if event.payload["comment"].get("body"):
-            st += print_v(f"Comment body:\t\t\t'{event.payload["comment"].get("body")}'")
+            st += print_v(f"Comment body:\t\t\t'{event.payload['comment'].get('body')}'")
 
-        st += print_v(f"Comment URL:\t\t\t{event.payload["comment"].get("html_url")}")
+        st += print_v(f"Comment URL:\t\t\t{event.payload['comment'].get('html_url')}")
 
         if event.payload["comment"].get("path"):
-            st += print_v(f"Comment path:\t\t\t{event.payload["comment"].get("path")}")
+            st += print_v(f"Comment path:\t\t\t{event.payload['comment'].get('path')}")
 
     if event.payload.get("issue"):
-        st += print_v(f"\nIssue title:\t\t\t{event.payload["issue"].get("title")}")
+        st += print_v(f"\nIssue title:\t\t\t{event.payload['issue'].get('title')}")
         issue_date_ts = convert_utc_str_to_tz_datetime(str(event.payload["issue"].get("created_at")), LOCAL_TIMEZONE, 2).timestamp()
         st += print_v(f"Issue date:\t\t\t{get_date_from_ts(issue_date_ts)}")
 
-        st += print_v(f"Issue URL:\t\t\t{event.payload["issue"].get("html_url")}")
+        st += print_v(f"Issue URL:\t\t\t{event.payload['issue'].get('html_url')}")
 
         if event.payload["issue"].get("state"):
-            st += print_v(f"Issue state:\t\t\t{event.payload["issue"].get("state")}")
+            st += print_v(f"Issue state:\t\t\t{event.payload['issue'].get('state')}")
 
-        st += print_v(f"Issue comments:\t\t\t{event.payload["issue"].get("comments", 0)}")
+        st += print_v(f"Issue comments:\t\t\t{event.payload['issue'].get('comments', 0)}")
 
         if event.payload["issue"].get("assignees"):
             assignees = event.payload["issue"].get("assignees")
             for assignee in assignees:
-                st += print_v(f" - Assignee name:\t\t{assignee.get("name")}")
+                st += print_v(f" - Assignee name:\t\t{assignee.get('name')}")
                 if assignee != assignees[-1]:
                     st += print_v()
 
         if event.payload["issue"].get("body"):
-            st += print_v(f"Issue body:\n'{event.payload["issue"].get("body")}'")
+            st += print_v(f"Issue body:\n'{event.payload['issue'].get('body')}'")
 
     if event.payload.get("forkee"):
-        st += print_v(f"\nForked to repo:\t\t\t{event.payload["forkee"].get("full_name")}")
-        st += print_v(f"Forked to repo (URL):\t\t{event.payload["forkee"].get("html_url")}")
+        st += print_v(f"\nForked to repo:\t\t\t{event.payload['forkee'].get('full_name')}")
+        st += print_v(f"Forked to repo (URL):\t\t{event.payload['forkee'].get('html_url')}")
 
     return event_date_ts, repo_name, repo_url, st
 
@@ -971,7 +974,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 print("* Session might not be valid anymore!")
                 if error_notification and not email_sent:
                     m_subject = f"github_monitor: session error! (user: {user})"
-                    m_body = f"Session might not be valid anymore: {e}{get_cur_ts("\n\nTimestamp: ")}"
+                    m_body = f"Session might not be valid anymore: {e}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                     send_email(m_subject, m_body, "", SMTP_SSL)
                     email_sent = True
@@ -1051,7 +1054,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             m_subject = f"Github user {user} followings number has changed! ({followings_diff_str}, {followings_old_count} -> {followings_count})"
 
-            m_body = f"Followings number changed by user {user} from {followings_old_count} to {followings_count} ({followings_diff_str})\n{removed_followings_mbody}{removed_followings_list}{added_followings_mbody}{added_followings_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Followings number changed by user {user} from {followings_old_count} to {followings_count} ({followings_diff_str})\n{removed_followings_mbody}{removed_followings_list}{added_followings_mbody}{added_followings_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1134,7 +1137,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             m_subject = f"Github user {user} followers number has changed! ({followers_diff_str}, {followers_old_count} -> {followers_count})"
 
-            m_body = f"Followers number changed for user {user} from {followers_old_count} to {followers_count} ({followers_diff_str})\n{removed_followers_mbody}{removed_followers_list}{added_followers_mbody}{added_followers_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Followers number changed for user {user} from {followers_old_count} to {followers_count} ({followers_diff_str})\n{removed_followers_mbody}{removed_followers_list}{added_followers_mbody}{added_followers_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1217,7 +1220,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             m_subject = f"Github user {user} repos number has changed! ({repos_diff_str}, {repos_old_count} -> {repos_count})"
 
-            m_body = f"Repos number changed for user {user} from {repos_old_count} to {repos_count} ({repos_diff_str})\n{removed_repos_mbody}{removed_repos_list}{added_repos_mbody}{added_repos_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Repos number changed for user {user} from {repos_old_count} to {repos_count} ({repos_diff_str})\n{removed_repos_mbody}{removed_repos_list}{added_repos_mbody}{added_repos_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1298,7 +1301,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             m_subject = f"Github user {user} starred repos number has changed! ({starred_diff_str}, {starred_old_count} -> {starred_count})"
 
-            m_body = f"Starred repos number changed by user {user} from {starred_old_count} to {starred_count} ({starred_diff_str})\n{removed_starred_mbody}{removed_starred_list}{added_starred_mbody}{added_starred_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Starred repos number changed by user {user} from {starred_old_count} to {starred_count} ({starred_diff_str})\n{removed_starred_mbody}{removed_starred_list}{added_starred_mbody}{added_starred_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1321,7 +1324,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 print(f"* Cannot write CSV entry - {e}")
 
             m_subject = f"Github user {user} bio has changed!"
-            m_body = f"Github user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Github user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1343,7 +1346,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 print(f"* Cannot write CSV entry - {e}")
 
             m_subject = f"Github user {user} location has changed!"
-            m_body = f"Github user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Github user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1365,7 +1368,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 print(f"* Cannot write CSV entry - {e}")
 
             m_subject = f"Github user {user} name has changed!"
-            m_body = f"Github user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Github user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1387,7 +1390,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 print(f"* Cannot write CSV entry - {e}")
 
             m_subject = f"Github user {user} company has changed!"
-            m_body = f"Github user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Github user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1409,7 +1412,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 print(f"* Cannot write CSV entry - {e}")
 
             m_subject = f"Github user {user} email has changed!"
-            m_body = f"Github user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Github user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1431,7 +1434,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 print(f"* Cannot write CSV entry - {e}")
 
             m_subject = f"Github user {user} blog URL has changed!"
-            m_body = f"Github user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Github user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1453,7 +1456,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 print(f"* Cannot write CSV entry - {e}")
 
             m_subject = f"Github user {user} account has been updated! (after {calculate_timespan(account_updated_date_ts, account_updated_date_old_ts, show_seconds=False, granularity=2)})"
-            m_body = f"Github user {user} account has been updated (after {calculate_timespan(account_updated_date_ts, account_updated_date_old_ts, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old_ts)}\n\nNew account update date: {get_date_from_ts(account_updated_date_ts)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+            m_body = f"Github user {user} account has been updated (after {calculate_timespan(account_updated_date_ts, account_updated_date_old_ts, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old_ts)}\n\nNew account update date: {get_date_from_ts(account_updated_date_ts)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1547,7 +1550,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                         print()
 
                                 m_subject = f"Github user {user} number of stargazers for repo '{r_name}' has changed! ({r_stars_diff_str}, {r_stars_old} -> {r_stars})"
-                                m_body = f"* Repo '{r_name}': number of stargazers changed from {r_stars_old} to {r_stars} ({r_stars_diff_str})\n* Repo URL: {r_url}\n{removed_stargazers_mbody}{removed_stargazers_list}{added_stargazers_mbody}{added_stargazers_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+                                m_body = f"* Repo '{r_name}': number of stargazers changed from {r_stars_old} to {r_stars} ({r_stars_diff_str})\n* Repo URL: {r_url}\n{removed_stargazers_mbody}{removed_stargazers_list}{added_stargazers_mbody}{added_stargazers_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                 if profile_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
@@ -1608,7 +1611,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                         print()
 
                                 m_subject = f"Github user {user} number of forks for repo '{r_name}' has changed! ({r_forks_diff_str}, {r_forks_old} -> {r_forks})"
-                                m_body = f"* Repo '{r_name}': number of forks changed from {r_forks_old} to {r_forks} ({r_forks_diff_str})\n* Repo URL: {r_url}\n{removed_forked_repos_mbody}{removed_forked_repos_list}{added_forked_repos_mbody}{added_forked_repos_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+                                m_body = f"* Repo '{r_name}': number of forks changed from {r_forks_old} to {r_forks} ({r_forks_diff_str})\n* Repo URL: {r_url}\n{removed_forked_repos_mbody}{removed_forked_repos_list}{added_forked_repos_mbody}{added_forked_repos_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                 if profile_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
@@ -1624,7 +1627,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                 except Exception as e:
                                     print(f"* Cannot write CSV entry - {e}")
                                 m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
-                                m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+                                m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                 if profile_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
@@ -1640,7 +1643,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                 except Exception as e:
                                     print(f"* Cannot write CSV entry - {e}")
                                 m_subject = f"Github user {user} repo '{r_name}' description has changed !"
-                                m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+                                m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                 if profile_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
@@ -1680,7 +1683,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                     except Exception as e:
                         print(f"* Cannot write CSV entry - {e}")
                     m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
-                    m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts("\nTimestamp: ")}"
+                    m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
                     if event_notification:
                         print(f"\nSending email notification to {RECEIVER_EMAIL}")
