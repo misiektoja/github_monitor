@@ -81,6 +81,7 @@ csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
 event_notification = False
 profile_notification = False
 repo_notification = False
+repo_update_date_notification = False
 track_repos_changes = False
 
 # to solve the issue: 'SyntaxError: f-string expression part cannot include a backslash'
@@ -420,13 +421,23 @@ def toggle_new_events_notifications_signal_handler(sig, frame):
     print_cur_ts("Timestamp:\t\t\t")
 
 
-# Signal handler for SIGCONT allowing to switch email notifications for user's repositories changes
+# Signal handler for SIGCONT allowing to switch email notifications for user's repositories changes (except for update date)
 def toggle_repo_changes_notifications_signal_handler(sig, frame):
     global repo_notification
     repo_notification = not repo_notification
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
     print(f"* Email notifications: [repos changes = {repo_notification}]")
+    print_cur_ts("Timestamp:\t\t\t")
+
+
+# Signal handler for SIGPIPE allowing to switch email notifications for user's repositories update date changes
+def toggle_repo_update_date_changes_notifications_signal_handler(sig, frame):
+    global repo_update_date_notification
+    repo_update_date_notification = not repo_update_date_notification
+    sig_name = signal.Signals(sig).name
+    print(f"* Signal {sig_name} received")
+    print(f"* Email notifications: [repos update date = {repo_update_date_notification}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -460,7 +471,7 @@ def github_convert_api_to_html_url(url):
     return html_url
 
 
-# Function printing followers & followings for Github user
+# Function printing followers & followings for Github user (-f)
 def github_print_followers_and_followings(user):
     print(f"Getting followers & followings for user '{user}' ...")
 
@@ -536,7 +547,7 @@ def github_process_repos(repos_list):
     return list_of_repos
 
 
-# Function printing list of public repositories for Github user
+# Function printing list of public repositories for Github user (-r)
 def github_print_repos(user):
     print(f"Getting public repositories for user '{user}' ...")
 
@@ -558,7 +569,7 @@ def github_print_repos(user):
     print(f"\nUsername:\t{user_name_str}")
     print(f"URL:\t\t{user_url}/")
 
-    print(f"\nRepos:\t\t{repos_count}")
+    print(f"\nRepositories:\t{repos_count}")
     if repos_list:
 
         for repo in repos_list:
@@ -580,7 +591,7 @@ def github_print_repos(user):
     g.close()
 
 
-# Function printing list of starred repositories by Github user
+# Function printing list of starred repositories by Github user (-g)
 def github_print_starred_repos(user):
     print(f"Getting repositories starred by user '{user}' ...")
 
@@ -774,7 +785,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
     return event_date_ts, repo_name, repo_url, st
 
 
-# Function listing recent events for the user
+# Function listing recent events for the user (-l)
 def github_list_events(user, number, g):
 
     g_user = g.get_user(user)
@@ -905,7 +916,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
     print(f"\nFollowers:\t\t\t{followers_count}")
     print(f"Followings:\t\t\t{followings_count}")
-    print(f"Repos:\t\t\t\t{repos_count}")
+    print(f"Repositories:\t\t\t{repos_count}")
     print(f"Starred repos:\t\t\t{starred_count}")
 
     if bio:
@@ -1704,7 +1715,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                     print(f"* Cannot write CSV entry - {e}")
                                 m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
                                 m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                if repo_notification:
+                                if repo_update_date_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
                                 print_cur_ts("Timestamp:\t\t\t")
@@ -1801,18 +1812,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("github_monitor")
     parser.add_argument("GITHUB_USERNAME", nargs="?", help="Github username", type=str)
     parser.add_argument("-t", "--github_token", help="Github personal access token (classic) to override the value defined within the script (GITHUB_TOKEN)", type=str)
-    parser.add_argument("-p", "--profile_notification", help="Send email notification once user's profile changes", action='store_true')
-    parser.add_argument("-s", "--event_notification", help="Send email notification once new events show up", action='store_true')
-    parser.add_argument("-q", "--repo_notification", help="Send email notification once changes in user's repositories are detected, works only if tracking of repos changes is enabled (-j)", action='store_true')
+    parser.add_argument("-p", "--profile_notification", help="Send email notification once user's profile changes (e.g. changed followers, followings, starred repos, username, email, bio, location, blog URL, number of repositories)", action='store_true')
+    parser.add_argument("-s", "--event_notification", help="Send email notification once new Github events show up for the user (e.g. new pushes, PRs, issues, forks, releases etc.)", action='store_true')
+    parser.add_argument("-q", "--repo_notification", help="Send email notification once changes in user's repositories are detected (e.g. changed stargazers, watchers, forks, description etc., except for update date), works only if tracking of repos changes is enabled (-j)", action='store_true')
+    parser.add_argument("-u", "--repo_update_date_notification", help="Send email notification once changes in user's repositories update date are detected, works only if tracking of repos changes is enabled (-j); these email notifications might be quite verbose, so be careful", action='store_true')
     parser.add_argument("-e", "--error_notification", help="Disable sending email notifications in case of errors like expired token", action='store_false')
     parser.add_argument("-c", "--check_interval", help="Time between monitoring checks, in seconds", type=int)
     parser.add_argument("-b", "--csv_file", help="Write info about new events & profile changes to CSV file", type=str, metavar="CSV_FILENAME")
-    parser.add_argument("-j", "--track_repos_changes", help="Track changes of user repos like new stargazers, watchers, forks, changed description", action='store_true')
+    parser.add_argument("-j", "--track_repos_changes", help="Track changes of user repos like changed stargazers, watchers, forks, description, update date etc.", action='store_true')
     parser.add_argument("-r", "--repos", help="List repositories for the user", action='store_true')
     parser.add_argument("-g", "--starred_repos", help="List repositories starred by the user", action='store_true')
     parser.add_argument("-f", "--followers_and_followings", help="List followers & followings for the user", action='store_true')
-    parser.add_argument("-l", "--list_recent_events", help="List recent events for the user", action='store_true')
-    parser.add_argument("-n", "--number_of_recent_events", help="Number of events to display if used with -l", type=int)
+    parser.add_argument("-l", "--list_recent_events", help="List recent Github events for the user", action='store_true')
+    parser.add_argument("-n", "--number_of_recent_events", help="Number of Github events to display if used with -l", type=int)
     parser.add_argument("-d", "--disable_logging", help="Disable logging to file 'github_monitor_user.log' file", action='store_true')
     parser.add_argument("-z", "--send_test_email_notification", help="Send test email notification to verify SMTP settings defined in the script", action='store_true')
     args = parser.parse_args()
@@ -1918,10 +1930,15 @@ if __name__ == "__main__":
     event_notification = args.event_notification
     profile_notification = args.profile_notification
     repo_notification = args.repo_notification
+    repo_update_date_notification = args.repo_update_date_notification
     track_repos_changes = args.track_repos_changes
 
+    if not track_repos_changes:
+        repo_notification = False
+        repo_update_date_notification = False
+
     print(f"* Github timers:\t\t[check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
-    print(f"* Email notifications:\t\t[profile changes = {profile_notification}] [new events = {event_notification}]\n*\t\t\t\t[repos changes = {repo_notification}] [errors = {args.error_notification}]")
+    print(f"* Email notifications:\t\t[profile changes = {profile_notification}] [new events = {event_notification}]\n*\t\t\t\t[repos changes = {repo_notification}] [repos update date = {repo_update_date_notification}]\n*\t\t\t\t[errors = {args.error_notification}]")
     print(f"* Track repos changes:\t\t{track_repos_changes}")
     if not args.disable_logging:
         print(f"* Output logging enabled:\t{not args.disable_logging} ({GITHUB_LOGFILE})")
@@ -1942,6 +1959,7 @@ if __name__ == "__main__":
         signal.signal(signal.SIGUSR1, toggle_profile_changes_notifications_signal_handler)
         signal.signal(signal.SIGUSR2, toggle_new_events_notifications_signal_handler)
         signal.signal(signal.SIGCONT, toggle_repo_changes_notifications_signal_handler)
+        signal.signal(signal.SIGPIPE, toggle_repo_update_date_changes_notifications_signal_handler)
         signal.signal(signal.SIGTRAP, increase_check_signal_handler)
         signal.signal(signal.SIGABRT, decrease_check_signal_handler)
 
