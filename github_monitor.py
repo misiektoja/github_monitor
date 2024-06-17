@@ -244,7 +244,7 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
 
 
 # Function to send email notification
-def send_email(subject, body, body_html, use_ssl):
+def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
     fqdn_re = re.compile(r'(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}\.?$)')
     email_re = re.compile(r'[^@]+@[^@]+\.[^@]+')
 
@@ -282,10 +282,10 @@ def send_email(subject, body, body_html, use_ssl):
     try:
         if use_ssl:
             ssl_context = ssl.create_default_context()
-            smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+            smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
             smtpObj.starttls(context=ssl_context)
         else:
-            smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+            smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
         smtpObj.login(SMTP_USER, SMTP_PASSWORD)
         email_msg = MIMEMultipart('alternative')
         email_msg["From"] = SENDER_EMAIL
@@ -1737,6 +1737,7 @@ if __name__ == "__main__":
     parser.add_argument("-l", "--list_recent_events", help="List recent events for the user", action='store_true')
     parser.add_argument("-n", "--number_of_recent_events", help="Number of events to display if used with -l", type=int)
     parser.add_argument("-d", "--disable_logging", help="Disable logging to file 'github_monitor_user.log' file", action='store_true')
+    parser.add_argument("-z", "--send_test_email_notification", help="Send test email notification to verify SMTP settings defined in the script", action='store_true')
     args = parser.parse_args()
 
     if len(sys.argv) == 1:
@@ -1754,6 +1755,19 @@ if __name__ == "__main__":
         else:
             print("* Error: Cannot detect local timezone, consider setting LOCAL_TIMEZONE to your local timezone manually !")
             sys.exit(1)
+
+    sys.stdout.write("* Checking internet connectivity ... ")
+    sys.stdout.flush()
+    check_internet()
+    print("")
+
+    if args.send_test_email_notification:
+        print("* Sending test email notification ...\n")
+        if send_email("github_monitor: test email", "This is test email - your SMTP settings seems to be correct !", "", SMTP_SSL, smtp_timeout=5) == 0:
+                print("* Email sent successfully !")
+        else:
+            sys.exit(1)
+        sys.exit(0)
 
     if args.github_token:
         GITHUB_TOKEN = args.github_token
@@ -1801,11 +1815,6 @@ if __name__ == "__main__":
         github_list_events(args.GITHUB_USERNAME, events_n, g)
         g.close()
         sys.exit(0)
-
-    sys.stdout.write("* Checking internet connectivity ... ")
-    sys.stdout.flush()
-    check_internet()
-    print("")
 
     if args.check_interval:
         GITHUB_CHECK_INTERVAL = args.check_interval
