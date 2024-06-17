@@ -80,6 +80,7 @@ csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
 
 event_notification = False
 profile_notification = False
+repo_notification = False
 track_repos_changes = False
 
 # to solve the issue: 'SyntaxError: f-string expression part cannot include a backslash'
@@ -399,7 +400,7 @@ def print_v(text=""):
     return text + "\n"
 
 
-# Signal handler for SIGUSR1 allowing to switch email notifications for profile changes
+# Signal handler for SIGUSR1 allowing to switch email notifications for user's profile changes
 def toggle_profile_changes_notifications_signal_handler(sig, frame):
     global profile_notification
     profile_notification = not profile_notification
@@ -409,13 +410,23 @@ def toggle_profile_changes_notifications_signal_handler(sig, frame):
     print_cur_ts("Timestamp:\t\t\t")
 
 
-# Signal handler for SIGUSR2 allowing to switch email notifications for new events
+# Signal handler for SIGUSR2 allowing to switch email notifications for user's new events
 def toggle_new_events_notifications_signal_handler(sig, frame):
     global event_notification
     event_notification = not event_notification
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
     print(f"* Email notifications: [new events = {event_notification}]")
+    print_cur_ts("Timestamp:\t\t\t")
+
+
+# Signal handler for SIGCONT allowing to switch email notifications for user's repositories changes
+def toggle_repo_changes_notifications_signal_handler(sig, frame):
+    global repo_notification
+    repo_notification = not repo_notification
+    sig_name = signal.Signals(sig).name
+    print(f"* Signal {sig_name} received")
+    print(f"* Email notifications: [repos changes = {repo_notification}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -1555,7 +1566,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
                                 m_subject = f"Github user {user} number of stargazers for repo '{r_name}' has changed! ({r_stars_diff_str}, {r_stars_old} -> {r_stars})"
                                 m_body = f"* Repo '{r_name}': number of stargazers changed from {r_stars_old} to {r_stars} ({r_stars_diff_str})\n* Repo URL: {r_url}\n{removed_stargazers_mbody}{removed_stargazers_list}{added_stargazers_mbody}{added_stargazers_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                if profile_notification:
+                                if repo_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
                                 print_cur_ts("Timestamp:\t\t\t")
@@ -1616,7 +1627,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
                                 m_subject = f"Github user {user} number of watchers for repo '{r_name}' has changed! ({r_watchers_diff_str}, {r_watchers_old} -> {r_watchers})"
                                 m_body = f"* Repo '{r_name}': number of watchers changed from {r_watchers_old} to {r_watchers} ({r_watchers_diff_str})\n* Repo URL: {r_url}\n{removed_subscribers_mbody}{removed_subscribers_list}{added_subscribers_mbody}{added_subscribers_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                if profile_notification:
+                                if repo_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
                                 print_cur_ts("Timestamp:\t\t\t")
@@ -1677,7 +1688,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
                                 m_subject = f"Github user {user} number of forks for repo '{r_name}' has changed! ({r_forks_diff_str}, {r_forks_old} -> {r_forks})"
                                 m_body = f"* Repo '{r_name}': number of forks changed from {r_forks_old} to {r_forks} ({r_forks_diff_str})\n* Repo URL: {r_url}\n{removed_forked_repos_mbody}{removed_forked_repos_list}{added_forked_repos_mbody}{added_forked_repos_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                if profile_notification:
+                                if repo_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
                                 print_cur_ts("Timestamp:\t\t\t")
@@ -1693,7 +1704,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                     print(f"* Cannot write CSV entry - {e}")
                                 m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
                                 m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                if profile_notification:
+                                if repo_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
                                 print_cur_ts("Timestamp:\t\t\t")
@@ -1709,7 +1720,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                     print(f"* Cannot write CSV entry - {e}")
                                 m_subject = f"Github user {user} repo '{r_name}' description has changed !"
                                 m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                if profile_notification:
+                                if repo_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
                                 print_cur_ts("Timestamp:\t\t\t")
@@ -1790,8 +1801,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("github_monitor")
     parser.add_argument("GITHUB_USERNAME", nargs="?", help="Github username", type=str)
     parser.add_argument("-t", "--github_token", help="Github personal access token (classic) to override the value defined within the script (GITHUB_TOKEN)", type=str)
-    parser.add_argument("-p", "--profile_notification", help="Send email notification once user profile changes", action='store_true')
-    parser.add_argument("-s", "--event_notification", help="Send email notification once new event shows up", action='store_true')
+    parser.add_argument("-p", "--profile_notification", help="Send email notification once user's profile changes", action='store_true')
+    parser.add_argument("-s", "--event_notification", help="Send email notification once new events show up", action='store_true')
+    parser.add_argument("-q", "--repo_notification", help="Send email notification once changes in user's repositories are detected, works only if tracking of repos changes is enabled (-j)", action='store_true')
     parser.add_argument("-e", "--error_notification", help="Disable sending email notifications in case of errors like expired token", action='store_false')
     parser.add_argument("-c", "--check_interval", help="Time between monitoring checks, in seconds", type=int)
     parser.add_argument("-b", "--csv_file", help="Write info about new events & profile changes to CSV file", type=str, metavar="CSV_FILENAME")
@@ -1905,10 +1917,11 @@ if __name__ == "__main__":
 
     event_notification = args.event_notification
     profile_notification = args.profile_notification
+    repo_notification = args.repo_notification
     track_repos_changes = args.track_repos_changes
 
     print(f"* Github timers:\t\t[check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
-    print(f"* Email notifications:\t\t[profile changes = {profile_notification}] [new events = {event_notification}]\n*\t\t\t\t[errors = {args.error_notification}]")
+    print(f"* Email notifications:\t\t[profile changes = {profile_notification}] [new events = {event_notification}]\n*\t\t\t\t[repos changes = {repo_notification}] [errors = {args.error_notification}]")
     print(f"* Track repos changes:\t\t{track_repos_changes}")
     if not args.disable_logging:
         print(f"* Output logging enabled:\t{not args.disable_logging} ({GITHUB_LOGFILE})")
@@ -1928,6 +1941,7 @@ if __name__ == "__main__":
     if platform.system() != 'Windows':
         signal.signal(signal.SIGUSR1, toggle_profile_changes_notifications_signal_handler)
         signal.signal(signal.SIGUSR2, toggle_new_events_notifications_signal_handler)
+        signal.signal(signal.SIGCONT, toggle_repo_changes_notifications_signal_handler)
         signal.signal(signal.SIGTRAP, increase_check_signal_handler)
         signal.signal(signal.SIGABRT, decrease_check_signal_handler)
 
