@@ -514,7 +514,7 @@ def github_process_repos(repos_list):
                 repo_updated_date_ts = convert_utc_str_to_tz_datetime(str(repo_updated_date), LOCAL_TIMEZONE, 1).timestamp()
                 stargazers = [star.login for star in repo.get_stargazers()]
                 forked_repos = [fork.full_name for fork in repo.get_forks()]
-                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "watchers": repo.watchers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date_ts, "update_date": repo_updated_date_ts, "stargazers": stargazers, "forked_repos": forked_repos})
+                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "watchers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date_ts, "update_date": repo_updated_date_ts, "stargazers": stargazers, "forked_repos": forked_repos})
             except Exception as e:
                 print(f"Error while processing info for repo '{repo.name}', skipping for now - {e}")
                 print_cur_ts("Timestamp:\t\t")
@@ -550,7 +550,7 @@ def github_print_repos(user):
 
         for repo in repos_list:
             repo_str = f"\n- '{repo.name}' (fork: {repo.fork})"
-            repo_str += f"\n[ {repo.language}, forks: {repo.forks_count}, stars: {repo.stargazers_count}, watchers: {repo.watchers_count} ]"
+            repo_str += f"\n[ {repo.language}, forks: {repo.forks_count}, stars: {repo.stargazers_count}, watchers: {repo.subscribers_count} ]"
             if repo.html_url:
                 repo_str += f"\n[ {repo.html_url}/ ]"
             repo_created_date = repo.created_at
