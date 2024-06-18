@@ -2,6 +2,23 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 1.3 (18 Jun 2024)
+
+**Features and Improvements**:
+
+- **NEW:** Added support for tracking watchers/subscribers changes in public repositories (when **-j** parameter is used)
+- **NEW:** Added new parameter (**-z** / **--send_test_email_notification**) which allows to send test email notification to verify SMTP settings defined in the script
+- **IMPROVE:** Switched watchers_count to subscribers_count as in fact it corresponds to the number of watchers whereas watchers_count and stargazers_count correspond to the number of users that have starred a repository
+- **IMPROVE:** Email notifications for repositories changes (new **-q** parameter) have been separated from regular profile changes notifications (**-p**); also signal handler for SIGCONT has been added to switch repos changes email notifications
+- **IMPROVE:** Email notifications for repositories update date changes (new **-u** parameter) have been separated from regular repo changes notifications (**-q**) as they can be quite verbose; also signal handler for SIGPIPE has been added to switch repos update date changes email notifications
+- **IMPROVE:** Possibility to define email sending timeout (default set to 15 secs)
+
+**Bug fixes**:
+
+- **BUGFIX:** Fixed "SyntaxError: f-string: unmatched (" issue in older Python versions
+- **BUGFIX:** Fixed "SyntaxError: f-string expression part cannot include a backslash" issue in older Python versions
+- **BUGFIX:** Missing \t character added when displaying forked repositories
+
 # Changes in 1.2 (27 May 2024)
 
 **Features and Improvements**:
