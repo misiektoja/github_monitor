@@ -1528,6 +1528,22 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                             r_subscribers_old = repo_old.get("subscribers")
                             r_forked_repos_old = repo_old.get("forked_repos")
 
+                            # Update date for repo changed
+                            if int(r_update) != int(r_update_old):
+                                r_message = f"* Repo '{r_name}' update date changed (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})\n* Repo URL: {r_url}\n\nOld repo update date:\t{get_date_from_ts(r_update_old)}\n\nNew repo update date:\t{get_date_from_ts(r_update)}\n"
+                                print(r_message)
+                                try:
+                                    if csv_file_name:
+                                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Update Date", r_name, r_update_old, r_update)
+                                except Exception as e:
+                                    print(f"* Cannot write CSV entry - {e}")
+                                m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
+                                m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                if repo_update_date_notification:
+                                    print(f"Sending email notification to {RECEIVER_EMAIL}")
+                                    send_email(m_subject, m_body, "", SMTP_SSL)
+                                print_cur_ts("Timestamp:\t\t\t")
+
                             # Number of stars for repo changed
                             if r_stars != r_stars_old:
                                 r_stars_diff = r_stars - r_stars_old
@@ -1707,22 +1723,6 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                 m_subject = f"Github user {user} number of forks for repo '{r_name}' has changed! ({r_forks_diff_str}, {r_forks_old} -> {r_forks})"
                                 m_body = f"* Repo '{r_name}': number of forks changed from {r_forks_old} to {r_forks} ({r_forks_diff_str})\n* Repo URL: {r_url}\n{removed_forked_repos_mbody}{removed_forked_repos_list}{added_forked_repos_mbody}{added_forked_repos_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                 if repo_notification:
-                                    print(f"Sending email notification to {RECEIVER_EMAIL}")
-                                    send_email(m_subject, m_body, "", SMTP_SSL)
-                                print_cur_ts("Timestamp:\t\t\t")
-
-                            # Update date for repo changed
-                            if int(r_update) != int(r_update_old):
-                                r_message = f"* Repo '{r_name}' update date changed (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})\n* Repo URL: {r_url}\n\nOld repo update date:\t{get_date_from_ts(r_update_old)}\n\nNew repo update date:\t{get_date_from_ts(r_update)}\n"
-                                print(r_message)
-                                try:
-                                    if csv_file_name:
-                                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Update Date", r_name, r_update_old, r_update)
-                                except Exception as e:
-                                    print(f"* Cannot write CSV entry - {e}")
-                                m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
-                                m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                if repo_update_date_notification:
                                     print(f"Sending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
                                 print_cur_ts("Timestamp:\t\t\t")
