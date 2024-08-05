@@ -2,6 +2,17 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 1.4 (05 Aug 2024)
+
+**Features and Improvements**:
+
+- **IMPROVE:** Update date for repo is checked/reported before other repo attributes
+
+**Bug fixes**:
+
+- **BUGFIX:** Better exception handling in few places (some possible crashes fixed)
+- **BUGFIX:** Indentation + type casting fixes in the code
+
 # Changes in 1.3 (18 Jun 2024)
 
 **Features and Improvements**:
