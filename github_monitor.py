@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.3
+v1.4
 
 OSINT tool implementing real-time tracking of Github users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -15,7 +15,7 @@ python-dateutil
 requests
 """
 
-VERSION = 1.3
+VERSION = 1.4
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -849,7 +849,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
         events = g_user.get_events()
 
     except Exception as e:
-        print(f"Error - {e}")
+        print(f"* Error - {e}")
         sys.exit(1)
 
     last_event_id = 0
@@ -864,7 +864,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 if last_event_id:
                     last_event_ts = convert_utc_str_to_tz_datetime(str(event.created_at), LOCAL_TIMEZONE, 1).timestamp()
             events_list_of_ids.append(event.id)
-    except IndexError:
+    except Exception as e:
+        print(f"* Cannot get event IDs / timestamps - {e}")
         pass
 
     followers_old_count = followers_count
@@ -939,6 +940,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
         github_print_event(last_event, g, True)
     except IndexError:
         print("There are no events yet")
+    except Exception as e:
+        print(f"Cannot print last event details - {e}")
 
     print_cur_ts("\nTimestamp:\t\t\t")
 
@@ -947,10 +950,14 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     repos = []
     starred = []
 
-    followers = [follower.login for follower in followers_list]
-    followings = [following.login for following in followings_list]
-    repos = [repo.name for repo in repos_list]
-    starred = [star.full_name for star in starred_list]
+    try:
+        followers = [follower.login for follower in followers_list]
+        followings = [following.login for following in followings_list]
+        repos = [repo.name for repo in repos_list]
+        starred = [star.full_name for star in starred_list]
+    except Exception as e:
+        print(f"* Error - {e}")
+        sys.exit(1)
 
     followers_old = followers
     followings_old = followings
@@ -1742,9 +1749,10 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             last_event_id = events[0].id
             if last_event_id:
                 last_event_ts = convert_utc_str_to_tz_datetime(str(events[0].created_at), LOCAL_TIMEZONE, 1).timestamp()
-        except IndexError:
+        except Exception as e:
             last_event_id = 0
             last_event_ts = 0
+            print(f"* Cannot get last event ID / timestamp - {e}")
 
         events_list_of_ids = []
         first_new = True
