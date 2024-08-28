@@ -1545,7 +1545,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                     print(r_message)
                                     try:
                                         if csv_file_name:
-                                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Update Date", r_name, r_update_old, r_update)
+                                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Update Date", r_name, str(datetime.fromtimestamp(int(r_update_old))), str(datetime.fromtimestamp(int(r_update))))
                                     except Exception as e:
                                         print(f"* Cannot write CSV entry - {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
