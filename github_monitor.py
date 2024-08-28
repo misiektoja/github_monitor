@@ -1785,7 +1785,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                     first_new = False
                     try:
                         if csv_file_name:
-                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), str(event.type), str(repo_name), "", "")
+                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
                     except Exception as e:
                         print(f"* Cannot write CSV entry - {e}")
                     m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
