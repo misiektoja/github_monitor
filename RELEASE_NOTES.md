@@ -2,6 +2,17 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 1.5 (11 Sep 2024)
+
+**Features and Improvements**:
+
+- **IMPROVE:** Saving event date timestamp to CSV file (instead of current ts) as events can be delayed by Github API
+
+**Bug fixes**:
+
+- **BUGFIX:** Better exception handling while processing repos and events
+- **BUGFIX:** Fixed wrong representation of repo update date in CSV file
+
 # Changes in 1.4 (05 Aug 2024)
 
 **Features and Improvements**:
