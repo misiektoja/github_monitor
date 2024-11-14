@@ -500,6 +500,7 @@ def github_print_followers_and_followings(user):
 
     print(f"\nUsername:\t{user_name_str}")
     print(f"URL:\t\t{user_url}/")
+    print(f"Github API URL:\t{GITHUB_API_URL}")
 
     print(f"\nFollowers:\t{followers_count}")
     if followers_list:
@@ -573,6 +574,7 @@ def github_print_repos(user):
 
     print(f"\nUsername:\t{user_name_str}")
     print(f"URL:\t\t{user_url}/")
+    print(f"Github API URL:\t{GITHUB_API_URL}")
 
     print(f"\nRepositories:\t{repos_count}")
     if repos_list:
@@ -617,6 +619,7 @@ def github_print_starred_repos(user):
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"URL:\t\t\t{user_url}/")
+    print(f"Github API URL:\t\t{GITHUB_API_URL}")
 
     print(f"\nRepos starred by user:\t{starred_count}")
 
@@ -1838,6 +1841,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("github_monitor")
     parser.add_argument("GITHUB_USERNAME", nargs="?", help="Github username", type=str)
     parser.add_argument("-t", "--github_token", help="Github personal access token (classic) to override the value defined within the script (GITHUB_TOKEN)", type=str)
+    parser.add_argument("-x", "--github_url", help="Github API URL to override the default value defined within the script (GITHUB_API_URL)", type=str)
     parser.add_argument("-p", "--profile_notification", help="Send email notification once user's profile changes (e.g. changed followers, followings, starred repos, username, email, bio, location, blog URL, number of repositories)", action='store_true')
     parser.add_argument("-s", "--event_notification", help="Send email notification once new Github events show up for the user (e.g. new pushes, PRs, issues, forks, releases etc.)", action='store_true')
     parser.add_argument("-q", "--repo_notification", help="Send email notification once changes in user's repositories are detected (e.g. changed stargazers, watchers, forks, description etc., except for update date), works only if tracking of repos changes is enabled (-j)", action='store_true')
@@ -1893,6 +1897,13 @@ if __name__ == "__main__":
 
     if not args.GITHUB_USERNAME:
         print("* Error: GITHUB_USERNAME argument is required !")
+        sys.exit(1)
+
+    if args.github_url:
+        GITHUB_API_URL = args.github_url
+
+    if not GITHUB_API_URL:
+        print("* Error: GITHUB_API_URL (-x / --github_url) value is empty")
         sys.exit(1)
 
     if args.followers_and_followings:
@@ -1965,6 +1976,7 @@ if __name__ == "__main__":
 
     print(f"* Github timers:\t\t[check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
     print(f"* Email notifications:\t\t[profile changes = {profile_notification}] [new events = {event_notification}]\n*\t\t\t\t[repos changes = {repo_notification}] [repos update date = {repo_update_date_notification}]\n*\t\t\t\t[errors = {args.error_notification}]")
+    print(f"* Github API URL:\t\t{GITHUB_API_URL}")
     print(f"* Track repos changes:\t\t{track_repos_changes}")
     if not args.disable_logging:
         print(f"* Output logging enabled:\t{not args.disable_logging} ({GITHUB_LOGFILE})")
