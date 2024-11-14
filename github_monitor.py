@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.5
+v1.6
 
 OSINT tool implementing real-time tracking of Github users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -15,11 +15,16 @@ python-dateutil
 requests
 """
 
-VERSION = 1.5
+VERSION = 1.6
 
 # ---------------------------
 # CONFIGURATION SECTION START
 # ---------------------------
+
+# The URL of the Github API
+# For Public Web Github use the default: https://api.github.com
+# For Github Enterprise change to: https://{your_hostname}/api/v3
+GITHUB_API_URL = "https://api.github.com"
 
 # Get your Github personal access token (classic) by going to: https://github.com/settings/apps
 # Then click Personal access tokens -> Tokens (classic) -> Generate new token (classic)
@@ -68,9 +73,6 @@ GITHUB_LOGFILE = "github_monitor"
 
 # Value used by signal handlers increasing/decreasing the user activity check (GITHUB_CHECK_INTERVAL); in seconds
 GITHUB_CHECK_SIGNAL_VALUE = 60  # 1 minute
-
-# THe url of the Github API. For GitHub enterprise change with your API v3 URL
-GITHUB_API_URL = 'https://api.github.com'
 
 # -------------------------
 # CONFIGURATION SECTION END
@@ -479,7 +481,7 @@ def github_print_followers_and_followings(user):
     print(f"Getting followers & followings for user '{user}' ...")
 
     auth = Auth.Token(GITHUB_TOKEN)
-    g = Github(base_url=GITHUB_API_URL,auth=auth)
+    g = Github(base_url=GITHUB_API_URL, auth=auth)
 
     g_user = g.get_user(user)
     user_login = g_user.login
@@ -555,7 +557,7 @@ def github_print_repos(user):
     print(f"Getting public repositories for user '{user}' ...")
 
     auth = Auth.Token(GITHUB_TOKEN)
-    g = Github(base_url=GITHUB_API_URL,auth=auth)
+    g = Github(base_url=GITHUB_API_URL, auth=auth)
 
     g_user = g.get_user(user)
     user_login = g_user.login
@@ -599,7 +601,7 @@ def github_print_starred_repos(user):
     print(f"Getting repositories starred by user '{user}' ...")
 
     auth = Auth.Token(GITHUB_TOKEN)
-    g = Github(base_url=GITHUB_API_URL,auth=auth)
+    g = Github(base_url=GITHUB_API_URL, auth=auth)
 
     g_user = g.get_user(user)
     user_login = g_user.login
@@ -821,7 +823,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
     try:
         auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL,auth=auth)
+        g = Github(base_url=GITHUB_API_URL, auth=auth)
         g_user_myself = g.get_user()
         user_myself_login = g_user_myself.login
         user_myself_name = g_user_myself.name
@@ -979,7 +981,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     # main loop
     while True:
         try:
-            g = Github(base_url=GITHUB_API_URL,auth=auth)
+            g = Github(base_url=GITHUB_API_URL, auth=auth)
             g_user = g.get_user(user)
             user_name = g_user.name
             location = g_user.location
@@ -1767,6 +1769,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             last_event_id = 0
             last_event_ts = 0
             print(f"* Cannot get last event ID / timestamp - {e}")
+            print_cur_ts("Timestamp:\t\t\t")
 
         events_list_of_ids = []
         first_new = True
@@ -1923,7 +1926,7 @@ if __name__ == "__main__":
             events_n = 5
         print(f"* Listing {events_n} recent events for {args.GITHUB_USERNAME}:\n")
         auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL,auth=auth)
+        g = Github(base_url=GITHUB_API_URL, auth=auth)
         github_list_events(args.GITHUB_USERNAME, events_n, g)
         g.close()
         sys.exit(0)
