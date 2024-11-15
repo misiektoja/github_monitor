@@ -24,6 +24,7 @@ VERSION = 1.6
 # The URL of the Github API
 # For Public Web Github use the default: https://api.github.com
 # For Github Enterprise change to: https://{your_hostname}/api/v3
+# You can also change it by using -x parameter
 GITHUB_API_URL = "https://api.github.com"
 
 # Get your Github personal access token (classic) by going to: https://github.com/settings/apps
