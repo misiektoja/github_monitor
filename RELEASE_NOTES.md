@@ -2,6 +2,14 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 1.6 (15 Nov 2024)
+
+**Features and Improvements**:
+
+- **NEW:** Support for Github Enterprise (thanks [@LunaticMuch](https://github.com/LunaticMuch))
+- **NEW:** Added new Github API URL parameter (**-x** / **--github_url**) to override the default value defined within the script
+- **IMPROVE:** Showing current timestamp when we cannot get last event ID
+
 # Changes in 1.5 (11 Sep 2024)
 
 **Features and Improvements**:
