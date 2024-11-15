@@ -16,6 +16,7 @@ github_monitor is an OSINT tool written in Python which allows for real-time mon
 - Saving all user activities with timestamps to the CSV file
 - Clickable Github URLs printed in the console & included in email notifications (repos, PRs, commits, issues, releases etc.)
 - Possibility to control the running copy of the script via signals
+- Support for Public Web Github and Github Enterprise
 
 <p align="center">
    <img src="./assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
@@ -36,7 +37,7 @@ The tool requires Python 3.x.
 It uses [PyGithub](https://github.com/PyGithub/PyGithub) library, also requires requests, python-dateutil, tzlocal and pytz.
 
 It has been tested successfully on:
-- macOS (Ventura & Sonoma)
+- macOS (Ventura, Sonoma & Sequoia)
 - Linux:
    - Raspberry Pi Bullseye & Bookworm
    - Ubuntu 24
@@ -76,6 +77,13 @@ Edit the  *[github_monitor.py](github_monitor.py)* file and change any desired c
 In order to get your Github personal access token (classic), go to your Github app settings [https://github.com/settings/apps](https://github.com/settings/apps), then click *'Personal access tokens'* -> *'Tokens (classic)'* -> *'Generate new token (classic)'*.
 
 Copy the value of the token to **GITHUB_TOKEN** variable (or use **-t** parameter). 
+
+### Github API URL
+
+By default the tool uses Public Web Github API URL ([https://api.github.com](https://api.github.com)).
+
+If you want to use Github Enterprise API URL then change **GITHUB_API_URL** variable (or use **-x** parameter) to: [https://{your_hostname}/api/v3](https://{your_hostname}/api/v3)
+
 
 ### Events to monitor
 
