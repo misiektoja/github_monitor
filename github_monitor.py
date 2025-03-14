@@ -48,7 +48,7 @@ SENDER_EMAIL = "your_sender_email"
 RECEIVER_EMAIL = "your_receiver_email"
 
 # How often do we perform checks for user activity, you can also use -c parameter; in seconds
-GITHUB_CHECK_INTERVAL = 600  # 10 mins
+GITHUB_CHECK_INTERVAL = 1200  # 20 mins
 
 # Specify your local time zone so we convert Github API timestamps to your time (for example: 'Europe/Warsaw')
 # If you leave it as 'Auto' we will try to automatically detect the local timezone
@@ -876,6 +876,9 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                     if last_event_id:
                         last_event_ts = int(convert_utc_str_to_tz_datetime(str(event.created_at), LOCAL_TIMEZONE, 1).timestamp())
                 events_list_of_ids.append(event.id)
+        # users inactive for a longer period generate IndexError, so we skip it
+        except IndexError:
+            pass
         except Exception as e:
             print(f"* Cannot get event IDs / timestamps - {e}\n")
             pass
@@ -1777,6 +1780,9 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 last_event_id = events[0].id
                 if last_event_id:
                     last_event_ts = int(convert_utc_str_to_tz_datetime(str(events[0].created_at), LOCAL_TIMEZONE, 1).timestamp())
+            # users inactive for a longer period generate IndexError, so we skip it
+            except IndexError:
+                pass
             except Exception as e:
                 last_event_id = 0
                 last_event_ts = 0
@@ -1984,6 +1990,8 @@ if __name__ == "__main__":
     if not track_repos_changes:
         repo_notification = False
         repo_update_date_notification = False
+    if do_not_monitor_github_events:
+        event_notification = False
 
     print(f"* Github timers:\t\t[check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
     print(f"* Email notifications:\t\t[profile changes = {profile_notification}] [new events = {event_notification}]\n*\t\t\t\t[repos changes = {repo_notification}] [repos update date = {repo_update_date_notification}]\n*\t\t\t\t[errors = {args.error_notification}]")
