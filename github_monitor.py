@@ -797,14 +797,19 @@ def github_print_event(event, g, time_passed=False, ts=0):
 # Function listing recent events for the user (-l)
 def github_list_events(user, number, g):
 
-    g_user = g.get_user(user)
-    events = g_user.get_events()
+    try:
+        g_user = g.get_user(user)
+        events = g_user.get_events()
 
-    for i in reversed(range(number)):
-        event = events[i]
-        if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
-            github_print_event(event, g)
-            print_cur_ts("\nTimestamp:\t\t\t")
+        for i in reversed(range(number)):
+            event = events[i]
+            if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
+                github_print_event(event, g)
+                print_cur_ts("\nTimestamp:\t\t\t")
+    except IndexError:
+        print("There are no events yet")
+    except Exception as e:
+        print(f"Cannot print last event details - {e}")
 
 
 # Main function monitoring activity of the specified Github user
