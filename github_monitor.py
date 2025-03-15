@@ -298,7 +298,7 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
         email_msg = MIMEMultipart('alternative')
         email_msg["From"] = SENDER_EMAIL
         email_msg["To"] = RECEIVER_EMAIL
-        email_msg["Subject"] = Header(subject, 'utf-8')
+        email_msg["Subject"] = str(Header(subject, 'utf-8'))
 
         if body:
             part1 = MIMEText(body, 'plain')
@@ -479,51 +479,63 @@ def github_convert_api_to_html_url(url):
 
 # Function printing followers & followings for Github user (-f)
 def github_print_followers_and_followings(user):
-    print(f"Getting followers & followings for user '{user}' ...")
+    print(f"* Getting followers & followings for user '{user}' ...")
 
-    auth = Auth.Token(GITHUB_TOKEN)
-    g = Github(base_url=GITHUB_API_URL, auth=auth)
+    try:
+        auth = Auth.Token(GITHUB_TOKEN)
+        g = Github(base_url=GITHUB_API_URL, auth=auth)
 
-    g_user = g.get_user(user)
-    user_login = g_user.login
-    user_name = g_user.name
-    user_url = g_user.html_url
+        g_user = g.get_user(user)
+        user_login = g_user.login
+        user_name = g_user.name
+        user_url = g_user.html_url
 
-    followers_count = g_user.followers
-    followings_count = g_user.following
+        followers_count = g_user.followers
+        followings_count = g_user.following
 
-    followers_list = g_user.get_followers()
-    followings_list = g_user.get_following()
+        followers_list = g_user.get_followers()
+        followings_list = g_user.get_following()
 
-    user_name_str = user_login
-    if user_name:
-        user_name_str += f" ({user_name})"
+        user_name_str = user_login
+        if user_name:
+            user_name_str += f" ({user_name})"
+    except Exception as e:
+        print(f"Cannot fetch user details - {e}")
 
-    print(f"\nUsername:\t{user_name_str}")
-    print(f"URL:\t\t{user_url}/")
-    print(f"Github API URL:\t{GITHUB_API_URL}")
+    print(f"\nUsername:\t\t{user_name_str}")
+    print(f"User URL:\t\t{user_url}/")
+    print(f"Github API URL:\t\t{GITHUB_API_URL}")
+    print(f"Local timezone:\t\t{LOCAL_TIMEZONE}")
 
-    print(f"\nFollowers:\t{followers_count}")
-    if followers_list:
+    print(f"\nFollowers:\t\t{followers_count}")
 
-        for follower in followers_list:
-            follower_str = f"\n- {follower.login}"
-            if follower.name:
-                follower_str += f" ({follower.name})"
-            if follower.html_url:
-                follower_str += f"\n[ {follower.html_url}/ ]"
-            print(follower_str)
+    try:
+        if followers_list:
 
-    print(f"\nFollowings:\t{followings_count}")
-    if followings_list:
+            for follower in followers_list:
+                follower_str = f"\n- {follower.login}"
+                if follower.name:
+                    follower_str += f" ({follower.name})"
+                if follower.html_url:
+                    follower_str += f"\n[ {follower.html_url}/ ]"
+                print(follower_str)
+    except Exception as e:
+        print(f"Cannot fetch user's followers list - {e}")
 
-        for following in followings_list:
-            following_str = f"\n- {following.login}"
-            if following.name:
-                following_str += f" ({following.name})"
-            if following.html_url:
-                following_str += f"\n[ {following.html_url}/ ]"
-            print(following_str)
+    print(f"\nFollowings:\t\t{followings_count}")
+
+    try:
+        if followings_list:
+
+            for following in followings_list:
+                following_str = f"\n- {following.login}"
+                if following.name:
+                    following_str += f" ({following.name})"
+                if following.html_url:
+                    following_str += f"\n[ {following.html_url}/ ]"
+                print(following_str)
+    except Exception as e:
+        print(f"Cannot fetch user's followings list - {e}")
 
     g.close()
 
@@ -556,80 +568,95 @@ def github_process_repos(repos_list):
 
 # Function printing list of public repositories for Github user (-r)
 def github_print_repos(user):
-    print(f"Getting public repositories for user '{user}' ...")
+    print(f"* Getting public repositories for user '{user}' ...")
 
-    auth = Auth.Token(GITHUB_TOKEN)
-    g = Github(base_url=GITHUB_API_URL, auth=auth)
+    try:
+        auth = Auth.Token(GITHUB_TOKEN)
+        g = Github(base_url=GITHUB_API_URL, auth=auth)
 
-    g_user = g.get_user(user)
-    user_login = g_user.login
-    user_name = g_user.name
-    user_url = g_user.html_url
+        g_user = g.get_user(user)
+        user_login = g_user.login
+        user_name = g_user.name
+        user_url = g_user.html_url
 
-    repos_count = g_user.public_repos
-    repos_list = g_user.get_repos()
+        repos_count = g_user.public_repos
+        repos_list = g_user.get_repos()
 
-    user_name_str = user_login
-    if user_name:
-        user_name_str += f" ({user_name})"
+        user_name_str = user_login
+        if user_name:
+            user_name_str += f" ({user_name})"
+    except Exception as e:
+        print(f"Cannot fetch user details - {e}")
 
-    print(f"\nUsername:\t{user_name_str}")
-    print(f"URL:\t\t{user_url}/")
-    print(f"Github API URL:\t{GITHUB_API_URL}")
+    print(f"\nUsername:\t\t{user_name_str}")
+    print(f"User URL:\t\t{user_url}/")
+    print(f"Github API URL:\t\t{GITHUB_API_URL}")
+    print(f"Local timezone:\t\t{LOCAL_TIMEZONE}")
 
-    print(f"\nRepositories:\t{repos_count}")
-    if repos_list:
+    print(f"\nRepositories:\t\t{repos_count}")
 
-        for repo in repos_list:
-            repo_str = f"\n- '{repo.name}' (fork: {repo.fork})"
-            repo_str += f"\n[ {repo.language}, forks: {repo.forks_count}, stars: {repo.stargazers_count}, watchers: {repo.subscribers_count} ]"
-            if repo.html_url:
-                repo_str += f"\n[ {repo.html_url}/ ]"
-            repo_created_date = repo.created_at
-            repo_created_date_ts = convert_utc_str_to_tz_datetime(str(repo_created_date), LOCAL_TIMEZONE, 1).timestamp()
-            repo_updated_date = repo.updated_at
-            repo_updated_date_ts = convert_utc_str_to_tz_datetime(str(repo_updated_date), LOCAL_TIMEZONE, 1).timestamp()
-            repo_str += f"\n[ date: {get_date_from_ts(repo_created_date_ts)} - {calculate_timespan(int(time.time()), int(repo_created_date_ts), granularity=2)} ago) ]"
-            repo_str += f"\n[ update: {get_date_from_ts(repo_updated_date_ts)} - {calculate_timespan(int(time.time()), int(repo_updated_date_ts), granularity=2)} ago) ]"
-            if repo.description:
-                repo_str += f"\n'{repo.description}'"
+    try:
+        if repos_list:
 
-            print(repo_str)
+            for repo in repos_list:
+                repo_str = f"\n- '{repo.name}' (fork: {repo.fork})"
+                repo_str += f"\n[ {repo.language}, forks: {repo.forks_count}, stars: {repo.stargazers_count}, watchers: {repo.subscribers_count} ]"
+                if repo.html_url:
+                    repo_str += f"\n[ {repo.html_url}/ ]"
+                repo_created_date = repo.created_at
+                repo_created_date_ts = convert_utc_str_to_tz_datetime(str(repo_created_date), LOCAL_TIMEZONE, 1).timestamp()
+                repo_updated_date = repo.updated_at
+                repo_updated_date_ts = convert_utc_str_to_tz_datetime(str(repo_updated_date), LOCAL_TIMEZONE, 1).timestamp()
+                repo_str += f"\n[ date: {get_date_from_ts(repo_created_date_ts)} - {calculate_timespan(int(time.time()), int(repo_created_date_ts), granularity=2)} ago) ]"
+                repo_str += f"\n[ update: {get_date_from_ts(repo_updated_date_ts)} - {calculate_timespan(int(time.time()), int(repo_updated_date_ts), granularity=2)} ago) ]"
+                if repo.description:
+                    repo_str += f"\n'{repo.description}'"
+
+                print(repo_str)
+    except Exception as e:
+        print(f"Cannot fetch user's repositories list - {e}")
 
     g.close()
 
 
 # Function printing list of starred repositories by Github user (-g)
 def github_print_starred_repos(user):
-    print(f"Getting repositories starred by user '{user}' ...")
+    print(f"* Getting repositories starred by user '{user}' ...")
 
-    auth = Auth.Token(GITHUB_TOKEN)
-    g = Github(base_url=GITHUB_API_URL, auth=auth)
+    try:
+        auth = Auth.Token(GITHUB_TOKEN)
+        g = Github(base_url=GITHUB_API_URL, auth=auth)
 
-    g_user = g.get_user(user)
-    user_login = g_user.login
-    user_name = g_user.name
-    user_url = g_user.html_url
+        g_user = g.get_user(user)
+        user_login = g_user.login
+        user_name = g_user.name
+        user_url = g_user.html_url
 
-    starred_list = g_user.get_starred()
-    starred_count = starred_list.totalCount
+        starred_list = g_user.get_starred()
+        starred_count = starred_list.totalCount
 
-    user_name_str = user_login
-    if user_name:
-        user_name_str += f" ({user_name})"
+        user_name_str = user_login
+        if user_name:
+            user_name_str += f" ({user_name})"
+    except Exception as e:
+        print(f"Cannot fetch user details - {e}")
 
     print(f"\nUsername:\t\t{user_name_str}")
-    print(f"URL:\t\t\t{user_url}/")
+    print(f"User URL:\t\t{user_url}/")
     print(f"Github API URL:\t\t{GITHUB_API_URL}")
+    print(f"Local timezone:\t\t{LOCAL_TIMEZONE}")
 
     print(f"\nRepos starred by user:\t{starred_count}")
 
-    if starred_list:
-        for star in starred_list:
-            star_str = f"\n- {star.full_name}"
-            if star.html_url:
-                star_str += f" [ {star.html_url}/ ]"
-            print(star_str)
+    try:
+        if starred_list:
+            for star in starred_list:
+                star_str = f"\n- {star.full_name}"
+                if star.html_url:
+                    star_str += f" [ {star.html_url}/ ]"
+                print(star_str)
+    except Exception as e:
+        print(f"Cannot fetch user's starred list - {e}")
 
     g.close()
 
@@ -794,22 +821,64 @@ def github_print_event(event, g, time_passed=False, ts=0):
     return event_date_ts, repo_name, repo_url, st
 
 
-# Function listing recent events for the user (-l)
-def github_list_events(user, number, g):
+# Function listing recent events for the user (-l) and potentially dumping the entries to CSV file (if -b is used)
+def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
+    try:
+        if csv_file_name:
+            csv_file = open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8")
+            csvwriter = csv.DictWriter(csv_file, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
+            if not csv_exists:
+                csvwriter.writeheader()
+            csv_file.close()
+    except Exception as e:
+        print(f"* Error - {e}")
+
+    if csv_file_name:
+        list_operation = "* Listing & saving"
+    else:
+        list_operation = "* Listing"
+
+    print(f"{list_operation} {number} recent events for '{user}' ...\n")
 
     try:
+        auth = Auth.Token(GITHUB_TOKEN)
+        g = Github(base_url=GITHUB_API_URL, auth=auth)
+
         g_user = g.get_user(user)
         events = g_user.get_events()
 
+        user_login = g_user.login
+        user_name = g_user.name
+        user_url = g_user.html_url
+
+        user_name_str = user_login
+        if user_name:
+            user_name_str += f" ({user_name})"
+    except Exception as e:
+        print(f"Cannot fetch user details - {e}")
+
+    print(f"Username:\t\t\t{user_name_str}")
+    print(f"User URL:\t\t\t{user_url}/")
+    print(f"Github API URL:\t\t\t{GITHUB_API_URL}")
+    if csv_enabled:
+        print(f"CSV export enabled:\t\t{csv_enabled} ({csv_file_name})")
+    print(f"Local timezone:\t\t\t{LOCAL_TIMEZONE}\n")
+
+    try:
         for i in reversed(range(number)):
             event = events[i]
             if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
-                github_print_event(event, g)
+                event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g)
+                try:
+                    if csv_file_name:
+                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
+                except Exception as e:
+                    print(f"* Cannot write CSV entry - {e}")
                 print_cur_ts("\nTimestamp:\t\t\t")
     except IndexError:
-        print("There are no events yet")
+        print("There are no events yet or the number of events to fetch is too high")
     except Exception as e:
-        print(f"Cannot print last event details - {e}")
+        print(f"Cannot fetch event details - {e}")
 
 
 # Main function monitoring activity of the specified Github user
@@ -915,7 +984,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
         user_name_str += f" ({user_name})"
 
     print(f"\nUsername:\t\t\t{user_name_str}")
-    print(f"URL:\t\t\t\t{user_url}/")
+    print(f"User URL:\t\t\t{user_url}/")
 
     if location:
         print(f"Location:\t\t\t{location}")
@@ -966,7 +1035,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
         except IndexError:
             print("There are no events yet")
         except Exception as e:
-            print(f"Cannot print last event details - {e}")
+            print(f"Cannot fetch last event details - {e}")
 
         print_cur_ts("\nTimestamp:\t\t\t")
 
@@ -1951,18 +2020,6 @@ if __name__ == "__main__":
             sys.exit(1)
         sys.exit(0)
 
-    if args.list_recent_events:
-        if args.number_of_recent_events and args.number_of_recent_events > 0:
-            events_n = args.number_of_recent_events
-        else:
-            events_n = 5
-        print(f"* Listing {events_n} recent events for {args.GITHUB_USERNAME}:\n")
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
-        github_list_events(args.GITHUB_USERNAME, events_n, g)
-        g.close()
-        sys.exit(0)
-
     if args.check_interval:
         GITHUB_CHECK_INTERVAL = args.check_interval
         TOOL_ALIVE_COUNTER = TOOL_ALIVE_INTERVAL / GITHUB_CHECK_INTERVAL
@@ -1980,6 +2037,18 @@ if __name__ == "__main__":
         csv_enabled = False
         csv_file = None
         csv_exists = False
+
+    if args.list_recent_events:
+        if args.number_of_recent_events and args.number_of_recent_events > 0:
+            events_n = args.number_of_recent_events
+        else:
+            events_n = 5
+        try:
+            github_list_events(args.GITHUB_USERNAME, events_n, args.csv_file, csv_enabled, csv_exists)
+        except Exception as e:
+            print(f"* Error - {e}")
+            sys.exit(1)
+        sys.exit(0)
 
     if not args.disable_logging:
         GITHUB_LOGFILE = f"{GITHUB_LOGFILE}_{args.GITHUB_USERNAME}.log"
