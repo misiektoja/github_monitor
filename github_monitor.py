@@ -15,7 +15,7 @@ python-dateutil
 requests
 """
 
-VERSION = 1.7
+VERSION = "1.7"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -155,7 +155,6 @@ def check_internet():
     except Exception as e:
         print(f"No connectivity, please check your network - {e}")
         sys.exit(1)
-    return False
 
 
 # Function to convert absolute value of seconds to human readable format
@@ -257,7 +256,7 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
     email_re = re.compile(r'[^@]+@[^@]+\.[^@]+')
 
     try:
-        is_ip = ipaddress.ip_address(str(SMTP_HOST))
+        ipaddress.ip_address(str(SMTP_HOST))
     except ValueError:
         if not fqdn_re.search(str(SMTP_HOST)):
             print("Error sending email - SMTP settings are incorrect (invalid IP address/FQDN in SMTP_HOST)")
@@ -325,7 +324,7 @@ def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new
         csvwriter = csv.DictWriter(csv_file, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
         csvwriter.writerow({'Date': timestamp, 'Type': object_type, 'Name': object_name, 'Old': old, 'New': new})
         csv_file.close()
-    except Exception as e:
+    except Exception:
         raise
 
 
@@ -398,7 +397,7 @@ def convert_utc_str_to_tz_datetime(utc_string, timezone, version=1):
         new_tz = pytz.timezone(timezone)
         dt_new_tz = old_tz.localize(dt_utc).astimezone(new_tz)
         return dt_new_tz
-    except Exception as e:
+    except Exception:
         return datetime.fromtimestamp(0)
 
 
@@ -823,6 +822,9 @@ def github_print_event(event, g, time_passed=False, ts=0):
 
 # Function listing recent events for the user (-l) and potentially dumping the entries to CSV file (if -b is used)
 def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
+    events = []
+    available_events = 0
+
     try:
         if csv_file_name:
             csv_file = open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8")
@@ -845,7 +847,8 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
         g = Github(base_url=GITHUB_API_URL, auth=auth)
 
         g_user = g.get_user(user)
-        events = g_user.get_events()
+        events = list(g_user.get_events())
+        available_events = len(events)
 
         user_login = g_user.login
         user_name = g_user.name
@@ -856,29 +859,32 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
             user_name_str += f" ({user_name})"
     except Exception as e:
         print(f"Cannot fetch user details - {e}")
+        return
 
     print(f"Username:\t\t\t{user_name_str}")
     print(f"User URL:\t\t\t{user_url}/")
     print(f"Github API URL:\t\t\t{GITHUB_API_URL}")
     if csv_enabled:
         print(f"CSV export enabled:\t\t{csv_enabled} ({csv_file_name})")
-    print(f"Local timezone:\t\t\t{LOCAL_TIMEZONE}\n")
+    print(f"Local timezone:\t\t\t{LOCAL_TIMEZONE}")
+    print(f"Available events:\t\t{available_events}\n")
 
-    try:
-        for i in reversed(range(number)):
-            event = events[i]
-            if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
-                event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g)
-                try:
-                    if csv_file_name:
-                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
-                except Exception as e:
-                    print(f"* Cannot write CSV entry - {e}")
-                print_cur_ts("\nTimestamp:\t\t\t")
-    except IndexError:
-        print("There are no events yet or the number of events to fetch is too high")
-    except Exception as e:
-        print(f"Cannot fetch event details - {e}")
+    if available_events == 0:
+        print("There are no events yet")
+    else:
+        try:
+            for i in reversed(range(min(number, available_events))):
+                event = events[i]
+                if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
+                    event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g)
+                    try:
+                        if csv_file_name:
+                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
+                    except Exception as e:
+                        print(f"* Cannot write CSV entry - {e}")
+                    print_cur_ts("\nTimestamp:\t\t\t")
+        except Exception as e:
+            print(f"Cannot fetch event details - {e}")
 
 
 # Main function monitoring activity of the specified Github user
@@ -898,6 +904,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     followings_count = 0
     repos_count = 0
     starred_count = 0
+    available_events = 0
     events = []
 
     try:
@@ -931,7 +938,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
         starred_count = starred_list.totalCount
 
         if not do_not_monitor_github_events:
-            events = g_user.get_events()
+            events = list(g_user.get_events())
+            available_events = len(events)
 
     except Exception as e:
         print(f"* Error - {e}")
@@ -942,20 +950,20 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     events_list_of_ids = []
 
     if not do_not_monitor_github_events:
-        try:
-            for i in reversed(range(EVENTS_NUMBER)):
-                event = events[i]
-                if i == 0:
-                    last_event_id = event.id
-                    if last_event_id:
-                        last_event_ts = int(convert_utc_str_to_tz_datetime(str(event.created_at), LOCAL_TIMEZONE, 1).timestamp())
-                events_list_of_ids.append(event.id)
-        # users inactive for a longer period generate IndexError, so we skip it
-        except IndexError:
+        if available_events == 0:
             pass
-        except Exception as e:
-            print(f"* Cannot get event IDs / timestamps - {e}\n")
-            pass
+        else:
+            try:
+                for i in reversed(range(min(EVENTS_NUMBER, available_events))):
+                    event = events[i]
+                    if i == 0:
+                        last_event_id = event.id
+                        if last_event_id:
+                            last_event_ts = int(convert_utc_str_to_tz_datetime(str(event.created_at), LOCAL_TIMEZONE, 1).timestamp())
+                    events_list_of_ids.append(event.id)
+            except Exception as e:
+                print(f"* Cannot get event IDs / timestamps - {e}\n")
+                pass
 
     followers_old_count = followers_count
     followings_old_count = followings_count
@@ -1009,6 +1017,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     print(f"Followings:\t\t\t{followings_count}")
     print(f"Repositories:\t\t\t{repos_count}")
     print(f"Starred repos:\t\t\t{starred_count}")
+    if not do_not_monitor_github_events:
+        print(f"Available events:\t\t{available_events}")
 
     if bio:
         print(f"\nBio:\n\n'{bio}'")
@@ -1029,13 +1039,14 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     if not do_not_monitor_github_events:
         print(f"Latest event:\n")
 
-        try:
-            last_event = events[0]
-            github_print_event(last_event, g, True)
-        except IndexError:
+        if available_events == 0:
             print("There are no events yet")
-        except Exception as e:
-            print(f"Cannot fetch last event details - {e}")
+        else:
+            try:
+                last_event = events[0]
+                github_print_event(last_event, g, True)
+            except Exception as e:
+                print(f"Cannot fetch last event details - {e}")
 
         print_cur_ts("\nTimestamp:\t\t\t")
 
@@ -1090,7 +1101,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             starred_count = starred_list.totalCount
 
             if not do_not_monitor_github_events:
-                events = g_user.get_events()
+                events = list(g_user.get_events())
+                available_events = len(events)
 
             email_sent = False
 
@@ -1850,18 +1862,19 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
         # New Github events
         if not do_not_monitor_github_events:
-            try:
-                last_event_id = events[0].id
-                if last_event_id:
-                    last_event_ts = int(convert_utc_str_to_tz_datetime(str(events[0].created_at), LOCAL_TIMEZONE, 1).timestamp())
-            # users inactive for a longer period generate IndexError, so we skip it
-            except IndexError:
-                pass
-            except Exception as e:
+            if available_events == 0:
                 last_event_id = 0
                 last_event_ts = 0
-                print(f"* Cannot get last event ID / timestamp - {e}")
-                print_cur_ts("Timestamp:\t\t\t")
+            else:
+                try:
+                    last_event_id = events[0].id
+                    if last_event_id:
+                        last_event_ts = int(convert_utc_str_to_tz_datetime(str(events[0].created_at), LOCAL_TIMEZONE, 1).timestamp())
+                except Exception as e:
+                    last_event_id = 0
+                    last_event_ts = 0
+                    print(f"* Cannot get last event ID / timestamp - {e}")
+                    print_cur_ts("Timestamp:\t\t\t")
 
             events_list_of_ids = []
             first_new = True
@@ -1869,7 +1882,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             # New events showed up
             if last_event_id and last_event_id != last_event_id_old:
 
-                for i in reversed(range(EVENTS_NUMBER)):
+                for i in reversed(range(min(EVENTS_NUMBER, available_events))):
                     event = events[i]
                     if i == 0:
                         last_event_id = event.id
@@ -1922,7 +1935,7 @@ if __name__ == "__main__":
             os.system('cls')
         else:
             os.system('clear')
-    except:
+    except Exception:
         print("* Cannot clear the screen contents")
 
     print(f"Github Monitoring Tool v{VERSION}\n")
