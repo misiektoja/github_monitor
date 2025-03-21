@@ -1,22 +1,22 @@
 # github_monitor
 
-github_monitor is an OSINT tool written in Python which allows for real-time monitoring of Github users activities including profile and repositories changes. 
+github_monitor is an OSINT tool that allows for real-time monitoring of GitHub users' activities, including profile and repository changes.
 
 ## Features
 
-- Real-time tracking of Github users activities including profile and repos changes:
-   - new Github events for the user like new pushes, PRs, issues, forks, releases etc.
-   - repositories changes like changed stargazers, watchers, forks, description, repo update date etc.
+- Real-time tracking of GitHub users' activities, including profile and repository changes:
+   - new GitHub events for the user like new pushes, PRs, issues, forks, releases etc.
+   - repository changes such as updated stargazers, watchers, forks, description and repo update dates
    - added/removed followings and followers
    - added/removed starred repositories
    - added/removed public repositories
-   - changed user name, email, location, company, bio, blog URL
+   - changes in user name, email, location, company, bio, and blog URL
    - detection of account changes
-- Email notifications for different events (new Github events, changed followings, followers, repositories, user name, email, location, company, bio, blog URL etc.)
+- Email notifications for different events (new GitHub events, changed followings, followers, repositories, user name, email, location, company, bio, blog URL etc.)
 - Saving all user activities with timestamps to the CSV file
-- Clickable Github URLs printed in the console & included in email notifications (repos, PRs, commits, issues, releases etc.)
+- Clickable GitHub URLs printed in the console & included in email notifications (repos, PRs, commits, issues, releases etc.)
 - Possibility to control the running copy of the script via signals
-- Support for Public Web Github and Github Enterprise
+- Support for Public Web GitHub and GitHub Enterprise
 
 <p align="center">
    <img src="./assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
@@ -25,10 +25,6 @@ github_monitor is an OSINT tool written in Python which allows for real-time mon
 ## Change Log
 
 Release notes can be found [here](RELEASE_NOTES.md)
-
-## Disclaimer
-
-I'm not a dev, project done as a hobby. Code is ugly and as-is, but it works (at least for me) ;-)
 
 ## Requirements
 
@@ -39,9 +35,10 @@ It uses [PyGithub](https://github.com/PyGithub/PyGithub) library, also requires 
 It has been tested successfully on:
 - macOS (Ventura, Sonoma & Sequoia)
 - Linux:
-   - Raspberry Pi Bullseye & Bookworm
+   - Raspberry Pi OS (Bullseye & Bookworm)
    - Ubuntu 24
-   - Kali Linux 2024
+   - Rocky Linux (8.x, 9.x)
+   - Kali Linux (2024, 2025)
 - Windows (10 & 11)
 
 It should work on other versions of macOS, Linux, Unix and Windows as well.
@@ -72,17 +69,17 @@ chmod a+x github_monitor.py
 
 Edit the  *[github_monitor.py](github_monitor.py)* file and change any desired configuration variables in the marked **CONFIGURATION SECTION** (all parameters have detailed description in the comments).
 
-### Github personal access token
+### GitHub personal access token
 
-In order to get your Github personal access token (classic), go to your Github app settings [https://github.com/settings/apps](https://github.com/settings/apps), then click *'Personal access tokens'* -> *'Tokens (classic)'* -> *'Generate new token (classic)'*.
+In order to get your GitHub personal access token (classic), go to your GitHub app settings [https://github.com/settings/apps](https://github.com/settings/apps), then click *'Personal access tokens'* -> *'Tokens (classic)'* -> *'Generate new token (classic)'*.
 
 Copy the value of the token to **GITHUB_TOKEN** variable (or use **-t** parameter). 
 
-### Github API URL
+### GitHub API URL
 
-By default the tool uses Public Web Github API URL ([https://api.github.com](https://api.github.com)).
+By default the tool uses Public Web GitHub API URL ([https://api.github.com](https://api.github.com)).
 
-If you want to use Github Enterprise API URL then change **GITHUB_API_URL** variable (or use **-x** parameter) to: [https://{your_hostname}/api/v3](https://{your_hostname}/api/v3)
+If you want to use GitHub Enterprise API URL then change **GITHUB_API_URL** variable (or use **-x** parameter) to: [https://{your_hostname}/api/v3](https://{your_hostname}/api/v3)
 
 
 ### Events to monitor
@@ -97,9 +94,9 @@ EVENTS_TO_MONITOR=['PushEvent','PullRequestEvent', 'IssuesEvent', 'ForkEvent', '
 
 ### Timezone
 
-The tool will try to automatically detect your local time zone so it can convert Github API timestamps to your time. 
+The tool will attempt to automatically detect your local time zone so it can convert GitHub API timestamps to your time. 
 
-In case you want to specify your timezone manually then change **LOCAL_TIMEZONE** variable from *'Auto'* to specific location, e.g.
+If you prefer to specify your time zone manually set the **LOCAL_TIMEZONE** variable from *'Auto'* to a specific location, e.g.
 
 ```
 LOCAL_TIMEZONE='Europe/Warsaw'
@@ -139,94 +136,106 @@ python3 ./github_monitor.py -h
 
 ### Monitoring mode
 
-To monitor specific user activities and profile changes, just type Github username as parameter (**misiektoja** in the example below):
+To monitor specific user activities and profile changes, simply enter the GitHub username as a parameter (**github_username** in the example below):
 
 ```sh
-./github_monitor.py misiektoja
+./github_monitor.py github_username
 ```
 
-It will track all user profile changes (e.g. changed followers, followings, starred repos, username, email, bio, location, blog URL, number of repositories) and also all Github events (e.g. new pushes, PRs, issues, forks, releases etc.).
+It will track all user profile changes (e.g. changed followers, followings, starred repositories, username, email, bio, location, blog URL, number of repositories) and also all GitHub events (e.g. new pushes, PRs, issues, forks, releases etc.).
 
 If you have not changed **GITHUB_TOKEN** variable in the *[github_monitor.py](github_monitor.py)* file, you can use **-t** parameter:
 
 ```sh
-./github_monitor.py misiektoja -t "your_github_classic_personal_access_token"
+./github_monitor.py github_username -t "your_github_classic_personal_access_token"
 ```
 
-If you also want to monitor user's public repositories changes (e.g. new stargazers, watchers, forks, changed description etc.), then use **-j** parameter:
+If you also want to monitor changes to a user's public repositories (e.g. new stargazers, watchers, forks, changed descriptions etc.) then use the **-j** parameter:
 
 ```sh
-./github_monitor.py misiektoja -j
+./github_monitor.py github_username -j
 ```
 
-The tool will run infinitely and monitor the user until the script is interrupted (Ctrl+C) or killed the other way.
+If for any reason you do not want to monitor GitHub events for the user (e.g. new pushes, PRs, issues, forks, releases etc.), then use the **-k** parameter:
 
-You can monitor multiple Github users by spawning multiple copies of the script. 
+```sh
+./github_monitor.py github_username -k
+```
 
-It is suggested to use sth like **tmux** or **screen** to have the script running after you log out from the server (unless you are running it on your desktop).
+The tool will run indefinitely and monitor the user until the script is interrupted (Ctrl+C) or terminated in another way.
+
+You can monitor multiple GitHub users by running multiple instances of the script.
+
+It is recommended to use something like **tmux** or **screen** to keep the script running after you log out from the server (unless you are running it on your desktop).
 
 The tool automatically saves its output to *github_monitor_{username}.log* file (can be changed in the settings via **GITHUB_LOGFILE** variable or disabled completely with **-d** parameter).
 
 ### Listing mode
 
-There is also other mode of the tool which displays different requested information (**-r**, **-g**, **-f** and **-l** parameters). 
+There is another mode of the tool that displays various requested information (**-r**, **-g**, **-f** and **-l** parameters).
 
-If you want to display list of public repositories (with some basic statistics) for the user, then use **-r** parameter:
+If you want to display a list of public repositories (with some basic statistics) for the user then use the **-r** parameter:
 
 ```sh
-./github_monitor.py -r misiektoja
+./github_monitor.py -r github_username
 ```
 
 <p align="center">
    <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="70%"/>
 </p>
 
-If you want to display list of repositories starred by the user, then use **-g** parameter:
+If you want to display a list of repositories starred by the user then use the **-g** parameter:
 
 ```sh
-./github_monitor.py -g misiektoja
+./github_monitor.py -g github_username
 ```
 
-If you want to display list of followers and followings for the user, then use **-f** parameter:
+If you want to display a list of followers and followings for the user then use the **-f** parameter.
 
 ```sh
-./github_monitor.py -f misiektoja
+./github_monitor.py -f github_username
 ```
 
-If you want to get the list of recent Github events for the user then use **-l** parameter. You can also add **-n** parameter to define how many events should be displayed, by default it shows 5 last events:
+If you want to get the list of recent GitHub events for the user then use the **-l** parameter. You can also add the **-n** parameter to specify how many events should be displayed. By default, it shows the last 5 events.
 
 ```sh
-./github_monitor.py -l misiektoja -n 10
+./github_monitor.py -l github_username -n 10
 ```
 
-You can use those functionalities in listing mode regardless if the monitoring is used or not (it does not interfere).
+If you want to not only display, but also save the list of recent GitHub events for the user to a CSV file, use the **-l** parameter with **-b** indicating the CSV file. As before, you can add the **-n** parameter to specify how many events should be displayed/saved:
+
+```sh
+./github_monitor.py -l github_username -n 10 -b github_username.csv
+```
+
+You can use those functionalities in listing mode regardless of whether monitoring is used or not (it does not interfere).
 
 ## How to use other features
 
 ### Email notifications
 
-If you want to get email notifications for all user profile changes (e.g. changed followers, followings, starred repos, username, email, bio, location, blog URL, number of repositories), use **-p** parameter:
+If you want to receive email notifications for all user profile changes (e.g. changes in followers, followings, starred repositories, username, email, bio, location, blog URL, and number of repositories), use the **-p** parameter.
 
 ```sh
-./github_monitor.py misiektoja -p
+./github_monitor.py github_username -p
 ```
 
-If you want to get email notifications once new Github events show up for the user (e.g. new pushes, PRs, issues, forks, releases etc.), use **-s** parameter:
+If you want to receive email notifications when new GitHub events appear for the user (e.g. new pushes, PRs, issues, forks, releases etc.) use the **-s** parameter:
 
 ```sh
-./github_monitor.py misiektoja -s
+./github_monitor.py github_username -s
 ```
 
-If you want to get email notifications once changes in user's repositories are detected (e.g. changed stargazers, watchers, forks, description etc., except for update date), use **-q** parameter:
+If you want to receive email notifications when changes in user repositories are detected (e.g. changes in stargazers, watchers, forks, descriptions, etc., except for the update date) use the **-q** parameter:
 
 ```sh
-./github_monitor.py misiektoja -q
+./github_monitor.py github_username -q
 ```
 
-If you also want to get email notifications once changes in user's repositories update date are detected, then use **-u** parameter (keep in mind these email notifications might be quite verbose):
+If you want to receive email notifications whenever changes in the update date of user repositories are detected, use the **-u** parameter (keep in mind these email notifications might be quite verbose):
 
 ```sh
-./github_monitor.py misiektoja -u
+./github_monitor.py github_username -u
 ```
 
 The last two options (**-q** and **-u**) only work if tracking of repositories changes is enabled (**-j**).
@@ -244,10 +253,10 @@ Example email:
 
 ### Saving user activities to the CSV file
 
-If you want to save all Github user's events, profile and repositories changes in the CSV file, use **-b** parameter with the name of the file (it will be automatically created if it does not exist):
+If you want to save all GitHub user events, profile changes and repository updates in a CSV file, use the **-b** parameter with the name of the file (it will be automatically created if it does not exist):
 
 ```sh
-./github_monitor.py misiektoja -b github_misiektoja.csv
+./github_monitor.py github_username -b github_username.csv
 ```
 
 ### Check interval
@@ -255,32 +264,32 @@ If you want to save all Github user's events, profile and repositories changes i
 If you want to change the check interval to 15 mins (900 seconds) use **-c** parameter:
 
 ```sh
-./github_monitor.py misiektoja -c 900
+./github_monitor.py github_username -c 900
 ```
 
-It is generally not recommended to use values lower than 5 minutes as new events are very often delayed by 5 mins by Github API.
+It is generally not recommended to use values lower than 10 minutes as new events are very often delayed by GitHub API.
 
 ### Controlling the script via signals (only macOS/Linux/Unix)
 
-The tool has several signal handlers implemented which allow to change behavior of the tool without a need to restart it with new parameters.
+The tool has several signal handlers implemented which allow changing the behavior of the tool without needing to restart it with new parameters.
 
 List of supported signals:
 
 | Signal | Description |
 | ----------- | ----------- |
 | USR1 | Toggle email notifications for all user's profile changes (-p) |
-| USR2 | Toggle email notifications for new Github events (-s) |
+| USR2 | Toggle email notifications for new GitHub events (-s) |
 | CONT | Toggle email notifications for user's repositories changes (except for update date) (-q) |
 | PIPE | Toggle email notifications for user's repositories update date changes (-u) |
 | TRAP | Increase the user check interval (by 1 min) |
 | ABRT | Decrease the user check interval (by 1 min) |
 
-So if you want to change functionality of the running tool, just send the proper signal to the desired copy of the script.
+So if you want to change the functionality of the running tool, just send the appropriate signal to the desired copy of the script.
 
-I personally use **pkill** tool, so for example to toggle new events email notifications for tool instance monitoring the *misiektoja* user:
+I personally use the **pkill** tool. For example, to toggle new email notifications for tool instance monitoring the *github_username* user:
 
 ```sh
-pkill -f -USR2 "python3 ./github_monitor.py misiektoja"
+pkill -f -USR2 "python3 ./github_monitor.py github_username"
 ```
 
 As Windows supports limited number of signals, this functionality is available only on Linux/Unix/macOS.
