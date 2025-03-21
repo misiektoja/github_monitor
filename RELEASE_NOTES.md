@@ -2,6 +2,19 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 1.7 (21 Mar 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Added new parameter (-k) to disable monitoring of new Github events for the user
+- **NEW:** Added the ability to export GitHub events to a CSV file (when -b is used together with -l)
+- **IMPROVE:** Refactored code around event processing to address some corner cases and added awareness of the actual available number of events (as it can be less than EVENTS_NUMBER)
+- **IMPROVE:** Email notification flags are now automatically disabled if the SMTP configuration is invalid
+- **IMPROVE:** Setting events notifications flag to false when GitHub events are not monitored
+- **IMPROVE:** Increased the default check interval to 20 minutes
+- **IMPROVE:** Exception handling in a few places
+- **IMPROVE:** Code cleanup & linting fixes
+
 # Changes in 1.6 (15 Nov 2024)
 
 **Features and Improvements**:
