@@ -2073,15 +2073,24 @@ if __name__ == "__main__":
     repo_update_date_notification = args.repo_update_date_notification
     track_repos_changes = args.track_repos_changes
     do_not_monitor_github_events = args.do_not_monitor_github_events
+    error_notification = args.error_notification
 
     if not track_repos_changes:
         repo_notification = False
         repo_update_date_notification = False
+
     if do_not_monitor_github_events:
         event_notification = False
 
+    if SMTP_HOST == "your_smtp_server_ssl" or SMTP_HOST == "your_smtp_server_plaintext":
+        event_notification = False
+        profile_notification = False
+        repo_notification = False
+        repo_update_date_notification = False
+        error_notification = False
+
     print(f"* Github timers:\t\t[check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
-    print(f"* Email notifications:\t\t[profile changes = {profile_notification}] [new events = {event_notification}]\n*\t\t\t\t[repos changes = {repo_notification}] [repos update date = {repo_update_date_notification}]\n*\t\t\t\t[errors = {args.error_notification}]")
+    print(f"* Email notifications:\t\t[profile changes = {profile_notification}] [new events = {event_notification}]\n*\t\t\t\t[repos changes = {repo_notification}] [repos update date = {repo_update_date_notification}]\n*\t\t\t\t[errors = {error_notification}]")
     print(f"* Github API URL:\t\t{GITHUB_API_URL}")
     print(f"* Track repos changes:\t\t{track_repos_changes}")
     print(f"* Monitor Github events:\t{not do_not_monitor_github_events}")
@@ -2108,7 +2117,7 @@ if __name__ == "__main__":
         signal.signal(signal.SIGTRAP, increase_check_signal_handler)
         signal.signal(signal.SIGABRT, decrease_check_signal_handler)
 
-    github_monitor_user(args.GITHUB_USERNAME, args.error_notification, args.csv_file, csv_exists)
+    github_monitor_user(args.GITHUB_USERNAME, error_notification, args.csv_file, csv_exists)
 
     sys.stdout = stdout_bck
     sys.exit(0)
