@@ -73,18 +73,18 @@ Edit the  *[github_monitor.py](github_monitor.py)* file and change any desired c
 
 In order to get your GitHub personal access token (classic), go to your GitHub app settings [https://github.com/settings/apps](https://github.com/settings/apps), then click *'Personal access tokens'* -> *'Tokens (classic)'* -> *'Generate new token (classic)'*.
 
-Copy the value of the token to **GITHUB_TOKEN** variable (or use **-t** parameter). 
+Copy the value of the token to `GITHUB_TOKEN` variable (or use **-t** parameter). 
 
 ### GitHub API URL
 
 By default the tool uses Public Web GitHub API URL ([https://api.github.com](https://api.github.com)).
 
-If you want to use GitHub Enterprise API URL then change **GITHUB_API_URL** variable (or use **-x** parameter) to: [https://{your_hostname}/api/v3](https://{your_hostname}/api/v3)
+If you want to use GitHub Enterprise API URL then change `GITHUB_API_URL` variable (or use **-x** parameter) to: [https://{your_hostname}/api/v3](https://{your_hostname}/api/v3)
 
 
 ### Events to monitor
 
-You can limit the type of events that will be monitored and reported by the tool. You can do it by changing the **EVENTS_TO_MONITOR** variable.
+You can limit the type of events that will be monitored and reported by the tool. You can do it by changing the `EVENTS_TO_MONITOR` variable.
 
 By default all events are monitored, but if you want to limit it, then remove the *'ALL'* keyword and leave the events you are interested in, for example:
 
@@ -96,7 +96,7 @@ EVENTS_TO_MONITOR=['PushEvent','PullRequestEvent', 'IssuesEvent', 'ForkEvent', '
 
 The tool will attempt to automatically detect your local time zone so it can convert GitHub API timestamps to your time. 
 
-If you prefer to specify your time zone manually set the **LOCAL_TIMEZONE** variable from *'Auto'* to a specific location, e.g.
+If you prefer to specify your time zone manually set the `LOCAL_TIMEZONE` variable from *'Auto'* to a specific location, e.g.
 
 ```
 LOCAL_TIMEZONE='Europe/Warsaw'
@@ -144,7 +144,7 @@ To monitor specific user activities and profile changes, simply enter the GitHub
 
 It will track all user profile changes (e.g. changed followers, followings, starred repositories, username, email, bio, location, blog URL, number of repositories) and also all GitHub events (e.g. new pushes, PRs, issues, forks, releases etc.).
 
-If you have not changed **GITHUB_TOKEN** variable in the *[github_monitor.py](github_monitor.py)* file, you can use **-t** parameter:
+If you have not changed `GITHUB_TOKEN` variable in the *[github_monitor.py](github_monitor.py)* file, you can use **-t** parameter:
 
 ```sh
 ./github_monitor.py github_username -t "your_github_classic_personal_access_token"
@@ -168,7 +168,7 @@ You can monitor multiple GitHub users by running multiple instances of the scrip
 
 It is recommended to use something like **tmux** or **screen** to keep the script running after you log out from the server (unless you are running it on your desktop).
 
-The tool automatically saves its output to *github_monitor_{username}.log* file (can be changed in the settings via **GITHUB_LOGFILE** variable or disabled completely with **-d** parameter).
+The tool automatically saves its output to *github_monitor_{username}.log* file (can be changed in the settings via `GITHUB_LOGFILE` variable or disabled completely with **-d** parameter).
 
 ### Listing mode
 
