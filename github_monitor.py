@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.7
+v1.7.1
 
 OSINT tool implementing real-time tracking of Github users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -15,7 +15,7 @@ python-dateutil
 requests
 """
 
-VERSION = "1.7"
+VERSION = "1.7.1"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -58,7 +58,7 @@ LOCAL_TIMEZONE = 'Auto'
 EVENTS_TO_MONITOR = ['ALL', 'PushEvent', 'PullRequestReviewEvent', 'CreateEvent', 'DeleteEvent', 'PullRequestEvent', 'PullRequestReviewCommentEvent', 'IssuesEvent', 'WatchEvent', 'ForkEvent', 'ReleaseEvent', 'IssueCommentEvent']
 
 # How many last events we check when we get signal that last event ID has changed
-EVENTS_NUMBER = 10
+EVENTS_NUMBER = 15
 
 # How often do we perform alive check by printing "alive check" message in the output; in seconds
 TOOL_ALIVE_INTERVAL = 21600  # 6 hours
@@ -120,6 +120,7 @@ import re
 import ipaddress
 from github import Github
 from github import Auth
+from itertools import islice
 
 
 # Logger class to output messages to stdout and log file
@@ -847,7 +848,9 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
         g = Github(base_url=GITHUB_API_URL, auth=auth)
 
         g_user = g.get_user(user)
-        events = list(g_user.get_events())
+        all_events = list(g_user.get_events())
+        total_available = len(all_events)
+        events = all_events[:number]
         available_events = len(events)
 
         user_login = g_user.login
@@ -867,14 +870,15 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
     if csv_enabled:
         print(f"CSV export enabled:\t\t{csv_enabled} ({csv_file_name})")
     print(f"Local timezone:\t\t\t{LOCAL_TIMEZONE}")
-    print(f"Available events:\t\t{available_events}\n")
+    print(f"Available events:\t\t{total_available}")
+    print("---------------------------------------------------------------------------------------------------------")
 
     if available_events == 0:
         print("There are no events yet")
     else:
         try:
-            for i in reversed(range(min(number, available_events))):
-                event = events[i]
+            for event in reversed(events):
+
                 if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
                     event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g)
                     try:
@@ -938,7 +942,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
         starred_count = starred_list.totalCount
 
         if not do_not_monitor_github_events:
-            events = list(g_user.get_events())
+            events = list(islice(g_user.get_events(), EVENTS_NUMBER))
             available_events = len(events)
 
     except Exception as e:
@@ -950,17 +954,15 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     events_list_of_ids = []
 
     if not do_not_monitor_github_events:
-        if available_events == 0:
-            pass
-        else:
+        if available_events:
             try:
-                for i in reversed(range(min(EVENTS_NUMBER, available_events))):
-                    event = events[i]
-                    if i == 0:
-                        last_event_id = event.id
-                        if last_event_id:
-                            last_event_ts = int(convert_utc_str_to_tz_datetime(str(event.created_at), LOCAL_TIMEZONE, 1).timestamp())
+                for event in reversed(events):
                     events_list_of_ids.append(event.id)
+
+                newest = events[0]
+                last_event_id = newest.id
+                if last_event_id:
+                    last_event_ts = int(convert_utc_str_to_tz_datetime(str(newest.created_at), LOCAL_TIMEZONE, 1).timestamp())
             except Exception as e:
                 print(f"* Cannot get event IDs / timestamps - {e}\n")
                 pass
@@ -1018,7 +1020,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     print(f"Repositories:\t\t\t{repos_count}")
     print(f"Starred repos:\t\t\t{starred_count}")
     if not do_not_monitor_github_events:
-        print(f"Available events:\t\t{available_events}")
+        print(f"Available events:\t\t{available_events}{'+' if available_events == EVENTS_NUMBER else ''}")
 
     if bio:
         print(f"\nBio:\n\n'{bio}'")
@@ -1043,8 +1045,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print("There are no events yet")
         else:
             try:
-                last_event = events[0]
-                github_print_event(last_event, g, True)
+                github_print_event(events[0], g, True)
             except Exception as e:
                 print(f"Cannot fetch last event details - {e}")
 
@@ -1101,7 +1102,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             starred_count = starred_list.totalCount
 
             if not do_not_monitor_github_events:
-                events = list(g_user.get_events())
+                events = list(islice(g_user.get_events(), EVENTS_NUMBER))
                 available_events = len(events)
 
             email_sent = False
@@ -1867,9 +1868,10 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 last_event_ts = 0
             else:
                 try:
-                    last_event_id = events[0].id
+                    newest = events[0]
+                    last_event_id = newest.id
                     if last_event_id:
-                        last_event_ts = int(convert_utc_str_to_tz_datetime(str(events[0].created_at), LOCAL_TIMEZONE, 1).timestamp())
+                        last_event_ts = int(convert_utc_str_to_tz_datetime(str(newest.created_at), LOCAL_TIMEZONE, 1).timestamp())
                 except Exception as e:
                     last_event_id = 0
                     last_event_ts = 0
@@ -1882,23 +1884,23 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             # New events showed up
             if last_event_id and last_event_id != last_event_id_old:
 
-                for i in reversed(range(min(EVENTS_NUMBER, available_events))):
-                    event = events[i]
-                    if i == 0:
-                        last_event_id = event.id
-                        if last_event_id:
-                            last_event_ts = int(convert_utc_str_to_tz_datetime(str(event.created_at), LOCAL_TIMEZONE, 1).timestamp())
+                for event in reversed(events):
+
                     events_list_of_ids.append(event.id)
+
                     if event.id in events_list_of_ids_old:
                         continue
+
                     if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
                         event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
                         first_new = False
+
                         try:
                             if csv_file_name:
                                 write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
                         except Exception as e:
                             print(f"* Cannot write CSV entry - {e}")
+
                         m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
                         m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
