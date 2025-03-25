@@ -2,6 +2,12 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 1.7.1 (25 Mar 2025)
+
+**Features and Improvements**:
+
+- **IMPROVE:** Refactored code around event processing to limit API fetch and simplify logic
+
 # Changes in 1.7 (21 Mar 2025)
 
 **Features and Improvements**:
