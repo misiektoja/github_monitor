@@ -102,6 +102,12 @@ If you prefer to specify your time zone manually set the `LOCAL_TIMEZONE` variab
 LOCAL_TIMEZONE='Europe/Warsaw'
 ```
 
+You can get the list of all time zones supported by pytz like this:
+
+```sh
+python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
+```
+
 In such case it is not needed to install *tzlocal* pip module.
 
 ### SMTP settings
