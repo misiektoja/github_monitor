@@ -426,6 +426,10 @@ def convert_utc_str_to_tz_datetime(utc_string, timezone, version=1):
         return datetime.fromtimestamp(0)
 
 
+def is_valid_timezone(tz_name):
+    return tz_name in pytz.all_timezones
+
+
 # Function to print and returned the printed text with new line
 def print_v(text=""):
     print(text)
@@ -1070,7 +1074,12 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
                 if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
                     event_number = event_number_map[id(event)]
                     print(f"Event number:\t\t\t#{event_number}")
-                    event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g)
+                    try:
+                        event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g)
+                    except Exception as e:
+                        print(f"\nWarning: cannot fetch all event details, skipping - {e}")
+                        print_cur_ts("\nTimestamp:\t\t\t")
+                        continue
                     try:
                         if csv_file_name:
                             write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
@@ -1078,7 +1087,7 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
                         print(f"* Cannot write CSV entry - {e}")
                     print_cur_ts("\nTimestamp:\t\t\t")
         except Exception as e:
-            print(f"Cannot fetch event details - {e}")
+            print(f"Cannot fetch events - {e}")
 
 
 # Main function monitoring activity of the specified GitHub user
@@ -1237,7 +1246,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             try:
                 github_print_event(events[0], g, True)
             except Exception as e:
-                print(f"Cannot fetch last event details - {e}")
+                print(f"\nWarning: cannot fetch last event details - {e}")
 
         print_cur_ts("\nTimestamp:\t\t\t")
 
@@ -2082,21 +2091,33 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                         continue
 
                     if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
-                        event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
-                        first_new = False
+
+                        event_date_ts = 0
+                        repo_name = ""
+                        repo_url = ""
+                        event_text = ""
 
                         try:
-                            if csv_file_name:
-                                write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
+                            event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
                         except Exception as e:
-                            print(f"* Cannot write CSV entry - {e}")
+                            print(f"\nWarning: cannot fetch all event details - {e}")
 
-                        m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
-                        m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+                        first_new = False
 
-                        if event_notification:
-                            print(f"\nSending email notification to {RECEIVER_EMAIL}")
-                            send_email(m_subject, m_body, "", SMTP_SSL)
+                        if event_date_ts and repo_name and event_text:
+
+                            try:
+                                if csv_file_name:
+                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
+                            except Exception as e:
+                                print(f"* Cannot write CSV entry - {e}")
+
+                            m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
+                            m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+
+                            if event_notification:
+                                print(f"\nSending email notification to {RECEIVER_EMAIL}")
+                                send_email(m_subject, m_body, "", SMTP_SSL)
 
                         print_cur_ts("Timestamp:\t\t\t")
 
@@ -2169,6 +2190,10 @@ if __name__ == "__main__":
             LOCAL_TIMEZONE = str(local_tz)
         else:
             print("* Error: Cannot detect local timezone, consider setting LOCAL_TIMEZONE to your local timezone manually !")
+            sys.exit(1)
+    else:
+        if not is_valid_timezone(LOCAL_TIMEZONE):
+            print(f"* Error: Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid. Please use a valid pytz timezone name.")
             sys.exit(1)
 
     sys.stdout.write("* Checking internet connectivity ... ")
