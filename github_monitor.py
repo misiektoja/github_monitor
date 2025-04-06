@@ -134,7 +134,7 @@ import pytz
 try:
     from tzlocal import get_localzone
 except ImportError:
-    pass
+    get_localzone = None
 import platform
 import re
 import ipaddress
@@ -349,18 +349,18 @@ def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new
         raise
 
 
-# Function to return the timestamp in human readable format; eg. Sun, 21 Apr 2024, 15:08:45
+# Function to return the timestamp in human readable format; eg. Sun 21 Apr 2024, 15:08:45
 def get_cur_ts(ts_str=""):
     return (f'{ts_str}{calendar.day_abbr[(datetime.fromtimestamp(int(time.time()))).weekday()]}, {datetime.fromtimestamp(int(time.time())).strftime("%d %b %Y, %H:%M:%S")}')
 
 
-# Function to print the current timestamp in human readable format; eg. Sun, 21 Apr 2024, 15:08:45
+# Function to print the current timestamp in human readable format; eg. Sun 21 Apr 2024, 15:08:45
 def print_cur_ts(ts_str=""):
     print(get_cur_ts(str(ts_str)))
     print("─" * 105)
 
 
-# Function to return the timestamp/datetime object in human readable format (long version); eg. Sun, 21 Apr 2024, 15:08:45
+# Function to return the timestamp/datetime object in human readable format (long version); eg. Sun 21 Apr 2024, 15:08:45
 def get_date_from_ts(ts):
     if type(ts) is datetime:
         ts_new = int(round(ts.timestamp()))
@@ -405,6 +405,8 @@ def get_short_date_from_ts(ts, show_year=False, show_hour=True):
 
 # Function to convert UTC string returned by Github API to datetime object in specified timezone
 def convert_utc_str_to_tz_datetime(utc_string, timezone, version=1):
+    dt_utc = datetime.min
+
     try:
         # YYYY-MM-DD HH:MM:SS.MS+00:00
         if version == 1:
@@ -424,6 +426,7 @@ def convert_utc_str_to_tz_datetime(utc_string, timezone, version=1):
         return datetime.fromtimestamp(0)
 
 
+# Function to print and returned the printed text with new line
 def print_v(text=""):
     print(text)
     return text + "\n"
@@ -490,17 +493,15 @@ def decrease_check_signal_handler(sig, frame):
     print_cur_ts("Timestamp:\t\t\t")
 
 
-# Function converting Github API URL to HTML URL
-def github_convert_api_to_html_url(url):
-    html_url = ""
-    if "https://api.github.com/repos/" in url:
-        url_suffix = url.split('https://api.github.com/repos/', 1)[1]
-        html_url = "https://github.com/" + url_suffix
-    return html_url
-
-
 # Function printing followers & followings for Github user (-f)
 def github_print_followers_and_followings(user):
+    user_name_str = user
+    user_url = "-"
+    followers_count = 0
+    followings_count = 0
+    followers_list = []
+    followings_list = []
+
     print(f"* Getting followers & followings for user '{user}' ...")
 
     try:
@@ -522,7 +523,7 @@ def github_print_followers_and_followings(user):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        print(f"Cannot fetch user details - {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details - {e}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -590,6 +591,11 @@ def github_process_repos(repos_list):
 
 # Function printing list of public repositories for Github user (-r)
 def github_print_repos(user):
+    user_name_str = user
+    user_url = "-"
+    repos_count = 0
+    repos_list = []
+
     print(f"* Getting public repositories for user '{user}' ...")
 
     try:
@@ -608,7 +614,7 @@ def github_print_repos(user):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        print(f"Cannot fetch user details - {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details - {e}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -636,13 +642,18 @@ def github_print_repos(user):
 
                 print(repo_str)
     except Exception as e:
-        print(f"Cannot fetch user's repositories list - {e}")
+        raise RuntimeError(f"Cannot fetch user's repositories list - {e}")
 
     g.close()
 
 
 # Function printing list of starred repositories by Github user (-g)
 def github_print_starred_repos(user):
+    user_name_str = user
+    user_url = "-"
+    starred_count = 0
+    starred_list = []
+
     print(f"* Getting repositories starred by user '{user}' ...")
 
     try:
@@ -661,7 +672,7 @@ def github_print_starred_repos(user):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        print(f"Cannot fetch user details - {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details - {e}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -678,11 +689,12 @@ def github_print_starred_repos(user):
                     star_str += f" [ {star.html_url}/ ]"
                 print(star_str)
     except Exception as e:
-        print(f"Cannot fetch user's starred list - {e}")
+        raise RuntimeError(f"Cannot fetch user's starred list - {e}")
 
     g.close()
 
 
+# Function returning size in human readable format
 def human_readable_size(num):
     value = float(num)
     for unit in ["B", "KB", "MB", "GB", "TB", "PB"]:
@@ -692,6 +704,7 @@ def human_readable_size(num):
     return f"{value:.1f} PB"
 
 
+# Function printing details about passed GitHub event
 def github_print_event(event, g, time_passed=False, ts=0):
 
     event_date_ts = 0
@@ -699,6 +712,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
     repo_url = ""
     st = ""
     tp = ""
+    repo = None
 
     event_date_ts = convert_utc_str_to_tz_datetime(str(event.created_at), LOCAL_TIMEZONE, 1).timestamp()
     if time_passed and not ts:
@@ -711,7 +725,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
 
     if event.repo.id:
         repo_name = event.repo.name
-        repo_url = github_convert_api_to_html_url(event.repo.url)
+        repo_url = event.repo.url.replace("https://api.github.com/repos/", "https://github.com/")
         st += print_v(f"\nRepo name:\t\t\t{repo_name}")
         st += print_v(f"Repo URL:\t\t\t{repo_url}")
         repo = g.get_repo(event.repo.name)
@@ -741,30 +755,39 @@ def github_print_event(event, g, time_passed=False, ts=0):
             st += print_v(f"\n=== Commit {commit_count}/{commits_total} ===")
             st += print_v("." * 105)
 
-            commit_details = repo.get_commit(commit["sha"])
-            commit_date_ts = convert_utc_str_to_tz_datetime(str(commit_details.commit.author.date), LOCAL_TIMEZONE, 1).timestamp()
-            st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date_ts)}")
-            st += print_v(f" - Commit sha:\t\t\t{commit['sha']}")
+            commit_details = None
+            if repo:
+                commit_details = repo.get_commit(commit["sha"])
+
+            if commit_details:
+                commit_date_ts = convert_utc_str_to_tz_datetime(str(commit_details.commit.author.date), LOCAL_TIMEZONE, 1).timestamp()
+                st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date_ts)}")
+
+            st += print_v(f" - Commit SHA:\t\t\t{commit['sha']}")
             st += print_v(f" - Commit author:\t\t{commit['author']['name']}")
-            st += print_v(f" - Commit URL:\t\t\t{commit_details.html_url}")
-            st += print_v(f" - Commit raw patch URL:\t{commit_details.html_url}.patch")
+
+            if commit_details:
+                st += print_v(f" - Commit URL:\t\t\t{commit_details.html_url}")
+                st += print_v(f" - Commit raw patch URL:\t{commit_details.html_url}.patch")
+
             stats = getattr(commit_details, "stats", None)
             additions = stats.additions if stats else 0
             deletions = stats.deletions if stats else 0
             stats_total = stats.total if stats else 0
             st += print_v(f"\n - Additions/Deletions:\t\t+{additions} / -{deletions} ({stats_total})")
-            try:
-                file_count = sum(1 for _ in commit_details.files)
-            except Exception:
-                file_count = "N/A"
-            st += print_v(f" - Files changed:\t\t{file_count}")
-            if file_count:
-                st += print_v(f" - Changed files list:")
-                for f in commit_details.files:
-                    st += print_v(f"     • '{f.filename}' — {f.status} (+{f.additions} / -{f.deletions})")
+
+            if commit_details:
+                try:
+                    file_count = sum(1 for _ in commit_details.files)
+                except Exception:
+                    file_count = "N/A"
+                st += print_v(f" - Files changed:\t\t{file_count}")
+                if file_count:
+                    st += print_v(f" - Changed files list:")
+                    for f in commit_details.files:
+                        st += print_v(f"     • '{f.filename}' — {f.status} (+{f.additions} / -{f.deletions})")
+
             st += print_v(f"\n - Commit message:\t\t'{commit['message']}'")
-            # if commit != commits[-1]:
-            #     st += print_v("." * 105)
             st += print_v("." * 105)
 
     if event.payload.get("commits") == []:
@@ -796,7 +819,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
 
         st += print_v(f"\nRelease notes:\n\n'{event.payload['release'].get('body')}'")
 
-    if event.payload.get("pull_request"):
+    if repo and event.payload.get("pull_request"):
         pr_number = event.payload["pull_request"]["number"]
         pr = repo.get_pull(pr_number)
 
@@ -860,13 +883,14 @@ def github_print_event(event, g, time_passed=False, ts=0):
         if event.payload["review"].get("body"):
             st += print_v(f"Review body:\n'{event.payload['review'].get('body')}'")
 
-        try:
-            pr_number = event.payload["pull_request"]["number"]
-            pr_obj = repo.get_pull(pr_number)
-            count = sum(1 for _ in pr_obj.get_single_review_comments(event.payload["review"].get("id")))
-            st += print_v(f"Comments in this review:\t{count}")
-        except Exception:
-            pass
+        if repo:
+            try:
+                pr_number = event.payload["pull_request"]["number"]
+                pr_obj = repo.get_pull(pr_number)
+                count = sum(1 for _ in pr_obj.get_single_review_comments(event.payload["review"].get("id")))
+                st += print_v(f"Comments in this review:\t{count}")
+            except Exception:
+                pass
 
     if event.payload.get("issue"):
         st += print_v(f"\nIssue title:\t\t\t{event.payload['issue'].get('title')}")
@@ -909,7 +933,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
 
         if event.type == "PullRequestReviewCommentEvent":
             parent_id = comment.get("in_reply_to_id")
-            if parent_id:
+            if parent_id and repo:
                 try:
                     pr_number = event.payload["pull_request"]["number"]
                     pr = repo.get_pull(pr_number)
@@ -925,25 +949,26 @@ def github_print_event(event, g, time_passed=False, ts=0):
             else:
                 st += print_v("\n(This is the first comment in its thread)")
         elif event.type in ("IssueCommentEvent", "CommitCommentEvent"):
-            if event.type == "IssueCommentEvent":
-                comments = list(repo.get_issue(event.payload["issue"]["number"]).get_comments())
-            else:  # CommitCommentEvent
-                commit_sha = comment["commit_id"]
-                comments = list(repo.get_commit(commit_sha).get_comments())
+            if repo:
+                if event.type == "IssueCommentEvent":
+                    comments = list(repo.get_issue(event.payload["issue"]["number"]).get_comments())
+                else:  # CommitCommentEvent
+                    commit_sha = comment["commit_id"]
+                    comments = list(repo.get_commit(commit_sha).get_comments())
 
-            for i, c in enumerate(comments):
-                if c.id == comment["id"]:
-                    if i > 0:
-                        prev = comments[i - 1]
-                        prev_date = get_date_from_ts(
-                            convert_utc_str_to_tz_datetime(str(prev.created_at), LOCAL_TIMEZONE, 1).timestamp()
-                        )
-                        st += print_v(f"\n↳ In reply to {prev.user.login} (@ {prev_date}):")
-                        st += print_v(f"'{prev.body}'")
-                        st += print_v(f"\nPrevious comment URL:\t\t{prev.html_url}")
-                    else:
-                        st += print_v("\n(This is the first comment in this thread)")
-                    break
+                for i, c in enumerate(comments):
+                    if c.id == comment["id"]:
+                        if i > 0:
+                            prev = comments[i - 1]
+                            prev_date = get_date_from_ts(
+                                convert_utc_str_to_tz_datetime(str(prev.created_at), LOCAL_TIMEZONE, 1).timestamp()
+                            )
+                            st += print_v(f"\n↳ In reply to {prev.user.login} (@ {prev_date}):")
+                            st += print_v(f"'{prev.body}'")
+                            st += print_v(f"\nPrevious comment URL:\t\t{prev.html_url}")
+                        else:
+                            st += print_v("\n(This is the first comment in this thread)")
+                        break
 
     if event.payload.get("forkee"):
         st += print_v(f"\nForked to repo:\t\t\t{event.payload['forkee'].get('full_name')}")
@@ -969,15 +994,15 @@ def github_print_event(event, g, time_passed=False, ts=0):
         if discussion_url:
             st += print_v(f"Discussion URL:\t\t\t{discussion_url}")
         if discussion_category:
-            st += print_v(f"Discussion category:\t{discussion_category}")
+            st += print_v(f"Discussion category:\t\t{discussion_category}")
 
     if event.type == "DiscussionCommentEvent":
         comment_author = event.payload.get("comment", {}).get("user", {}).get("login")
         comment_body = event.payload.get("comment", {}).get("body")
         if comment_author:
-            st += print_v(f"\nDiscussion comment by:\t{comment_author}")
+            st += print_v(f"\nDiscussion comment by:\t\t{comment_author}")
         if comment_body:
-            st += print_v(f"Comment body:\t\t'{comment_body}'")
+            st += print_v(f"Comment body:\t\t\t'{comment_body}'")
 
     return event_date_ts, repo_name, repo_url, st
 
@@ -1056,7 +1081,7 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
             print(f"Cannot fetch event details - {e}")
 
 
-# Main function monitoring activity of the specified Github user
+# Main function monitoring activity of the specified GitHub user
 def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
     try:
@@ -2135,10 +2160,11 @@ if __name__ == "__main__":
 
     local_tz = None
     if LOCAL_TIMEZONE == "Auto":
-        try:
-            local_tz = get_localzone()
-        except NameError:
-            pass
+        if get_localzone is not None:
+            try:
+                local_tz = get_localzone()
+            except Exception:
+                pass
         if local_tz:
             LOCAL_TIMEZONE = str(local_tz)
         else:
