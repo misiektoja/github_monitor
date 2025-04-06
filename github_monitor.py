@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.7.1
+v1.8
 
 OSINT tool implementing real-time tracking of Github users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -15,7 +15,7 @@ python-dateutil
 requests
 """
 
-VERSION = "1.7.1"
+VERSION = "1.8"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -55,7 +55,27 @@ GITHUB_CHECK_INTERVAL = 1200  # 20 mins
 LOCAL_TIMEZONE = 'Auto'
 
 # What kind of events we want to monitor, if you put 'ALL' then all of them will be monitored
-EVENTS_TO_MONITOR = ['ALL', 'PushEvent', 'PullRequestReviewEvent', 'CreateEvent', 'DeleteEvent', 'PullRequestEvent', 'PullRequestReviewCommentEvent', 'IssuesEvent', 'WatchEvent', 'ForkEvent', 'ReleaseEvent', 'IssueCommentEvent']
+EVENTS_TO_MONITOR = [
+    'ALL',
+    'PushEvent',
+    'PullRequestEvent',
+    'PullRequestReviewEvent',
+    'PullRequestReviewCommentEvent',
+    'IssueCommentEvent',
+    'IssuesEvent',
+    'CommitCommentEvent',
+    'CreateEvent',
+    'DeleteEvent',
+    'ForkEvent',
+    'PublicEvent',
+    'GollumEvent',
+    'MemberEvent',
+    'WatchEvent',
+    'ReleaseEvent',
+    'DeploymentEvent',
+    'CheckRunEvent',
+    'WorkflowRunEvent',
+]
 
 # How many last events we check when we get signal that last event ID has changed
 EVENTS_NUMBER = 15
@@ -337,7 +357,7 @@ def get_cur_ts(ts_str=""):
 # Function to print the current timestamp in human readable format; eg. Sun, 21 Apr 2024, 15:08:45
 def print_cur_ts(ts_str=""):
     print(get_cur_ts(str(ts_str)))
-    print("---------------------------------------------------------------------------------------------------------")
+    print("─" * 105)
 
 
 # Function to return the timestamp/datetime object in human readable format (long version); eg. Sun, 21 Apr 2024, 15:08:45
@@ -703,18 +723,37 @@ def github_print_event(event, g, time_passed=False, ts=0):
         st += print_v(f"\nAction:\t\t\t\t{event.payload.get('action')}")
 
     if event.payload.get("commits"):
-        st += print_v(f"\nNumber of commits:\t\t{len(event.payload.get('commits'))}")
         commits = event.payload["commits"]
-        for commit in commits:
-            commit_details = repo.get_commit(sha=commit["sha"])
+        total = len(commits)
+        st += print_v(f"\nNumber of commits:\t\t{total}")
+        for idx, commit in enumerate(commits, start=1):
+            st += print_v(f"\n=== Commit {idx}/{total} ===")
+            st += print_v("." * 105)
+
+            commit_details = repo.get_commit(commit["sha"])
             commit_date_ts = convert_utc_str_to_tz_datetime(str(commit_details.commit.author.date), LOCAL_TIMEZONE, 1).timestamp()
             st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date_ts)}")
             st += print_v(f" - Commit sha:\t\t\t{commit['sha']}")
             st += print_v(f" - Commit author:\t\t{commit['author']['name']}")
             st += print_v(f" - Commit URL:\t\t\t{github_convert_api_to_html_url(commit['url'])}")
-            st += print_v(f" - Commit message:\t\t'{commit['message']}'")
-            if commit != commits[-1]:
-                st += print_v()
+            stats = getattr(commit_details, "stats", None)
+            additions = stats.additions if stats else 0
+            deletions = stats.deletions if stats else 0
+            total = stats.total if stats else 0
+            st += print_v(f"\n - Additions/Deletions:\t\t+{additions} / -{deletions} ({total})")
+            try:
+                file_count = sum(1 for _ in commit_details.files)
+            except Exception:
+                file_count = "N/A"
+            st += print_v(f" - Files changed:\t\t{file_count}")
+            if file_count:
+                st += print_v(f" - Changed files list:")
+                for f in commit_details.files:
+                    st += print_v(f"     • '{f.filename}' — {f.status} (+{f.additions} / -{f.deletions})")
+            st += print_v(f"\n - Commit message:\t\t'{commit['message']}'")
+            # if commit != commits[-1]:
+            #     st += print_v("." * 105)
+            st += print_v("." * 105)
 
     if event.payload.get("release"):
         st += print_v(f"\nRelease name:\t\t\t{event.payload['release'].get('name')}")
@@ -733,41 +772,44 @@ def github_print_event(event, g, time_passed=False, ts=0):
         st += print_v(f"Release description:\n\n'{event.payload['release'].get('body')}'")
 
     if event.payload.get("pull_request"):
-        st += print_v(f"\nPR title:\t\t\t{event.payload['pull_request'].get('title')}")
+        pr_number = event.payload["pull_request"]["number"]
+        pr = repo.get_pull(pr_number)
 
-        pr_date_ts = convert_utc_str_to_tz_datetime(str(event.payload["pull_request"].get("created_at")), LOCAL_TIMEZONE, 2).timestamp()
-        st += print_v(f"PR date:\t\t\t{get_date_from_ts(pr_date_ts)}")
+        st += print_v(f"\n=== PR #{pr.number}: {pr.title} ===")
+        st += print_v("." * 105)
 
-        st += print_v(f"PR URL:\t\t\t\t{event.payload['pull_request'].get('html_url')}")
+        st += print_v(f"Author:\t\t\t\t{pr.user.login}")
+        st += print_v(f"State:\t\t\t\t{pr.state} | Merged: {pr.merged}")
+        st += print_v(f"Created at:\t\t\t{get_date_from_ts(pr.created_at.timestamp())}")
+        if pr.closed_at:
+            st += print_v(f"Closed at:\t\t\t{get_date_from_ts(pr.closed_at.timestamp())}")
+        if pr.merged_at:
+            st += print_v(f"Merged at:\t\t\t{get_date_from_ts(pr.merged_at.timestamp())} by {pr.merged_by.login}")
 
-        if event.payload["pull_request"].get("issue_url"):
-            st += print_v(f"Issue URL:\t\t\t{github_convert_api_to_html_url(event.payload['pull_request'].get('issue_url'))}")
+        st += print_v(f"Head → Base:\t\t\t{pr.head.ref} → {pr.base.ref}")
+        st += print_v(f"Mergeable state:\t\t{pr.mergeable_state}")
 
-        if event.payload["pull_request"].get("state"):
-            st += print_v(f"PR state:\t\t\t{event.payload['pull_request'].get('state')}")
+        if pr.labels:
+            st += print_v(f"Labels:\t\t\t\t{', '.join(label.name for label in pr.labels)}")
 
-        st += print_v(f"Commits:\t\t\t{event.payload['pull_request'].get('commits', 0)}")
+        st += print_v(f"\nCommits:\t\t\t{pr.commits}")
+        st += print_v(f"Comments (issue/review):\t{pr.comments} / {pr.review_comments}")
 
-        st += print_v(f"Comments:\t\t\t{event.payload['pull_request'].get('comments', 0)}")
+        st += print_v(f"Additions/Deletions:\t\t+{pr.additions} / -{pr.deletions}")
+        st += print_v(f"Files changed:\t\t\t{pr.changed_files}")
 
-        additions = event.payload["pull_request"].get("additions", 0)
-        deletions = event.payload["pull_request"].get("deletions", 0)
-        st += print_v(f"Additions/deletions:\t\t{additions}/{deletions}")
+        if pr.body:
+            st += print_v(f"\nPR description:\n\n'{pr.body.strip()}'")
 
-        st += print_v(f"Changed files:\t\t\t{event.payload['pull_request'].get('changed_files', 0)}")
+        if pr.requested_reviewers:
+            for reviewer in pr.requested_reviewers:
+                st += print_v(f"\n - Requested reviewer:\t{reviewer.login} ({reviewer.html_url})")
 
-        if event.payload["pull_request"].get("body"):
-            st += print_v(f"PR description:\n\n'{event.payload['pull_request'].get('body')}'")
+        if pr.assignees:
+            for assignee in pr.assignees:
+                st += print_v(f"\n - Assignee:\t\t{assignee.login} ({assignee.html_url})")
 
-        if event.payload["pull_request"].get("requested_reviewers"):
-            for requested_reviewer in event.payload["pull_request"].get("requested_reviewers"):
-                st += print_v(f"\n - Requested reviewer name:\t{requested_reviewer.get('login')}")
-                st += print_v(f" - Requested reviewer URL:\t{requested_reviewer.get('html_url')}")
-
-        if event.payload["pull_request"].get("assignees"):
-            for assignee in event.payload["pull_request"].get("assignees"):
-                st += print_v(f"\n - Assignee name:\t\t{assignee.get('login')}")
-                st += print_v(f" - Assignee URL:\t\t{assignee.get('html_url')}")
+        st += print_v("." * 105)
 
     if event.payload.get("review"):
         review_date_ts = convert_utc_str_to_tz_datetime(str(event.payload["review"].get("submitted_at")), LOCAL_TIMEZONE, 2).timestamp()
@@ -781,16 +823,36 @@ def github_print_event(event, g, time_passed=False, ts=0):
             st += print_v(f"Requested review description:\n'{event.payload['review'].get('body')}'")
 
     if event.payload.get("comment"):
-        comment_date_ts = convert_utc_str_to_tz_datetime(str(event.payload["comment"].get("created_at")), LOCAL_TIMEZONE, 2).timestamp()
+        comment = event.payload["comment"]
+
+        comment_date_ts = convert_utc_str_to_tz_datetime(
+            str(comment.get("created_at")), LOCAL_TIMEZONE, 2
+        ).timestamp()
         st += print_v(f"\nComment date:\t\t\t{get_date_from_ts(comment_date_ts)}")
+        st += print_v(f"Comment URL:\t\t\t{comment.get('html_url')}")
+        if comment.get("path"):
+            st += print_v(f"Comment path:\t\t\t{comment.get('path')}")
 
-        if event.payload["comment"].get("body"):
-            st += print_v(f"Comment body:\t\t\t'{event.payload['comment'].get('body')}'")
+        st += print_v(f"\nComment body:\n'{comment.get('body')}'")
 
-        st += print_v(f"Comment URL:\t\t\t{event.payload['comment'].get('html_url')}")
+        parent_id = comment.get("in_reply_to_id")
+        if parent_id:
+            try:
+                pr_number = event.payload["pull_request"]["number"]
+                pr = repo.get_pull(pr_number)
 
-        if event.payload["comment"].get("path"):
-            st += print_v(f"Comment path:\t\t\t{event.payload['comment'].get('path')}")
+                parent = pr.get_review_comment(parent_id)
+                parent_date = get_date_from_ts(
+                    convert_utc_str_to_tz_datetime(str(parent.created_at), LOCAL_TIMEZONE, 1).timestamp()
+                )
+
+                st += print_v(f"\n↳ In reply to ({parent.user.login} @ {parent_date}):")
+                st += print_v(f"'{parent.body}'")
+                st += print_v(f"Parent URL:\t\t\t{parent.html_url}")
+            except Exception as e:
+                st += print_v(f"\nCould not fetch parent comment (ID {parent_id}): {e}")
+        else:
+            st += print_v("\n(This is the first comment in its thread)")
 
     if event.payload.get("issue"):
         st += print_v(f"\nIssue title:\t\t\t{event.payload['issue'].get('title')}")
@@ -817,6 +879,22 @@ def github_print_event(event, g, time_passed=False, ts=0):
     if event.payload.get("forkee"):
         st += print_v(f"\nForked to repo:\t\t\t{event.payload['forkee'].get('full_name')}")
         st += print_v(f"Forked to repo (URL):\t\t{event.payload['forkee'].get('html_url')}")
+
+    if event.type == "MemberEvent":
+        st += print_v(f"\nMember added:\t\t\t{event.payload.get('member', {}).get('login')}")
+        st += print_v(f"Permission level:\t\t{event.payload.get('membership', {}).get('role')}")
+
+    if event.type == "PublicEvent":
+        st += print_v(f"\nRepository is now public.")
+
+    if event.type == "DiscussionEvent":
+        st += print_v(f"\nDiscussion title:\t\t{event.payload.get('discussion', {}).get('title')}")
+        st += print_v(f"Discussion URL:\t\t{event.payload.get('discussion', {}).get('html_url')}")
+        st += print_v(f"Discussion category:\t{event.payload.get('discussion', {}).get('category', {}).get('name')}")
+
+    if event.type == "DiscussionCommentEvent":
+        st += print_v(f"\nDiscussion comment by:\t{event.payload.get('comment', {}).get('user', {}).get('login')}")
+        st += print_v(f"Comment body:\t\t'{event.payload.get('comment', {}).get('body')}')")
 
     return event_date_ts, repo_name, repo_url, st
 
@@ -871,7 +949,7 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
         print(f"CSV export enabled:\t\t{csv_enabled} ({csv_file_name})")
     print(f"Local timezone:\t\t\t{LOCAL_TIMEZONE}")
     print(f"Available events:\t\t{total_available}")
-    print("---------------------------------------------------------------------------------------------------------")
+    print("─" * 105)
 
     if available_events == 0:
         print("There are no events yet")
