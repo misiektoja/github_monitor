@@ -51,6 +51,8 @@ RECEIVER_EMAIL = "your_receiver_email"
 GITHUB_CHECK_INTERVAL = 1200  # 20 mins
 
 # Specify your local time zone so we convert Github API timestamps to your time (for example: 'Europe/Warsaw')
+# You can get the list of all time zones supported by pytz like this:
+# python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
 # If you leave it as 'Auto' we will try to automatically detect the local timezone
 LOCAL_TIMEZONE = 'Auto'
 
@@ -115,10 +117,15 @@ nl_ch = "\n"
 
 
 import sys
+
+if sys.version_info < (3, 10):
+    print("* Error: Python version 3.10 or higher required !")
+    sys.exit(1)
+
 import time
 import string
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from dateutil import relativedelta
 import calendar
 import requests as req
@@ -141,6 +148,7 @@ import ipaddress
 from github import Github
 from github import Auth
 from itertools import islice
+from dateutil.parser import isoparse
 
 
 # Logger class to output messages to stdout and log file
@@ -205,30 +213,51 @@ def display_time(seconds, granularity=2):
 
 
 # Function to calculate time span between two timestamps in seconds
+# Accepts timestamp integers, floats and datetime objects
 def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True, show_minutes=True, show_seconds=True, granularity=3):
     result = []
     intervals = ['years', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds']
     ts1 = timestamp1
     ts2 = timestamp2
 
-    if type(timestamp1) is int:
-        dt1 = datetime.fromtimestamp(int(ts1))
-    elif type(timestamp1) is float:
+    if isinstance(timestamp1, str):
+        try:
+            timestamp1 = isoparse(timestamp1)
+        except Exception:
+            return ""
+
+    if isinstance(timestamp1, int):
+        dt1 = datetime.fromtimestamp(int(ts1), tz=timezone.utc)
+    elif isinstance(timestamp1, float):
         ts1 = int(round(ts1))
-        dt1 = datetime.fromtimestamp(ts1)
-    elif type(timestamp1) is datetime:
+        dt1 = datetime.fromtimestamp(ts1, tz=timezone.utc)
+    elif isinstance(timestamp1, datetime):
         dt1 = timestamp1
+        if dt1.tzinfo is None:
+            dt1 = pytz.utc.localize(dt1)
+        else:
+            dt1 = dt1.astimezone(pytz.utc)
         ts1 = int(round(dt1.timestamp()))
     else:
         return ""
 
-    if type(timestamp2) is int:
-        dt2 = datetime.fromtimestamp(int(ts2))
-    elif type(timestamp2) is float:
+    if isinstance(timestamp2, str):
+        try:
+            timestamp2 = isoparse(timestamp2)
+        except Exception:
+            return ""
+
+    if isinstance(timestamp2, int):
+        dt2 = datetime.fromtimestamp(int(ts2), tz=timezone.utc)
+    elif isinstance(timestamp2, float):
         ts2 = int(round(ts2))
-        dt2 = datetime.fromtimestamp(ts2)
-    elif type(timestamp2) is datetime:
+        dt2 = datetime.fromtimestamp(ts2, tz=timezone.utc)
+    elif isinstance(timestamp2, datetime):
         dt2 = timestamp2
+        if dt2.tzinfo is None:
+            dt2 = pytz.utc.localize(dt2)
+        else:
+            dt2 = dt2.astimezone(pytz.utc)
         ts2 = int(round(dt2.timestamp()))
     else:
         return ""
@@ -250,14 +279,15 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
         if weeks > 0:
             days = days - (weeks * 7)
         hours = date_diff.hours
-        if (not show_hours and ts_diff > 86400):
+        if not show_hours and ts_diff > 86400:
             hours = 0
         minutes = date_diff.minutes
-        if (not show_minutes and ts_diff > 3600):
+        if not show_minutes and ts_diff > 3600:
             minutes = 0
         seconds = date_diff.seconds
-        if (not show_seconds and ts_diff > 60):
+        if not show_seconds and ts_diff > 60:
             seconds = 0
+
         date_list = [years, months, weeks, days, hours, minutes, seconds]
 
         for index, interval in enumerate(date_list):
@@ -266,6 +296,7 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
                 if interval == 1:
                     name = name.rstrip('s')
                 result.append(f"{interval} {name}")
+
         return ', '.join(result[:granularity])
     else:
         return '0 seconds'
@@ -349,12 +380,12 @@ def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new
         raise
 
 
-# Function to return the timestamp in human readable format; eg. Sun 21 Apr 2024, 15:08:45
+# Function to return the current date/time in human readable format; eg. Sun 21 Apr 2024, 15:08:45
 def get_cur_ts(ts_str=""):
     return (f'{ts_str}{calendar.day_abbr[(datetime.fromtimestamp(int(time.time()))).weekday()]}, {datetime.fromtimestamp(int(time.time())).strftime("%d %b %Y, %H:%M:%S")}')
 
 
-# Function to print the current timestamp in human readable format; eg. Sun 21 Apr 2024, 15:08:45
+# Function to print the current date/time in human readable format with separator; eg. Sun 21 Apr 2024, 15:08:45
 def print_cur_ts(ts_str=""):
     print(get_cur_ts(str(ts_str)))
     print("─" * 105)
@@ -362,16 +393,30 @@ def print_cur_ts(ts_str=""):
 
 # Function to return the timestamp/datetime object in human readable format (long version); eg. Sun 21 Apr 2024, 15:08:45
 def get_date_from_ts(ts):
-    if type(ts) is datetime:
-        ts_new = int(round(ts.timestamp()))
-    elif type(ts) is int:
-        ts_new = ts
-    elif type(ts) is float:
-        ts_new = int(round(ts))
+    tz = pytz.timezone(LOCAL_TIMEZONE)
+
+    if isinstance(ts, str):
+        try:
+            ts = isoparse(ts)
+        except Exception:
+            return ""
+
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            ts = pytz.utc.localize(ts)
+        ts_new = ts.astimezone(tz)
+
+    elif isinstance(ts, int):
+        ts_new = datetime.fromtimestamp(ts, tz)
+
+    elif isinstance(ts, float):
+        ts_rounded = int(round(ts))
+        ts_new = datetime.fromtimestamp(ts_rounded, tz)
+
     else:
         return ""
 
-    return (f'{calendar.day_abbr[(datetime.fromtimestamp(ts_new)).weekday()]} {datetime.fromtimestamp(ts_new).strftime("%d %b %Y, %H:%M:%S")}')
+    return (f'{calendar.day_abbr[ts_new.weekday()]} {ts_new.strftime("%d %b %Y, %H:%M:%S")}')
 
 
 # Function to return the timestamp/datetime object in human readable format (short version); eg.
@@ -379,53 +424,41 @@ def get_date_from_ts(ts):
 # Sun 21 Apr 24, 15:08 (if show_year == True and current year is different)
 # Sun 21 Apr (if show_hour == False)
 def get_short_date_from_ts(ts, show_year=False, show_hour=True):
-    if type(ts) is datetime:
+    tz = pytz.timezone(LOCAL_TIMEZONE)
+
+    if isinstance(ts, str):
+        try:
+            ts = isoparse(ts)
+        except Exception:
+            return ""
+
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            ts = pytz.utc.localize(ts)
+        ts_local = ts.astimezone(tz)
         ts_new = int(round(ts.timestamp()))
-    elif type(ts) is int:
+
+    elif isinstance(ts, int):
         ts_new = ts
-    elif type(ts) is float:
+        ts_local = datetime.fromtimestamp(ts_new, tz)
+
+    elif isinstance(ts, float):
         ts_new = int(round(ts))
+        ts_local = datetime.fromtimestamp(ts_new, tz)
+
     else:
         return ""
 
-    if show_hour:
-        hour_strftime = " %H:%M"
+    hour_strftime = " %H:%M" if show_hour else ""
+
+    if show_year and ts_local.year != datetime.now(tz).year:
+        hour_prefix = "," if show_hour else ""
+        return f'{calendar.day_abbr[ts_local.weekday()]} {ts_local.strftime(f"%d %b %y{hour_prefix}{hour_strftime}")}'
     else:
-        hour_strftime = ""
-
-    if show_year and int(datetime.fromtimestamp(ts_new).strftime("%Y")) != int(datetime.now().strftime("%Y")):
-        if show_hour:
-            hour_prefix = ","
-        else:
-            hour_prefix = ""
-        return (f'{calendar.day_abbr[(datetime.fromtimestamp(ts_new)).weekday()]} {datetime.fromtimestamp(ts_new).strftime(f"%d %b %y{hour_prefix}{hour_strftime}")}')
-    else:
-        return (f'{calendar.day_abbr[(datetime.fromtimestamp(ts_new)).weekday()]} {datetime.fromtimestamp(ts_new).strftime(f"%d %b{hour_strftime}")}')
+        return f'{calendar.day_abbr[ts_local.weekday()]} {ts_local.strftime(f"%d %b{hour_strftime}")}'
 
 
-# Function to convert UTC string returned by Github API to datetime object in specified timezone
-def convert_utc_str_to_tz_datetime(utc_string, timezone, version=1):
-    dt_utc = datetime.min
-
-    try:
-        # YYYY-MM-DD HH:MM:SS.MS+00:00
-        if version == 1:
-            utc_string_sanitize = utc_string.split('+', 1)[0]
-            utc_string_sanitize = utc_string_sanitize.split('.', 1)[0]
-            dt_utc = datetime.strptime(utc_string_sanitize, '%Y-%m-%d %H:%M:%S')
-        # YYYY-MM-DDTHH:MM:SSZ
-        elif version == 2:
-            utc_string_sanitize = utc_string
-            dt_utc = datetime.strptime(utc_string_sanitize, '%Y-%m-%dT%H:%M:%SZ')
-
-        old_tz = pytz.timezone("UTC")
-        new_tz = pytz.timezone(timezone)
-        dt_new_tz = old_tz.localize(dt_utc).astimezone(new_tz)
-        return dt_new_tz
-    except Exception:
-        return datetime.fromtimestamp(0)
-
-
+# Function to check if the timezone name is correct
 def is_valid_timezone(tz_name):
     return tz_name in pytz.all_timezones
 
@@ -578,13 +611,11 @@ def github_process_repos(repos_list):
         for repo in repos_list:
             try:
                 repo_created_date = repo.created_at
-                repo_created_date_ts = convert_utc_str_to_tz_datetime(str(repo_created_date), LOCAL_TIMEZONE, 1).timestamp()
                 repo_updated_date = repo.updated_at
-                repo_updated_date_ts = convert_utc_str_to_tz_datetime(str(repo_updated_date), LOCAL_TIMEZONE, 1).timestamp()
                 stargazers = [star.login for star in repo.get_stargazers()]
                 subscribers = [subscriber.login for subscriber in repo.get_subscribers()]
                 forked_repos = [fork.full_name for fork in repo.get_forks()]
-                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "watchers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date_ts, "update_date": repo_updated_date_ts, "stargazers": stargazers, "forked_repos": forked_repos, "subscribers": subscribers})
+                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "watchers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers": stargazers, "forked_repos": forked_repos, "subscribers": subscribers})
             except Exception as e:
                 print(f"Error while processing info for repo '{repo.name}', skipping for now - {e}")
                 print_cur_ts("Timestamp:\t\t")
@@ -636,11 +667,9 @@ def github_print_repos(user):
                 if repo.html_url:
                     repo_str += f"\n[ {repo.html_url}/ ]"
                 repo_created_date = repo.created_at
-                repo_created_date_ts = convert_utc_str_to_tz_datetime(str(repo_created_date), LOCAL_TIMEZONE, 1).timestamp()
                 repo_updated_date = repo.updated_at
-                repo_updated_date_ts = convert_utc_str_to_tz_datetime(str(repo_updated_date), LOCAL_TIMEZONE, 1).timestamp()
-                repo_str += f"\n[ date: {get_date_from_ts(repo_created_date_ts)} - {calculate_timespan(int(time.time()), int(repo_created_date_ts), granularity=2)} ago) ]"
-                repo_str += f"\n[ update: {get_date_from_ts(repo_updated_date_ts)} - {calculate_timespan(int(time.time()), int(repo_updated_date_ts), granularity=2)} ago) ]"
+                repo_str += f"\n[ date: {get_date_from_ts(repo_created_date)} - {calculate_timespan(int(time.time()), repo_created_date, granularity=2)} ago) ]"
+                repo_str += f"\n[ update: {get_date_from_ts(repo_updated_date)} - {calculate_timespan(int(time.time()), repo_updated_date, granularity=2)} ago) ]"
                 if repo.description:
                     repo_str += f"\n'{repo.description}'"
 
@@ -709,21 +738,21 @@ def human_readable_size(num):
 
 
 # Function printing details about passed GitHub event
-def github_print_event(event, g, time_passed=False, ts=0):
+def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
-    event_date_ts = 0
+    event_date: datetime | None = None
     repo_name = ""
     repo_url = ""
     st = ""
     tp = ""
     repo = None
 
-    event_date_ts = convert_utc_str_to_tz_datetime(str(event.created_at), LOCAL_TIMEZONE, 1).timestamp()
+    event_date = event.created_at
     if time_passed and not ts:
-        tp = f" ({calculate_timespan(int(time.time()), int(event_date_ts), show_seconds=False, granularity=2)} ago)"
+        tp = f" ({calculate_timespan(int(time.time()), event_date, show_seconds=False, granularity=2)} ago)"
     elif time_passed and ts:
-        tp = f" (after {calculate_timespan(int(event_date_ts), int(ts), show_seconds=False, granularity=2)}: {get_short_date_from_ts(int(ts))})"
-    st += print_v(f"Event date:\t\t\t{get_date_from_ts(event_date_ts)}{tp}")
+        tp = f" (after {calculate_timespan(event_date, ts, show_seconds=False, granularity=2)}: {get_short_date_from_ts(ts)})"
+    st += print_v(f"Event date:\t\t\t{get_date_from_ts(event_date)}{tp}")
     st += print_v(f"Event ID:\t\t\t{event.id}")
     st += print_v(f"Event type:\t\t\t{event.type}")
 
@@ -764,8 +793,8 @@ def github_print_event(event, g, time_passed=False, ts=0):
                 commit_details = repo.get_commit(commit["sha"])
 
             if commit_details:
-                commit_date_ts = convert_utc_str_to_tz_datetime(str(commit_details.commit.author.date), LOCAL_TIMEZONE, 1).timestamp()
-                st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date_ts)}")
+                commit_date = commit_details.commit.author.date
+                st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date)}")
 
             st += print_v(f" - Commit SHA:\t\t\t{commit['sha']}")
             st += print_v(f" - Commit author:\t\t{commit['author']['name']}")
@@ -804,7 +833,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
 
         st += print_v(f"\nPublished by:\t\t\t{event.payload['release']['author']['login']}")
         if event.payload['release'].get('published_at'):
-            pub_ts = convert_utc_str_to_tz_datetime(event.payload['release']['published_at'], LOCAL_TIMEZONE, 2).timestamp()
+            pub_ts = event.payload['release']['published_at']
             st += print_v(f"Published at:\t\t\t{get_date_from_ts(pub_ts)}")
         st += print_v(f"Target commitish:\t\t{event.payload['release'].get('target_commitish')}")
         st += print_v(f"Draft:\t\t\t\t{event.payload['release'].get('draft')}")
@@ -836,13 +865,13 @@ def github_print_event(event, g, time_passed=False, ts=0):
         st += print_v(f"PR URL:\t\t\t\t{pr.html_url}")
 
         if pr.created_at:
-            pr_created_date = get_date_from_ts(convert_utc_str_to_tz_datetime(str(pr.created_at), LOCAL_TIMEZONE, 1).timestamp())
+            pr_created_date = get_date_from_ts(pr.created_at)
             st += print_v(f"Created at:\t\t\t{pr_created_date}")
         if pr.closed_at:
-            pr_closed_date = get_date_from_ts(convert_utc_str_to_tz_datetime(str(pr.closed_at), LOCAL_TIMEZONE, 1).timestamp())
+            pr_closed_date = get_date_from_ts(pr.closed_at)
             st += print_v(f"Closed at:\t\t\t{pr_closed_date}")
         if pr.merged_at:
-            pr_merged_date = get_date_from_ts(convert_utc_str_to_tz_datetime(str(pr.merged_at), LOCAL_TIMEZONE, 1).timestamp())
+            pr_merged_date = get_date_from_ts(pr.merged_at)
             st += print_v(f"Merged at:\t\t\t{pr_merged_date} by {pr.merged_by.login}")
 
         st += print_v(f"Head → Base:\t\t\t{pr.head.ref} → {pr.base.ref}")
@@ -871,8 +900,8 @@ def github_print_event(event, g, time_passed=False, ts=0):
         st += print_v("." * 105)
 
     if event.payload.get("review"):
-        review_date_ts = convert_utc_str_to_tz_datetime(str(event.payload["review"].get("submitted_at")), LOCAL_TIMEZONE, 2).timestamp()
-        st += print_v(f"\nReview submitted:\t\t{get_date_from_ts(review_date_ts)}")
+        review_date = event.payload["review"].get("submitted_at")
+        st += print_v(f"\nReview submitted at:\t\t{get_date_from_ts(review_date)}")
         st += print_v(f"Review URL:\t\t\t{event.payload['review'].get('html_url')}")
 
         if event.payload["review"].get("author_association"):
@@ -898,8 +927,8 @@ def github_print_event(event, g, time_passed=False, ts=0):
 
     if event.payload.get("issue"):
         st += print_v(f"\nIssue title:\t\t\t{event.payload['issue'].get('title')}")
-        issue_date_ts = convert_utc_str_to_tz_datetime(str(event.payload["issue"].get("created_at")), LOCAL_TIMEZONE, 2).timestamp()
-        st += print_v(f"Issue date:\t\t\t{get_date_from_ts(issue_date_ts)}")
+        issue_date = event.payload["issue"].get("created_at")
+        st += print_v(f"Issue date:\t\t\t{get_date_from_ts(issue_date)}")
 
         st += print_v(f"Issue URL:\t\t\t{event.payload['issue'].get('html_url')}")
 
@@ -924,8 +953,8 @@ def github_print_event(event, g, time_passed=False, ts=0):
     if event.payload.get("comment"):
         comment = event.payload["comment"]
 
-        comment_date_ts = convert_utc_str_to_tz_datetime(str(comment.get("created_at")), LOCAL_TIMEZONE, 2).timestamp()
-        st += print_v(f"\nComment date:\t\t\t{get_date_from_ts(comment_date_ts)}")
+        comment_date = comment.get("created_at")
+        st += print_v(f"\nComment date:\t\t\t{get_date_from_ts(comment_date)}")
         st += print_v(f"Comment URL:\t\t\t{comment.get('html_url')}")
         if comment.get("path"):
             st += print_v(f"Comment path:\t\t\t{comment.get('path')}")
@@ -943,7 +972,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
                     pr = repo.get_pull(pr_number)
 
                     parent = pr.get_review_comment(parent_id)
-                    parent_date = get_date_from_ts(convert_utc_str_to_tz_datetime(str(parent.created_at), LOCAL_TIMEZONE, 1).timestamp())
+                    parent_date = get_date_from_ts(parent.created_at)
 
                     st += print_v(f"\n↳ In reply to {parent.user.login} (@ {parent_date}):")
                     st += print_v(f"'{parent.body}'")
@@ -964,9 +993,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
                     if c.id == comment["id"]:
                         if i > 0:
                             prev = comments[i - 1]
-                            prev_date = get_date_from_ts(
-                                convert_utc_str_to_tz_datetime(str(prev.created_at), LOCAL_TIMEZONE, 1).timestamp()
-                            )
+                            prev_date = get_date_from_ts(prev.created_at)
                             st += print_v(f"\n↳ In reply to {prev.user.login} (@ {prev_date}):")
                             st += print_v(f"'{prev.body}'")
                             st += print_v(f"\nPrevious comment URL:\t\t{prev.html_url}")
@@ -1008,7 +1035,7 @@ def github_print_event(event, g, time_passed=False, ts=0):
         if comment_body:
             st += print_v(f"Comment body:\t\t\t'{comment_body}'")
 
-    return event_date_ts, repo_name, repo_url, st
+    return event_date, repo_name, repo_url, st
 
 
 # Function listing recent events for the user (-l) and potentially dumping the entries to CSV file (if -b is used)
@@ -1075,14 +1102,14 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
                     event_number = event_number_map[id(event)]
                     print(f"Event number:\t\t\t#{event_number}")
                     try:
-                        event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g)
+                        event_date, repo_name, repo_url, event_text = github_print_event(event, g)
                     except Exception as e:
                         print(f"\nWarning: cannot fetch all event details, skipping - {e}")
                         print_cur_ts("\nTimestamp:\t\t\t")
                         continue
                     try:
                         if csv_file_name:
-                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
+                            write_csv_entry(csv_file_name, str(event_date), str(event.type), str(repo_name), "", "")
                     except Exception as e:
                         print(f"* Cannot write CSV entry - {e}")
                     print_cur_ts("\nTimestamp:\t\t\t")
@@ -1109,6 +1136,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     starred_count = 0
     available_events = 0
     events = []
+    event_date: datetime | None = None
 
     try:
         auth = Auth.Token(GITHUB_TOKEN)
@@ -1149,7 +1177,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
         sys.exit(1)
 
     last_event_id = 0
-    last_event_ts = 0
+    last_event_ts: datetime | None = None
     events_list_of_ids = []
 
     if not do_not_monitor_github_events:
@@ -1161,7 +1189,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                 newest = events[0]
                 last_event_id = newest.id
                 if last_event_id:
-                    last_event_ts = int(convert_utc_str_to_tz_datetime(str(newest.created_at), LOCAL_TIMEZONE, 1).timestamp())
+                    last_event_ts = newest.created_at
             except Exception as e:
                 print(f"* Cannot get event IDs / timestamps - {e}\n")
                 pass
@@ -1207,12 +1235,9 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     if blog:
         print(f"Blog URL:\t\t\t{blog}")
 
-    account_created_date_ts = convert_utc_str_to_tz_datetime(str(account_created_date), LOCAL_TIMEZONE, 1).timestamp()
-    print(f"\nAccount creation date:\t\t{get_date_from_ts(account_created_date_ts)} ({calculate_timespan(int(time.time()), int(account_created_date_ts), granularity=2)} ago)")
-
-    account_updated_date_ts = convert_utc_str_to_tz_datetime(str(account_updated_date), LOCAL_TIMEZONE, 1).timestamp()
-    print(f"Account updated date:\t\t{get_date_from_ts(account_updated_date_ts)} ({calculate_timespan(int(time.time()), int(account_updated_date_ts), granularity=2)} ago)")
-    account_updated_date_old_ts = account_updated_date_ts
+    print(f"\nAccount creation date:\t\t{get_date_from_ts(account_created_date)} ({calculate_timespan(int(time.time()), account_created_date, granularity=2)} ago)")
+    print(f"Account updated date:\t\t{get_date_from_ts(account_updated_date)} ({calculate_timespan(int(time.time()), account_updated_date, granularity=2)} ago)")
+    account_updated_date_old = account_updated_date
 
     print(f"\nFollowers:\t\t\t{followers_count}")
     print(f"Followings:\t\t\t{followings_count}")
@@ -1287,8 +1312,6 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             email = g_user.email
             blog = g_user.blog
             account_updated_date = g_user.updated_at
-            if account_updated_date:
-                account_updated_date_ts = convert_utc_str_to_tz_datetime(str(account_updated_date), LOCAL_TIMEZONE, 1).timestamp()
 
             followers_count = g_user.followers
             followings_count = g_user.following
@@ -1782,25 +1805,25 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed account update date
-        if account_updated_date_ts != account_updated_date_old_ts:
-            print(f"* User account has been updated for user {user} ! (after {calculate_timespan(account_updated_date_ts, account_updated_date_old_ts, show_seconds=False, granularity=2)})\n")
-            print(f"Old account update date:\t{get_date_from_ts(account_updated_date_old_ts)}\n")
-            print(f"New account update date:\t{get_date_from_ts(account_updated_date_ts)}\n")
+        if account_updated_date != account_updated_date_old:
+            print(f"* User account has been updated for user {user} ! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n")
+            print(f"Old account update date:\t{get_date_from_ts(account_updated_date_old)}\n")
+            print(f"New account update date:\t{get_date_from_ts(account_updated_date)}\n")
 
             try:
                 if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Account Update Date", user, str(datetime.fromtimestamp(account_updated_date_old_ts)), str(datetime.fromtimestamp(account_updated_date_ts)))
+                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Account Update Date", user, str(account_updated_date_old), str(account_updated_date))
             except Exception as e:
                 print(f"* Cannot write CSV entry - {e}")
 
-            m_subject = f"Github user {user} account has been updated! (after {calculate_timespan(account_updated_date_ts, account_updated_date_old_ts, show_seconds=False, granularity=2)})"
-            m_body = f"Github user {user} account has been updated (after {calculate_timespan(account_updated_date_ts, account_updated_date_old_ts, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old_ts)}\n\nNew account update date: {get_date_from_ts(account_updated_date_ts)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_subject = f"Github user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
+            m_body = f"Github user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if profile_notification:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
-            account_updated_date_old_ts = account_updated_date_ts
+            account_updated_date_old = account_updated_date
             print_cur_ts("Timestamp:\t\t\t")
 
         list_of_repos = []
@@ -1825,7 +1848,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                         r_stars = repo.get("stars", 0)
                         r_watchers = repo.get("watchers", 0)
                         r_url = repo.get("url", "")
-                        r_update = repo.get("update_date", 0)
+                        r_update = repo.get("update_date")
                         r_stargazers = repo.get("stargazers")
                         r_subscribers = repo.get("subscribers")
                         r_forked_repos = repo.get("forked_repos")
@@ -2064,16 +2087,16 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
         if not do_not_monitor_github_events:
             if available_events == 0:
                 last_event_id = 0
-                last_event_ts = 0
+                last_event_ts = None
             else:
                 try:
                     newest = events[0]
                     last_event_id = newest.id
                     if last_event_id:
-                        last_event_ts = int(convert_utc_str_to_tz_datetime(str(newest.created_at), LOCAL_TIMEZONE, 1).timestamp())
+                        last_event_ts = newest.created_at
                 except Exception as e:
                     last_event_id = 0
-                    last_event_ts = 0
+                    last_event_ts = None
                     print(f"* Cannot get last event ID / timestamp - {e}")
                     print_cur_ts("Timestamp:\t\t\t")
 
@@ -2092,23 +2115,23 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
                     if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
 
-                        event_date_ts = 0
+                        event_date = None
                         repo_name = ""
                         repo_url = ""
                         event_text = ""
 
                         try:
-                            event_date_ts, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
+                            event_date, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
                         except Exception as e:
                             print(f"\nWarning: cannot fetch all event details - {e}")
 
                         first_new = False
 
-                        if event_date_ts and repo_name and event_text:
+                        if event_date and repo_name and event_text:
 
                             try:
                                 if csv_file_name:
-                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(event_date_ts)), str(event.type), str(repo_name), "", "")
+                                    write_csv_entry(csv_file_name, str(event_date), str(event.type), str(repo_name), "", "")
                             except Exception as e:
                                 print(f"* Cannot write CSV entry - {e}")
 
