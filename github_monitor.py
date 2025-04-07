@@ -615,7 +615,12 @@ def github_process_repos(repos_list):
                 stargazers = [star.login for star in repo.get_stargazers()]
                 subscribers = [subscriber.login for subscriber in repo.get_subscribers()]
                 forked_repos = [fork.full_name for fork in repo.get_forks()]
-                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "watchers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers": stargazers, "forked_repos": forked_repos, "subscribers": subscribers})
+                issues = list(repo.get_issues(state='open'))
+                pulls = list(repo.get_pulls(state='open'))
+                real_issues = [i for i in issues if not i.pull_request]
+                real_issues_count = len(real_issues)
+                pulls_count = len(pulls)
+                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "watchers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers": stargazers, "forked_repos": forked_repos, "subscribers": subscribers, "issues": real_issues_count, "pulls": pulls_count})
             except Exception as e:
                 print(f"Error while processing info for repo '{repo.name}', skipping for now - {e}")
                 print_cur_ts("Timestamp:\t\t")
@@ -656,24 +661,39 @@ def github_print_repos(user):
     print(f"Github API URL:\t\t{GITHUB_API_URL}")
     print(f"Local timezone:\t\t{LOCAL_TIMEZONE}")
 
-    print(f"\nRepositories:\t\t{repos_count}")
+    print(f"\nRepositories:\t\t{repos_count}\n")
 
     try:
         if repos_list:
-
+            print("─" * 80)
             for repo in repos_list:
-                repo_str = f"\n- '{repo.name}' (fork: {repo.fork})"
-                repo_str += f"\n[ {repo.language}, forks: {repo.forks_count}, stars: {repo.stargazers_count}, watchers: {repo.subscribers_count} ]"
-                if repo.html_url:
-                    repo_str += f"\n[ {repo.html_url}/ ]"
-                repo_created_date = repo.created_at
-                repo_updated_date = repo.updated_at
-                repo_str += f"\n[ date: {get_date_from_ts(repo_created_date)} - {calculate_timespan(int(time.time()), repo_created_date, granularity=2)} ago) ]"
-                repo_str += f"\n[ update: {get_date_from_ts(repo_updated_date)} - {calculate_timespan(int(time.time()), repo_updated_date, granularity=2)} ago) ]"
-                if repo.description:
-                    repo_str += f"\n'{repo.description}'"
+                print(f"🔸 {repo.name} {'(fork)' if repo.fork else ''} \n")
 
-                print(repo_str)
+                issues = list(repo.get_issues(state='open'))
+                pulls = list(repo.get_pulls(state='open'))
+                real_issues = [i for i in issues if not i.pull_request]
+
+                print(f" - 🌐 URL:\t\t{repo.html_url}")
+                print(f" - 🧑‍💻 Language:\t\t{repo.language}")
+
+                print(f"\n - ⭐ Stars:\t\t{repo.stargazers_count}")
+                print(f" - 🍴 Forks:\t\t{repo.forks_count}")
+                print(f" - 👁  Watchers:\t\t{repo.subscribers_count}")
+
+                # print(f" - 🐞 Issues+PRs:\t{repo.open_issues_count}")
+                print(f" - 🐞 Issues:\t\t{len(real_issues)}")
+                print(f" - 📬 PRs:\t\t{len(pulls)}")
+
+                print(f"\n - 📝 License:\t\t{repo.license.name if repo.license else 'None'}")
+                print(f" - 🌿 Branch (default):\t{repo.default_branch}")
+
+                print(f"\n - 📅 Created:\t\t{get_date_from_ts(repo.created_at)} ({calculate_timespan(int(time.time()), repo.created_at, granularity=2)} ago)")
+                print(f" - 🔄 Updated:\t\t{get_date_from_ts(repo.updated_at)} ({calculate_timespan(int(time.time()), repo.updated_at, granularity=2)} ago)")
+                print(f" - 🔃 Last push:\t{get_date_from_ts(repo.pushed_at)} ({calculate_timespan(int(time.time()), repo.pushed_at, granularity=2)} ago)")
+
+                if repo.description:
+                    print(f"\n - 📝 Desc:\t\t{repo.description}")
+                print("─" * 80)
     except Exception as e:
         raise RuntimeError(f"Cannot fetch user's repositories list - {e}")
 
@@ -1852,6 +1872,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                         r_stargazers = repo.get("stargazers")
                         r_subscribers = repo.get("subscribers")
                         r_forked_repos = repo.get("forked_repos")
+                        r_issues = repo.get("issues")
+                        r_pulls = repo.get("pulls")
 
                         for repo_old in list_of_repos_old:
                             r_name_old = repo_old.get("name")
@@ -1861,18 +1883,20 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                 r_stars_old = repo_old.get("stars", 0)
                                 r_watchers_old = repo_old.get("watchers", 0)
                                 r_url_old = repo_old.get("url", "")
-                                r_update_old = repo_old.get("update_date", 0)
+                                r_update_old = repo_old.get("update_date")
                                 r_stargazers_old = repo_old.get("stargazers")
                                 r_subscribers_old = repo_old.get("subscribers")
                                 r_forked_repos_old = repo_old.get("forked_repos")
+                                r_issues_old = repo_old.get("issues")
+                                r_pulls_old = repo_old.get("pulls")
 
                                 # Update date for repo changed
-                                if int(r_update) != int(r_update_old):
+                                if r_update != r_update_old:
                                     r_message = f"* Repo '{r_name}' update date changed (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})\n* Repo URL: {r_url}\n\nOld repo update date:\t{get_date_from_ts(r_update_old)}\n\nNew repo update date:\t{get_date_from_ts(r_update)}\n"
                                     print(r_message)
                                     try:
                                         if csv_file_name:
-                                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Update Date", r_name, str(datetime.fromtimestamp(int(r_update_old))), str(datetime.fromtimestamp(int(r_update))))
+                                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Update Date", r_name, str(r_update_old), str(r_update))
                                     except Exception as e:
                                         print(f"* Cannot write CSV entry - {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
