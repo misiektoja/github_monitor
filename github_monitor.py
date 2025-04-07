@@ -48,7 +48,7 @@ SENDER_EMAIL = "your_sender_email"
 RECEIVER_EMAIL = "your_receiver_email"
 
 # How often do we perform checks for user activity, you can also use -c parameter; in seconds
-GITHUB_CHECK_INTERVAL = 1200  # 20 mins
+GITHUB_CHECK_INTERVAL = 1800  # 30 mins
 
 # Specify your local time zone so we convert Github API timestamps to your time (for example: 'Europe/Warsaw')
 # You can get the list of all time zones supported by pytz like this:
@@ -145,8 +145,7 @@ except ImportError:
 import platform
 import re
 import ipaddress
-from github import Github
-from github import Auth
+from github import Github, Auth, GithubException, UnknownObjectException
 from itertools import islice
 from dateutil.parser import isoparse
 
@@ -380,9 +379,27 @@ def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new
         raise
 
 
+def convert_to_local_naive(dt: datetime | None = None):
+    tz = pytz.timezone(LOCAL_TIMEZONE)
+
+    if dt is not None:
+        if dt.tzinfo is None:
+            dt = pytz.utc.localize(dt)
+
+        dt_local = dt.astimezone(tz)
+
+        return dt_local.replace(tzinfo=None)
+    else:
+        return None
+
+
+def now_local_naive():
+    return datetime.now(pytz.timezone(LOCAL_TIMEZONE)).replace(microsecond=0, tzinfo=None)
+
+
 # Function to return the current date/time in human readable format; eg. Sun 21 Apr 2024, 15:08:45
 def get_cur_ts(ts_str=""):
-    return (f'{ts_str}{calendar.day_abbr[(datetime.fromtimestamp(int(time.time()))).weekday()]}, {datetime.fromtimestamp(int(time.time())).strftime("%d %b %Y, %H:%M:%S")}')
+    return (f'{ts_str}{calendar.day_abbr[(now_local_naive()).weekday()]}, {now_local_naive().strftime("%d %b %Y, %H:%M:%S")}')
 
 
 # Function to print the current date/time in human readable format with separator; eg. Sun 21 Apr 2024, 15:08:45
@@ -603,8 +620,8 @@ def github_print_followers_and_followings(user):
 # Function processing items of all passed repos and returning list of dictionaries
 def github_process_repos(repos_list):
     list_of_repos = []
-    stargazers = []
-    subscribers = []
+    stargazers_list = []
+    subscribers_list = []
     forked_repos = []
 
     if repos_list:
@@ -612,15 +629,32 @@ def github_process_repos(repos_list):
             try:
                 repo_created_date = repo.created_at
                 repo_updated_date = repo.updated_at
-                stargazers = [star.login for star in repo.get_stargazers()]
-                subscribers = [subscriber.login for subscriber in repo.get_subscribers()]
+                stargazers_list = [star.login for star in repo.get_stargazers()]
+                subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
                 forked_repos = [fork.full_name for fork in repo.get_forks()]
+
+                # approach below is the most accurate, but is very slow
+
                 issues = list(repo.get_issues(state='open'))
                 pulls = list(repo.get_pulls(state='open'))
+
                 real_issues = [i for i in issues if not i.pull_request]
-                real_issues_count = len(real_issues)
-                pulls_count = len(pulls)
-                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "watchers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers": stargazers, "forked_repos": forked_repos, "subscribers": subscribers, "issues": real_issues_count, "pulls": pulls_count})
+                issue_count = len(real_issues)
+                pr_count = len(pulls)
+
+                issues_list = [f"#{i.number} {i.title} ({i.user.login}) [ {i.html_url} ]" for i in real_issues]
+                pr_list = [f"#{pr.number} {pr.title} ({pr.user.login}) [ {pr.html_url} ]" for pr in pulls]
+
+                # faster approach just to get issue and PRs count
+
+                # try:
+                #     pr_count = repo.get_pulls(state='open').totalCount
+                #     issue_count = repo.open_issues_count - pr_count
+                # except Exception:
+                #     pr_count = 0
+                #     issue_count = 0
+
+                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "issues_list": issues_list, "pulls_list": pr_list})
             except Exception as e:
                 print(f"Error while processing info for repo '{repo.name}', skipping for now - {e}")
                 print_cur_ts("Timestamp:\t\t")
@@ -669,9 +703,20 @@ def github_print_repos(user):
             for repo in repos_list:
                 print(f"🔸 {repo.name} {'(fork)' if repo.fork else ''} \n")
 
-                issues = list(repo.get_issues(state='open'))
-                pulls = list(repo.get_pulls(state='open'))
-                real_issues = [i for i in issues if not i.pull_request]
+                # approach below is the most accurate, but is very slow
+
+                # issues = list(repo.get_issues(state='open'))
+                # pulls = list(repo.get_pulls(state='open'))
+                # real_issues = [i for i in issues if not i.pull_request]
+                # pr_count = len(pulls)
+                # issue_count = len(real_issues)
+
+                try:
+                    pr_count = repo.get_pulls(state='open').totalCount
+                    issue_count = repo.open_issues_count - pr_count
+                except Exception:
+                    pr_count = "?"
+                    issue_count = "?"
 
                 print(f" - 🌐 URL:\t\t{repo.html_url}")
                 print(f" - 🧑‍💻 Language:\t\t{repo.language}")
@@ -681,8 +726,8 @@ def github_print_repos(user):
                 print(f" - 👁  Watchers:\t\t{repo.subscribers_count}")
 
                 # print(f" - 🐞 Issues+PRs:\t{repo.open_issues_count}")
-                print(f" - 🐞 Issues:\t\t{len(real_issues)}")
-                print(f" - 📬 PRs:\t\t{len(pulls)}")
+                print(f" - 🐞 Issues:\t\t{issue_count}")
+                print(f" - 📬 PRs:\t\t{pr_count}")
 
                 print(f"\n - 📝 License:\t\t{repo.license.name if repo.license else 'None'}")
                 print(f" - 🌿 Branch (default):\t{repo.default_branch}")
@@ -781,7 +826,15 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         repo_url = event.repo.url.replace("https://api.github.com/repos/", "https://github.com/")
         st += print_v(f"\nRepo name:\t\t\t{repo_name}")
         st += print_v(f"Repo URL:\t\t\t{repo_url}")
-        repo = g.get_repo(event.repo.name)
+
+        try:
+            repo = g.get_repo(event.repo.name)
+        except UnknownObjectException:
+            repo = None
+            st += print_v("\nRepository not found or has been removed")
+        except GithubException as e:
+            repo = None
+            st += print_v(f"\nAn error occurred while getting repo details: {e}")
 
     if hasattr(event.actor, 'login'):
         if event.actor.login:
@@ -1129,12 +1182,188 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
                         continue
                     try:
                         if csv_file_name:
-                            write_csv_entry(csv_file_name, str(event_date), str(event.type), str(repo_name), "", "")
+                            write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                     except Exception as e:
                         print(f"* Cannot write CSV entry - {e}")
                     print_cur_ts("\nTimestamp:\t\t\t")
         except Exception as e:
             print(f"Cannot fetch events - {e}")
+
+
+# Function detecting and reporting changes in a user's profile-level entities (followers, followings, public repos, starred repos)
+def handle_profile_change(label, count_old, count_new, list_old, raw_list, user, csv_file_name, field):
+    try:
+        list_new = []
+        list_new = [getattr(item, field) for item in raw_list]
+        if not list_new and count_new > 0:
+            return list_old, count_old
+    except Exception as e:
+        print(f"Error while trying to get the list of {label.lower()} - {e}")
+        print_cur_ts("Timestamp:\t\t\t")
+        return list_old, count_old
+
+    new_count = len(list_new)
+    old_count = len(list_old)
+
+    if list_new == list_old:
+        return list_old, count_old
+
+    diff = new_count - old_count
+
+    diff_str = f"+{diff}" if diff > 0 else f"{diff}"
+
+    label_context = "by" if label.lower() in ["followings", "starred repos"] else "for"
+
+    if diff == 0:
+        print(f"* {label} list changed {label_context} user {user}\n")
+    else:
+        print(f"* {label} number changed {label_context} user {user} from {old_count} to {new_count} ({diff_str})\n")
+        try:
+            if csv_file_name:
+                write_csv_entry(csv_file_name, now_local_naive(), f"{label} Count", user, old_count, new_count)
+        except Exception as e:
+            print(f"* Cannot write CSV entry - {e}")
+
+    added_list_str = ""
+    removed_list_str = ""
+    added_mbody = ""
+    removed_mbody = ""
+
+    removed_items = list(set(list_old) - set(list_new))
+    added_items = list(set(list_new) - set(list_old))
+
+    if removed_items:
+        print(f"Removed {label.lower()}:\n")
+        removed_mbody = f"\nRemoved {label.lower()}:\n\n"
+        for item in removed_items:
+            item_url = (f"https://github.com/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
+                        else f"https://github.com/{user}/{item}/")
+            print(f"- {item} [ {item_url} ]")
+            removed_list_str += f"- {item} [ {item_url} ]\n"
+            try:
+                if csv_file_name:
+                    write_csv_entry(csv_file_name, now_local_naive(), f"Removed {label[:-1]}", user, item, "")
+            except Exception as e:
+                print(f"* Cannot write CSV entry - {e}")
+        print()
+
+    if added_items:
+        print(f"Added {label.lower()}:\n")
+        added_mbody = f"\nAdded {label.lower()}:\n\n"
+        for item in added_items:
+            item_url = (f"https://github.com/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
+                        else f"https://github.com/{user}/{item}/")
+            print(f"- {item} [ {item_url} ]")
+            added_list_str += f"- {item} [ {item_url} ]\n"
+            try:
+                if csv_file_name:
+                    write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", user, "", item)
+            except Exception as e:
+                print(f"* Cannot write CSV entry - {e}")
+        print()
+
+    if diff == 0:
+        m_subject = f"Github user {user} {label.lower()} list changed"
+        m_body = (f"{label} list changed {label_context} user {user}\n"
+                  f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
+                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
+    else:
+        m_subject = f"Github user {user} {label.lower()} number has changed! ({diff_str}, {old_count} -> {new_count})"
+        m_body = (f"{label} number changed {label_context} user {user} from {old_count} to {new_count} ({diff_str})\n"
+                  f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
+                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
+
+    if profile_notification:
+        print(f"Sending email notification to {RECEIVER_EMAIL}")
+        send_email(m_subject, m_body, "", SMTP_SSL)
+
+    print_cur_ts("Timestamp:\t\t\t")
+    return list_new, new_count
+
+
+# Function detecting and reporting changes in repository-level entities (like stargazers, watchers, forks, issues, pull requests)
+def check_repo_list_changes(count_old, count_new, list_old, list_new, label, repo_name, repo_url, user, csv_file_name):
+    if not list_new and count_new > 0:
+        return
+
+    old_count = len(list_old)
+    new_count = len(list_new)
+
+    if list_old == list_new:
+        return
+
+    diff = new_count - old_count
+
+    diff_str = f"{'+' if diff > 0 else ''}{diff}"
+
+    if diff == 0:
+        print(f"* Repo '{repo_name}': {label.lower()} list changed\n* Repo URL: {repo_url}")
+    else:
+        print(f"* Repo '{repo_name}': number of {label.lower()} changed from {old_count} to {new_count} ({diff_str})\n* Repo URL: {repo_url}")
+        try:
+            if csv_file_name:
+                write_csv_entry(csv_file_name, now_local_naive(), f"Repo {label} Count", repo_name, old_count, new_count)
+        except Exception as e:
+            print(f"* Cannot write CSV entry - {e}")
+
+    added_list_str = ""
+    removed_list_str = ""
+    added_mbody = ""
+    removed_mbody = ""
+
+    removed_items = list(set(list_old) - set(list_new))
+    added_items = list(set(list_new) - set(list_old))
+
+    removal_text = "Closed" if label in ["Issues", "Pull Requests"] else "Removed"
+
+    if list_old != list_new:
+        print()
+
+        if removed_items:
+            print(f"{removal_text} {label.lower()}:\n")
+            removed_mbody = f"\n{removal_text} {label.lower()}:\n\n"
+            for item in removed_items:
+                item_line = f"- {item} [ https://github.com/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
+                print(item_line)
+                removed_list_str += item_line + "\n"
+                try:
+                    if csv_file_name:
+                        value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests"] else item
+                        write_csv_entry(csv_file_name, now_local_naive(), f"{removal_text} {label[:-1]}", repo_name, value, "")
+                except Exception as e:
+                    print(f"* Cannot write CSV entry - {e}")
+            print()
+
+        if added_items:
+            print(f"Added {label.lower()}:\n")
+            added_mbody = f"\nAdded {label.lower()}:\n\n"
+            for item in added_items:
+                item_line = f"- {item} [ https://github.com/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
+                print(item_line)
+                added_list_str += item_line + "\n"
+                try:
+                    if csv_file_name:
+                        value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests"] else item
+                        write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", repo_name, "", value)
+                except Exception as e:
+                    print(f"* Cannot write CSV entry - {e}")
+            print()
+
+    if diff == 0:
+        m_subject = f"Github user {user} {label.lower()} list changed for repo '{repo_name}'!"
+        m_body = (f"* Repo '{repo_name}': {label.lower()} list changed\n"
+                  f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
+                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
+    else:
+        m_subject = f"Github user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {old_count} -> {new_count})"
+        m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {old_count} to {new_count} ({diff_str})\n"
+                  f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
+                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
+
+    if repo_notification:
+        print(f"Sending email notification to {RECEIVER_EMAIL}")
+        send_email(m_subject, m_body, "", SMTP_SSL)
+    print_cur_ts("Timestamp:\t\t\t")
 
 
 # Main function monitoring activity of the specified GitHub user
@@ -1156,6 +1385,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     starred_count = 0
     available_events = 0
     events = []
+    repos_list = []
     event_date: datetime | None = None
 
     try:
@@ -1295,24 +1525,19 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
         print_cur_ts("\nTimestamp:\t\t\t")
 
-    followers = []
-    followings = []
-    repos = []
-    starred = []
+    followers_old = []
+    followings_old = []
+    repos_old = []
+    starred_old = []
 
     try:
-        followers = [follower.login for follower in followers_list]
-        followings = [following.login for following in followings_list]
-        repos = [repo.name for repo in repos_list]
-        starred = [star.full_name for star in starred_list]
+        followers_old = [follower.login for follower in followers_list]
+        followings_old = [following.login for following in followings_list]
+        repos_old = [repo.name for repo in repos_list]
+        starred_old = [star.full_name for star in starred_list]
     except Exception as e:
         print(f"* Error - {e}")
         sys.exit(1)
-
-    followers_old = followers
-    followings_old = followings
-    repos_old = repos
-    starred_old = starred
 
     g.close()
 
@@ -1325,33 +1550,12 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
         try:
             g = Github(base_url=GITHUB_API_URL, auth=auth)
             g_user = g.get_user(user)
-            user_name = g_user.name
-            location = g_user.location
-            bio = g_user.bio
-            company = g_user.company
-            email = g_user.email
-            blog = g_user.blog
-            account_updated_date = g_user.updated_at
-
-            followers_count = g_user.followers
-            followings_count = g_user.following
-            repos_count = g_user.public_repos
-
-            if track_repos_changes:
-                repos_list = g_user.get_repos()
-
-            starred_list = g_user.get_starred()
-            starred_count = starred_list.totalCount
-
-            if not do_not_monitor_github_events:
-                events = list(islice(g_user.get_events(), EVENTS_NUMBER))
-                available_events = len(events)
 
             email_sent = False
 
         except Exception as e:
             print(f"Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)} - {e}")
-            if 'Redirected' in str(e) or 'login' in str(e) or 'Forbidden' in str(e) or 'Wrong' in str(e) or 'Bad Request' in str(e):
+            if 'Bad credentials' in str(e) or 'Forbidden' in str(e) or 'Bad Request' in str(e):
                 print("* Session might not be valid anymore!")
                 if error_notification and not email_sent:
                     m_subject = f"github_monitor: session error! (user: {user})"
@@ -1365,334 +1569,28 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             continue
 
         # Changed followings
-        if followings_count != followings_old_count:
-            followings_diff = followings_count - followings_old_count
-            followings_diff_str = ""
-            if followings_diff > 0:
-                followings_diff_str = f"+{followings_diff}"
-            else:
-                followings_diff_str = f"{followings_diff}"
-            print(f"* Followings number changed by user {user} from {followings_old_count} to {followings_count} ({followings_diff_str})")
-            try:
-                if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Followings Count", user, followings_old_count, followings_count)
-            except Exception as e:
-                print(f"* Cannot write CSV entry - {e}")
-
-            added_followings_list = ""
-            removed_followings_list = ""
-            added_followings_mbody = ""
-            removed_followings_mbody = ""
-
-            try:
-                followings_list = g_user.get_following()
-                followings = []
-                followings = [following.login for following in followings_list]
-                if not followings and followings_count > 0:
-                    print("* Empty followings list returned")
-            except Exception as e:
-                followings = followings_old
-                print(f"Error - {e}")
-
-            if not followings and followings_count > 0:
-                followings = followings_old
-            else:
-                a, b = set(followings_old), set(followings)
-
-                removed_followings = list(a - b)
-                added_followings = list(b - a)
-
-                if followings != followings_old:
-                    print()
-
-                    if removed_followings:
-                        print("Removed followings:\n")
-                        removed_followings_mbody = "\nRemoved followings:\n\n"
-                        for f_in_list in removed_followings:
-                            print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                            removed_followings_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                            try:
-                                if csv_file_name:
-                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Removed Following", user, f_in_list, "")
-                            except Exception as e:
-                                print(f"* Cannot write CSV entry - {e}")
-                        print()
-
-                    if added_followings:
-                        print("Added followings:\n")
-                        added_followings_mbody = "\nAdded followings:\n\n"
-                        for f_in_list in added_followings:
-                            print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                            added_followings_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                            try:
-                                if csv_file_name:
-                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Added Following", user, "", f_in_list)
-                            except Exception as e:
-                                print(f"* Cannot write CSV entry - {e}")
-                        print()
-
-                followings_old = followings
-
-            m_subject = f"Github user {user} followings number has changed! ({followings_diff_str}, {followings_old_count} -> {followings_count})"
-
-            m_body = f"Followings number changed by user {user} from {followings_old_count} to {followings_count} ({followings_diff_str})\n{removed_followings_mbody}{removed_followings_list}{added_followings_mbody}{added_followings_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-
-            if profile_notification:
-                print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
-
-            followings_old_count = followings_count
-
-            print_cur_ts("Timestamp:\t\t\t")
+        followings_raw = list(g_user.get_following())
+        followings_count = g_user.following
+        followings_old, followings_old_count = handle_profile_change("Followings", followings_old_count, followings_count, followings_old, followings_raw, user, csv_file_name, field="login")
 
         # Changed followers
-        if followers_count != followers_old_count:
-            followers_diff = followers_count - followers_old_count
-            followers_diff_str = ""
-            if followers_diff > 0:
-                followers_diff_str = f"+{followers_diff}"
-            else:
-                followers_diff_str = f"{followers_diff}"
-            print(f"* Followers number changed for user {user} from {followers_old_count} to {followers_count} ({followers_diff_str})")
+        followers_raw = list(g_user.get_followers())
+        followers_count = g_user.followers
+        followers_old, followers_old_count = handle_profile_change("Followers", followers_old_count, followers_count, followers_old, followers_raw, user, csv_file_name, field="login")
 
-            try:
-                if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Followers Count", user, followers_old_count, followers_count)
-            except Exception as e:
-                print(f"* Cannot write CSV entry - {e}")
+        # Changed public repositories
+        repos_raw = list(g_user.get_repos())
+        repos_count = g_user.public_repos
+        repos_old, repos_old_count = handle_profile_change("Repos", repos_old_count, repos_count, repos_old, repos_raw, user, csv_file_name, field="name")
 
-            added_followers_list = ""
-            removed_followers_list = ""
-            added_followers_mbody = ""
-            removed_followers_mbody = ""
-
-            try:
-                followers_list = g_user.get_followers()
-                followers = []
-                followers = [follower.login for follower in followers_list]
-
-                if not followers and followers_count > 0:
-                    print("* Empty followers list returned")
-
-            except Exception as e:
-                followers = followers_old
-                print(f"Error - {e}")
-
-            if not followers and followers_count > 0:
-                followers = followers_old
-            else:
-                a, b = set(followers_old), set(followers)
-                removed_followers = list(a - b)
-                added_followers = list(b - a)
-
-                if followers != followers_old:
-                    print()
-
-                    if removed_followers:
-                        print("Removed followers:\n")
-                        removed_followers_mbody = "\nRemoved followers:\n\n"
-                        for f_in_list in removed_followers:
-                            print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                            removed_followers_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                            try:
-                                if csv_file_name:
-                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Removed Follower", user, f_in_list, "")
-                            except Exception as e:
-                                print(f"* Cannot write CSV entry - {e}")
-                        print()
-
-                    if added_followers:
-                        print("Added followers:\n")
-                        added_followers_mbody = "\nAdded followers:\n\n"
-                        for f_in_list in added_followers:
-                            print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                            added_followers_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                            try:
-                                if csv_file_name:
-                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Added Follower", user, "", f_in_list)
-                            except Exception as e:
-                                print(f"* Cannot write CSV entry - {e}")
-                        print()
-
-                followers_old = followers
-
-            m_subject = f"Github user {user} followers number has changed! ({followers_diff_str}, {followers_old_count} -> {followers_count})"
-
-            m_body = f"Followers number changed for user {user} from {followers_old_count} to {followers_count} ({followers_diff_str})\n{removed_followers_mbody}{removed_followers_list}{added_followers_mbody}{added_followers_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-
-            if profile_notification:
-                print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
-
-            followers_old_count = followers_count
-
-            print_cur_ts("Timestamp:\t\t\t")
-
-        # Changed repos
-        if repos_count != repos_old_count:
-            repos_diff = repos_count - repos_old_count
-            repos_diff_str = ""
-            if repos_diff > 0:
-                repos_diff_str = f"+{repos_diff}"
-            else:
-                repos_diff_str = f"{repos_diff}"
-            print(f"* Repos number changed for user {user} from {repos_old_count} to {repos_count} ({repos_diff_str})")
-
-            try:
-                if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repos Count", user, repos_old_count, repos_count)
-            except Exception as e:
-                print(f"* Cannot write CSV entry - {e}")
-
-            added_repos_list = ""
-            removed_repos_list = ""
-            added_repos_mbody = ""
-            removed_repos_mbody = ""
-
-            try:
-                repos_list = g_user.get_repos()
-                repos = []
-                repos = [repo.name for repo in repos_list]
-
-                if not repos and repos_count > 0:
-                    print("* Empty repos list returned")
-
-            except Exception as e:
-                repos = repos_old
-                print(f"Error - {e}")
-
-            if not repos and repos_count > 0:
-                repos = repos_old
-            else:
-                a, b = set(repos_old), set(repos)
-                removed_repos = list(a - b)
-                added_repos = list(b - a)
-
-                if repos != repos_old:
-                    print()
-
-                    if removed_repos:
-                        print("Removed repos:\n")
-                        removed_repos_mbody = "\nRemoved repos:\n\n"
-                        for f_in_list in removed_repos:
-                            print(f"- {f_in_list} [ https://github.com/{user}/{f_in_list}/ ]")
-                            removed_repos_list += f"- {f_in_list} [ https://github.com/{user}/{f_in_list}/ ]\n"
-                            try:
-                                if csv_file_name:
-                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Removed Repo", user, f_in_list, "")
-                            except Exception as e:
-                                print(f"* Cannot write CSV entry - {e}")
-                        print()
-
-                    if added_repos:
-                        print("Added repos:\n")
-                        added_repos_mbody = "\nAdded repos:\n\n"
-                        for f_in_list in added_repos:
-                            print(f"- {f_in_list} [ https://github.com/{user}/{f_in_list}/ ]")
-                            added_repos_list += f"- {f_in_list} [ https://github.com/{user}/{f_in_list}/ ]\n"
-                            try:
-                                if csv_file_name:
-                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Added Repo", user, "", f_in_list)
-                            except Exception as e:
-                                print(f"* Cannot write CSV entry - {e}")
-                        print()
-
-                repos_old = repos
-
-            m_subject = f"Github user {user} repos number has changed! ({repos_diff_str}, {repos_old_count} -> {repos_count})"
-
-            m_body = f"Repos number changed for user {user} from {repos_old_count} to {repos_count} ({repos_diff_str})\n{removed_repos_mbody}{removed_repos_list}{added_repos_mbody}{added_repos_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-
-            if profile_notification:
-                print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
-
-            repos_old_count = repos_count
-
-            print_cur_ts("Timestamp:\t\t\t")
-
-        # Changed starred repos
-        if starred_count != starred_old_count:
-            starred_diff = starred_count - starred_old_count
-            starred_diff_str = ""
-            if starred_diff > 0:
-                starred_diff_str = f"+{starred_diff}"
-            else:
-                starred_diff_str = f"{starred_diff}"
-            print(f"* Starred repos number changed by user {user} from {starred_old_count} to {starred_count} ({starred_diff_str})")
-            try:
-                if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Starred Repos Count", user, starred_old_count, starred_count)
-            except Exception as e:
-                print(f"* Cannot write CSV entry - {e}")
-
-            added_starred_list = ""
-            removed_starred_list = ""
-            added_starred_mbody = ""
-            removed_starred_mbody = ""
-
-            try:
-                starred = []
-                starred = [star.full_name for star in starred_list]
-
-                if not starred and starred_count > 0:
-                    print("* Empty starred list returned")
-
-            except Exception as e:
-                starred = starred_old
-                print(f"Error - {e}")
-
-            if not starred and starred_count > 0:
-                starred = starred_old
-            else:
-                a, b = set(starred_old), set(starred)
-                removed_starred = list(a - b)
-                added_starred = list(b - a)
-
-                if starred != starred_old:
-                    print()
-
-                    if removed_starred:
-                        print("Removed starred repos:\n")
-                        removed_starred_mbody = "\nRemoved starred repos:\n\n"
-                        for f_in_list in removed_starred:
-                            print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                            removed_starred_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                            try:
-                                if csv_file_name:
-                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Removed Starred Repo", user, f_in_list, "")
-                            except Exception as e:
-                                print(f"* Cannot write CSV entry - {e}")
-                        print()
-
-                    if added_starred:
-                        print("Added starred repos:\n")
-                        added_starred_mbody = "\nAdded starred repos:\n\n"
-                        for f_in_list in added_starred:
-                            print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                            added_starred_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                            try:
-                                if csv_file_name:
-                                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Added Starred Repo", user, "", f_in_list)
-                            except Exception as e:
-                                print(f"* Cannot write CSV entry - {e}")
-                        print()
-
-                starred_old = starred
-
-            m_subject = f"Github user {user} starred repos number has changed! ({starred_diff_str}, {starred_old_count} -> {starred_count})"
-
-            m_body = f"Starred repos number changed by user {user} from {starred_old_count} to {starred_count} ({starred_diff_str})\n{removed_starred_mbody}{removed_starred_list}{added_starred_mbody}{added_starred_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-
-            if profile_notification:
-                print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
-
-            starred_old_count = starred_count
-
-            print_cur_ts("Timestamp:\t\t\t")
+        # Changed starred repositories
+        starred_list = g_user.get_starred()
+        starred_raw = list(starred_list)
+        starred_count = starred_list.totalCount
+        starred_old, starred_old_count = handle_profile_change("Starred Repos", starred_old_count, starred_count, starred_old, starred_raw, user, csv_file_name, field="full_name")
 
         # Changed bio
+        bio = g_user.bio
         if bio != bio_old:
             print(f"* Bio has changed for user {user} !\n")
             print(f"Old bio:\n\n{bio_old}\n")
@@ -1700,7 +1598,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             try:
                 if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Bio", user, bio_old, bio)
+                    write_csv_entry(csv_file_name, now_local_naive(), "Bio", user, bio_old, bio)
             except Exception as e:
                 print(f"* Cannot write CSV entry - {e}")
 
@@ -1715,6 +1613,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed location
+        location = g_user.location
         if location != location_old:
             print(f"* Location has changed for user {user} !\n")
             print(f"Old location:\t\t\t{location_old}\n")
@@ -1722,7 +1621,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             try:
                 if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Location", user, location_old, location)
+                    write_csv_entry(csv_file_name, now_local_naive(), "Location", user, location_old, location)
             except Exception as e:
                 print(f"* Cannot write CSV entry - {e}")
 
@@ -1737,6 +1636,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed user name
+        user_name = g_user.name
         if user_name != user_name_old:
             print(f"* User name has changed for user {user} !\n")
             print(f"Old user name:\t\t\t{user_name_old}\n")
@@ -1744,7 +1644,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             try:
                 if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "User Name", user, user_name_old, user_name)
+                    write_csv_entry(csv_file_name, now_local_naive(), "User Name", user, user_name_old, user_name)
             except Exception as e:
                 print(f"* Cannot write CSV entry - {e}")
 
@@ -1759,6 +1659,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed company
+        company = g_user.company
         if company != company_old:
             print(f"* User company has changed for user {user} !\n")
             print(f"Old company:\t\t\t{company_old}\n")
@@ -1766,7 +1667,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             try:
                 if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Company", user, company_old, company)
+                    write_csv_entry(csv_file_name, now_local_naive(), "Company", user, company_old, company)
             except Exception as e:
                 print(f"* Cannot write CSV entry - {e}")
 
@@ -1781,6 +1682,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed email
+        email = g_user.email
         if email != email_old:
             print(f"* User email has changed for user {user} !\n")
             print(f"Old email:\t\t\t{email_old}\n")
@@ -1788,7 +1690,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             try:
                 if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Email", user, email_old, email)
+                    write_csv_entry(csv_file_name, now_local_naive(), "Email", user, email_old, email)
             except Exception as e:
                 print(f"* Cannot write CSV entry - {e}")
 
@@ -1803,6 +1705,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed blog URL
+        blog = g_user.blog
         if blog != blog_old:
             print(f"* User blog URL has changed for user {user} !\n")
             print(f"Old blog URL:\t\t\t{blog_old}\n")
@@ -1810,7 +1713,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             try:
                 if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Blog URL", user, blog_old, blog)
+                    write_csv_entry(csv_file_name, now_local_naive(), "Blog URL", user, blog_old, blog)
             except Exception as e:
                 print(f"* Cannot write CSV entry - {e}")
 
@@ -1825,6 +1728,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed account update date
+        account_updated_date = g_user.updated_at
         if account_updated_date != account_updated_date_old:
             print(f"* User account has been updated for user {user} ! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n")
             print(f"Old account update date:\t{get_date_from_ts(account_updated_date_old)}\n")
@@ -1832,7 +1736,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
             try:
                 if csv_file_name:
-                    write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Account Update Date", user, str(account_updated_date_old), str(account_updated_date))
+                    write_csv_entry(csv_file_name, now_local_naive(), "Account Update Date", user, convert_to_local_naive(account_updated_date_old), convert_to_local_naive(account_updated_date))
             except Exception as e:
                 print(f"* Cannot write CSV entry - {e}")
 
@@ -1850,6 +1754,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
         # Changed repos details
         if track_repos_changes:
+            repos_list = g_user.get_repos()
             if repos_list:
                 try:
                     list_of_repos = github_process_repos(repos_list)
@@ -1866,14 +1771,16 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                         r_descr = repo.get("descr", "")
                         r_forks = repo.get("forks", 0)
                         r_stars = repo.get("stars", 0)
-                        r_watchers = repo.get("watchers", 0)
+                        r_subscribers = repo.get("subscribers", 0)
                         r_url = repo.get("url", "")
                         r_update = repo.get("update_date")
-                        r_stargazers = repo.get("stargazers")
-                        r_subscribers = repo.get("subscribers")
+                        r_stargazers_list = repo.get("stargazers_list")
+                        r_subscribers_list = repo.get("subscribers_list")
                         r_forked_repos = repo.get("forked_repos")
                         r_issues = repo.get("issues")
                         r_pulls = repo.get("pulls")
+                        r_issues_list = repo.get("issues_list")
+                        r_pulls_list = repo.get("pulls_list")
 
                         for repo_old in list_of_repos_old:
                             r_name_old = repo_old.get("name")
@@ -1881,14 +1788,16 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                 r_descr_old = repo_old.get("descr", "")
                                 r_forks_old = repo_old.get("forks", 0)
                                 r_stars_old = repo_old.get("stars", 0)
-                                r_watchers_old = repo_old.get("watchers", 0)
+                                r_subscribers_old = repo_old.get("subscribers", 0)
                                 r_url_old = repo_old.get("url", "")
                                 r_update_old = repo_old.get("update_date")
-                                r_stargazers_old = repo_old.get("stargazers")
-                                r_subscribers_old = repo_old.get("subscribers")
+                                r_stargazers_list_old = repo_old.get("stargazers_list")
+                                r_subscribers_list_old = repo_old.get("subscribers_list")
                                 r_forked_repos_old = repo_old.get("forked_repos")
                                 r_issues_old = repo_old.get("issues")
                                 r_pulls_old = repo_old.get("pulls")
+                                r_issues_list_old = repo_old.get("issues_list")
+                                r_pulls_list_old = repo_old.get("pulls_list")
 
                                 # Update date for repo changed
                                 if r_update != r_update_old:
@@ -1896,7 +1805,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                     print(r_message)
                                     try:
                                         if csv_file_name:
-                                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Update Date", r_name, str(r_update_old), str(r_update))
+                                            write_csv_entry(csv_file_name, now_local_naive(), "Repo Update Date", r_name, convert_to_local_naive(r_update_old), convert_to_local_naive(r_update))
                                     except Exception as e:
                                         print(f"* Cannot write CSV entry - {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
@@ -1907,187 +1816,19 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                     print_cur_ts("Timestamp:\t\t\t")
 
                                 # Number of stars for repo changed
-                                if r_stars != r_stars_old:
-                                    r_stars_diff = r_stars - r_stars_old
-                                    r_stars_diff_str = ""
-                                    if r_stars_diff > 0:
-                                        r_stars_diff_str = "+" + str(r_stars_diff)
-                                    else:
-                                        r_stars_diff_str = str(r_stars_diff)
-                                    print(f"* Repo '{r_name}': number of stargazers changed from {r_stars_old} to {r_stars} ({r_stars_diff_str})\n* Repo URL: {r_url}")
-                                    try:
-                                        if csv_file_name:
-                                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Stars Count", r_name, r_stars_old, r_stars)
-                                    except Exception as e:
-                                        print(f"* Cannot write CSV entry - {e}")
-
-                                    added_stargazers_list = ""
-                                    removed_stargazers_list = ""
-                                    added_stargazers_mbody = ""
-                                    removed_stargazers_mbody = ""
-
-                                    a, b = set(r_stargazers_old), set(r_stargazers)
-
-                                    removed_stargazers = list(a - b)
-                                    added_stargazers = list(b - a)
-
-                                    if r_stargazers != r_stargazers_old:
-                                        print()
-
-                                        if removed_stargazers:
-                                            print("Removed stargazers:\n")
-                                            removed_stargazers_mbody = "\nRemoved stargazers:\n\n"
-                                            for f_in_list in removed_stargazers:
-                                                print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                                                removed_stargazers_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                                                try:
-                                                    if csv_file_name:
-                                                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Removed Stargazer", r_name, f_in_list, "")
-                                                except Exception as e:
-                                                    print(f"* Cannot write CSV entry - {e}")
-                                            print()
-
-                                        if added_stargazers:
-                                            print("Added stargazers:\n")
-                                            added_stargazers_mbody = "\nAdded stargazers:\n\n"
-                                            for f_in_list in added_stargazers:
-                                                print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                                                added_stargazers_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                                                try:
-                                                    if csv_file_name:
-                                                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Added Stargazer", r_name, "", f_in_list)
-                                                except Exception as e:
-                                                    print(f"* Cannot write CSV entry - {e}")
-                                            print()
-
-                                    m_subject = f"Github user {user} number of stargazers for repo '{r_name}' has changed! ({r_stars_diff_str}, {r_stars_old} -> {r_stars})"
-                                    m_body = f"* Repo '{r_name}': number of stargazers changed from {r_stars_old} to {r_stars} ({r_stars_diff_str})\n* Repo URL: {r_url}\n{removed_stargazers_mbody}{removed_stargazers_list}{added_stargazers_mbody}{added_stargazers_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                    if repo_notification:
-                                        print(f"Sending email notification to {RECEIVER_EMAIL}")
-                                        send_email(m_subject, m_body, "", SMTP_SSL)
-                                    print_cur_ts("Timestamp:\t\t\t")
+                                check_repo_list_changes(r_stars_old, r_stars, r_stargazers_list_old, r_stargazers_list, "Stargazers", r_name, r_url, user, csv_file_name)
 
                                 # Number of watchers/subscribers for repo changed
-                                if r_watchers != r_watchers_old:
-                                    r_watchers_diff = r_watchers - r_watchers_old
-                                    r_watchers_diff_str = ""
-                                    if r_watchers_diff > 0:
-                                        r_watchers_diff_str = "+" + str(r_watchers_diff)
-                                    else:
-                                        r_watchers_diff_str = str(r_watchers_diff)
-                                    print(f"* Repo '{r_name}': number of watchers changed from {r_watchers_old} to {r_watchers} ({r_watchers_diff_str})\n* Repo URL: {r_url}")
-                                    try:
-                                        if csv_file_name:
-                                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Watchers Count", r_name, r_watchers_old, r_watchers)
-                                    except Exception as e:
-                                        print(f"* Cannot write CSV entry - {e}")
-
-                                    added_subscribers_list = ""
-                                    removed_subscribers_list = ""
-                                    added_subscribers_mbody = ""
-                                    removed_subscribers_mbody = ""
-
-                                    a, b = set(r_subscribers_old), set(r_subscribers)
-
-                                    removed_subscribers = list(a - b)
-                                    added_subscribers = list(b - a)
-
-                                    if r_subscribers != r_subscribers_old:
-                                        print()
-
-                                        if removed_subscribers:
-                                            print("Removed watchers:\n")
-                                            removed_subscribers_mbody = "\nRemoved watchers:\n\n"
-                                            for f_in_list in removed_subscribers:
-                                                print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                                                removed_subscribers_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                                                try:
-                                                    if csv_file_name:
-                                                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Removed Watcher", r_name, f_in_list, "")
-                                                except Exception as e:
-                                                    print(f"* Cannot write CSV entry - {e}")
-                                            print()
-
-                                        if added_subscribers:
-                                            print("Added watchers:\n")
-                                            added_subscribers_mbody = "\nAdded watchers:\n\n"
-                                            for f_in_list in added_subscribers:
-                                                print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                                                added_subscribers_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                                                try:
-                                                    if csv_file_name:
-                                                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Added Watcher", r_name, "", f_in_list)
-                                                except Exception as e:
-                                                    print(f"* Cannot write CSV entry - {e}")
-                                            print()
-
-                                    m_subject = f"Github user {user} number of watchers for repo '{r_name}' has changed! ({r_watchers_diff_str}, {r_watchers_old} -> {r_watchers})"
-                                    m_body = f"* Repo '{r_name}': number of watchers changed from {r_watchers_old} to {r_watchers} ({r_watchers_diff_str})\n* Repo URL: {r_url}\n{removed_subscribers_mbody}{removed_subscribers_list}{added_subscribers_mbody}{added_subscribers_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                    if repo_notification:
-                                        print(f"Sending email notification to {RECEIVER_EMAIL}")
-                                        send_email(m_subject, m_body, "", SMTP_SSL)
-                                    print_cur_ts("Timestamp:\t\t\t")
+                                check_repo_list_changes(r_subscribers_old, r_subscribers, r_subscribers_list_old, r_subscribers_list, "Watchers", r_name, r_url, user, csv_file_name)
 
                                 # Number of forks for repo changed
-                                if r_forks != r_forks_old:
-                                    r_forks_diff = r_forks - r_forks_old
-                                    r_forks_diff_str = ""
-                                    if r_forks_diff > 0:
-                                        r_forks_diff_str = "+" + str(r_forks_diff)
-                                    else:
-                                        r_forks_diff_str = str(r_forks_diff)
-                                    print(f"* Repo '{r_name}': number of forks changed from {r_forks_old} to {r_forks} ({r_forks_diff_str})\n* Repo URL: {r_url}")
-                                    try:
-                                        if csv_file_name:
-                                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Forks Count", r_name, r_forks_old, r_forks)
-                                    except Exception as e:
-                                        print(f"* Cannot write CSV entry - {e}")
+                                check_repo_list_changes(r_forks_old, r_forks, r_forked_repos_old, r_forked_repos, "Forks", r_name, r_url, user, csv_file_name)
 
-                                    added_forked_repos_list = ""
-                                    removed_forked_repos_list = ""
-                                    added_forked_repos_mbody = ""
-                                    removed_forked_repos_mbody = ""
+                                # Number of issues for repo changed
+                                check_repo_list_changes(r_issues_old, r_issues, r_issues_list_old, r_issues_list, "Issues", r_name, r_url, user, csv_file_name)
 
-                                    a, b = set(r_forked_repos_old), set(r_forked_repos)
-
-                                    removed_forked_repos = list(a - b)
-                                    added_forked_repos = list(b - a)
-
-                                    if r_forked_repos != r_forked_repos_old:
-                                        print()
-
-                                        if removed_forked_repos:
-                                            print("Removed forked repos:\n")
-                                            removed_forked_repos_mbody = "\nRemoved forked repos:\n\n"
-                                            for f_in_list in removed_forked_repos:
-                                                print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                                                removed_forked_repos_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                                                try:
-                                                    if csv_file_name:
-                                                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Removed Forked Repo", r_name, f_in_list, "")
-                                                except Exception as e:
-                                                    print(f"* Cannot write CSV entry - {e}")
-                                            print()
-
-                                        if added_forked_repos:
-                                            print("Added forked repos:\n")
-                                            added_forked_repos_mbody = "\nAdded forked repos:\n\n"
-                                            for f_in_list in added_forked_repos:
-                                                print(f"- {f_in_list} [ https://github.com/{f_in_list}/ ]")
-                                                added_forked_repos_list += f"- {f_in_list} [ https://github.com/{f_in_list}/ ]\n"
-                                                try:
-                                                    if csv_file_name:
-                                                        write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Added Forked Repo", r_name, "", f_in_list)
-                                                except Exception as e:
-                                                    print(f"* Cannot write CSV entry - {e}")
-                                            print()
-
-                                    m_subject = f"Github user {user} number of forks for repo '{r_name}' has changed! ({r_forks_diff_str}, {r_forks_old} -> {r_forks})"
-                                    m_body = f"* Repo '{r_name}': number of forks changed from {r_forks_old} to {r_forks} ({r_forks_diff_str})\n* Repo URL: {r_url}\n{removed_forked_repos_mbody}{removed_forked_repos_list}{added_forked_repos_mbody}{added_forked_repos_list}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                    if repo_notification:
-                                        print(f"Sending email notification to {RECEIVER_EMAIL}")
-                                        send_email(m_subject, m_body, "", SMTP_SSL)
-                                    print_cur_ts("Timestamp:\t\t\t")
+                                # Number of PRs for repo changed
+                                check_repo_list_changes(r_pulls_old, r_pulls, r_pulls_list_old, r_pulls_list, "Pull Requests", r_name, r_url, user, csv_file_name)
 
                                 # Repo description changed
                                 if r_descr != r_descr_old:
@@ -2095,7 +1836,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                                     print(r_message)
                                     try:
                                         if csv_file_name:
-                                            write_csv_entry(csv_file_name, datetime.fromtimestamp(int(time.time())), "Repo Description", r_name, r_descr_old, r_descr)
+                                            write_csv_entry(csv_file_name, now_local_naive(), "Repo Description", r_name, r_descr_old, r_descr)
                                     except Exception as e:
                                         print(f"* Cannot write CSV entry - {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' description has changed !"
@@ -2109,6 +1850,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
         # New Github events
         if not do_not_monitor_github_events:
+            events = list(islice(g_user.get_events(), EVENTS_NUMBER))
+            available_events = len(events)
             if available_events == 0:
                 last_event_id = 0
                 last_event_ts = None
@@ -2155,7 +1898,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
                             try:
                                 if csv_file_name:
-                                    write_csv_entry(csv_file_name, str(event_date), str(event.type), str(repo_name), "", "")
+                                    write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                             except Exception as e:
                                 print(f"* Cannot write CSV entry - {e}")
 
@@ -2206,14 +1949,14 @@ if __name__ == "__main__":
     parser.add_argument("-x", "--github_url", help="Github API URL to override the default value defined within the script (GITHUB_API_URL)", type=str)
     parser.add_argument("-p", "--profile_notification", help="Send email notification once user's profile changes (e.g. changed followers, followings, starred repos, username, email, bio, location, blog URL, number of repositories)", action='store_true')
     parser.add_argument("-s", "--event_notification", help="Send email notification once new Github events show up for the user (e.g. new pushes, PRs, issues, forks, releases etc.)", action='store_true')
-    parser.add_argument("-q", "--repo_notification", help="Send email notification once changes in user's repositories are detected (e.g. changed stargazers, watchers, forks, description etc., except for update date), works only if tracking of repos changes is enabled (-j)", action='store_true')
+    parser.add_argument("-q", "--repo_notification", help="Send email notification once changes in user's repositories are detected (e.g. changed stargazers, watchers, forks, issues, PRs, description etc., except for update date), works only if tracking of repos changes is enabled (-j)", action='store_true')
     parser.add_argument("-u", "--repo_update_date_notification", help="Send email notification once changes in user's repositories update date are detected, works only if tracking of repos changes is enabled (-j); these email notifications might be quite verbose, so be careful", action='store_true')
     parser.add_argument("-e", "--error_notification", help="Disable sending email notifications in case of errors like expired token", action='store_false')
     parser.add_argument("-c", "--check_interval", help="Time between monitoring checks, in seconds", type=int)
     parser.add_argument("-b", "--csv_file", help="Write info about new events & profile changes to CSV file", type=str, metavar="CSV_FILENAME")
     parser.add_argument("-j", "--track_repos_changes", help="Track changes of user repos like changed stargazers, watchers, forks, description, update date etc.", action='store_true')
     parser.add_argument("-k", "--do_not_monitor_github_events", help="Do not monitor Github events for the user (e.g. new pushes, PRs, issues, forks, releases etc.)", action='store_true')
-    parser.add_argument("-r", "--repos", help="List repositories for the user", action='store_true')
+    parser.add_argument("-r", "--repos", help="List repositories for the user with some basic statistics", action='store_true')
     parser.add_argument("-g", "--starred_repos", help="List repositories starred by the user", action='store_true')
     parser.add_argument("-f", "--followers_and_followings", help="List followers & followings for the user", action='store_true')
     parser.add_argument("-l", "--list_recent_events", help="List recent Github events for the user", action='store_true')
