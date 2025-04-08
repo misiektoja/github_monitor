@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.8.1
+v1.9
 
 OSINT tool implementing real-time tracking of Github users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -15,7 +15,7 @@ python-dateutil
 requests
 """
 
-VERSION = "1.8.1"
+VERSION = "1.9"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -139,6 +139,7 @@ import string
 import os
 from datetime import datetime, timezone
 from dateutil import relativedelta
+from dateutil.parser import isoparse
 import calendar
 import requests as req
 import signal
@@ -160,7 +161,6 @@ import ipaddress
 from github import Github, Auth, GithubException, UnknownObjectException
 from github.GithubException import BadCredentialsException
 from itertools import islice
-from dateutil.parser import isoparse
 import textwrap
 import urllib3
 import socket
@@ -204,10 +204,11 @@ def check_internet(url=CHECK_INTERNET_URL, timeout=CHECK_INTERNET_TIMEOUT):
         _ = req.get(url, timeout=timeout)
         return True
     except req.RequestException as e:
-        print(f"No connectivity, please check your network: {e}")
+        print(f"* No connectivity, please check your network:\n\n{e}")
         return False
 
 
+# Clears the terminal screen
 def clear_screen(enabled=True):
     if not enabled:
         return
@@ -394,11 +395,12 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
         smtpObj.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, email_msg.as_string())
         smtpObj.quit()
     except Exception as e:
-        print(f"Error sending email - {e}")
+        print(f"Error sending email: {e}")
         return 1
     return 0
 
 
+# Initializes the CSV file
 def init_csv_file(csv_file_name):
     try:
         if not os.path.isfile(csv_file_name) or os.path.getsize(csv_file_name) == 0:
@@ -406,7 +408,7 @@ def init_csv_file(csv_file_name):
                 writer = csv.DictWriter(f, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
                 writer.writeheader()
     except Exception as e:
-        raise RuntimeError(f"Could not initialize CSV file '{csv_file_name}' - {e}")
+        raise RuntimeError(f"Could not initialize CSV file '{csv_file_name}': {e}")
 
 
 # Writes CSV entry
@@ -421,6 +423,7 @@ def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new
         raise RuntimeError(f"Failed to write to CSV file '{csv_file_name}': {e}")
 
 
+# Converts a datetime to local timezone and removes timezone info (naive)
 def convert_to_local_naive(dt: datetime | None = None):
     tz = pytz.timezone(LOCAL_TIMEZONE)
 
@@ -435,6 +438,7 @@ def convert_to_local_naive(dt: datetime | None = None):
         return None
 
 
+# Returns current local time without timezone info (naive)
 def now_local_naive():
     return datetime.now(pytz.timezone(LOCAL_TIMEZONE)).replace(microsecond=0, tzinfo=None)
 
@@ -611,7 +615,7 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
             try:
                 return fn(*args, **kwargs)
             except NET_ERRORS as e:
-                print(f"{fn.__name__} error: {e} (retry {i}/{retries})")
+                print(f"* {fn.__name__} error: {e} (retry {i}/{retries})")
                 time.sleep(backoff * i)
         return default
     return wrapped
@@ -647,7 +651,7 @@ def github_print_followers_and_followings(user):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user {user} details - {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details: {e}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -667,7 +671,7 @@ def github_print_followers_and_followings(user):
                     follower_str += f"\n[ {follower.html_url}/ ]"
                 print(follower_str)
     except Exception as e:
-        print(f"Cannot fetch user's followers list - {e}")
+        print(f"* Cannot fetch user's followers list: {e}")
 
     print(f"\nFollowings:\t\t{followings_count}")
 
@@ -682,7 +686,7 @@ def github_print_followers_and_followings(user):
                     following_str += f"\n[ {following.html_url}/ ]"
                 print(following_str)
     except Exception as e:
-        print(f"Cannot fetch user's followings list - {e}")
+        print(f"* Cannot fetch user's followings list: {e}")
 
     g.close()
 
@@ -715,7 +719,7 @@ def github_process_repos(repos_list):
 
                 list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "issues_list": issues_list, "pulls_list": pr_list})
             except Exception as e:
-                print(f"Error while processing info for repo '{repo.name}', skipping for now - {e}")
+                print(f"* Error while processing info for repo '{repo.name}', skipping for now: {e}")
                 print_cur_ts("Timestamp:\t\t\t")
                 continue
 
@@ -747,7 +751,7 @@ def github_print_repos(user):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user {user} details - {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details: {e}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -791,7 +795,7 @@ def github_print_repos(user):
                     print(f"\n - 📝 Desc:\t\t{repo.description}")
                 print("─" * HORIZONTAL_LINE2)
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user's repositories list - {e}")
+        raise RuntimeError(f"Cannot fetch user's repositories list: {e}")
 
     g.close()
 
@@ -821,7 +825,7 @@ def github_print_starred_repos(user):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user {user} details - {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details: {e}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -838,7 +842,7 @@ def github_print_starred_repos(user):
                     star_str += f" [ {star.html_url}/ ]"
                 print(star_str)
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user's starred list - {e}")
+        raise RuntimeError(f"Cannot fetch user's starred list: {e}")
 
     g.close()
 
@@ -891,7 +895,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             st += print_v("\nRepository not found or has been removed")
         except GithubException as e:
             repo = None
-            st += print_v(f"\nAn error occurred while getting repo details: {e}")
+            st += print_v(f"\n* Error occurred while getting repo details: {e}")
 
     if hasattr(event.actor, 'login'):
         if event.actor.login:
@@ -1157,7 +1161,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
                     st += print_v(f"\nPrevious comment URL:\t\t{parent.html_url}")
                 except Exception as e:
-                    st += print_v(f"\nCould not fetch parent comment (ID {parent_id}): {e}")
+                    st += print_v(f"\n* Could not fetch parent comment (ID {parent_id}): {e}")
             else:
                 st += print_v("\n(This is the first comment in its thread)")
         elif event.type in ("IssueCommentEvent", "CommitCommentEvent"):
@@ -1287,12 +1291,9 @@ def github_list_events(user, number, csv_file_name):
         if csv_file_name:
             init_csv_file(csv_file_name)
     except Exception as e:
-        print(f"* Error - {e}")
+        print(f"* Error: {e}")
 
-    if csv_file_name:
-        list_operation = "* Listing & saving"
-    else:
-        list_operation = "* Listing"
+    list_operation = "* Listing & saving" if csv_file_name else "* Listing"
 
     print(f"{list_operation} {number} recent events for '{user}' ...\n")
 
@@ -1314,7 +1315,7 @@ def github_list_events(user, number, csv_file_name):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        print(f"Cannot fetch user details - {e}")
+        print(f"* Cannot fetch user details: {e}")
         return
 
     print(f"Username:\t\t\t{user_name_str}")
@@ -1340,17 +1341,17 @@ def github_list_events(user, number, csv_file_name):
                     try:
                         event_date, repo_name, repo_url, event_text = github_print_event(event, g)
                     except Exception as e:
-                        print(f"\nWarning: cannot fetch all event details, skipping - {e}")
+                        print(f"\n* Warning, cannot fetch all event details, skipping: {e}")
                         print_cur_ts("\nTimestamp:\t\t\t")
                         continue
                     try:
                         if csv_file_name:
                             write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                     except Exception as e:
-                        print(f"* Error - {e}")
+                        print(f"* Error: {e}")
                     print_cur_ts("\nTimestamp:\t\t\t")
         except Exception as e:
-            print(f"Cannot fetch events - {e}")
+            print(f"* Cannot fetch events: {e}")
 
 
 # Detects and reports changes in a user's profile-level entities (followers, followings, public repos, starred repos)
@@ -1361,7 +1362,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
         if not list_new and count_new > 0:
             return list_old, count_old
     except Exception as e:
-        print(f"Error while trying to get the list of {label.lower()} - {e}")
+        print(f"* Error while trying to get the list of {label.lower()}: {e}")
         print_cur_ts("Timestamp:\t\t\t")
         return list_old, count_old
 
@@ -1385,7 +1386,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"{label} Count", user, old_count, new_count)
         except Exception as e:
-            print(f"* Error - {e}")
+            print(f"* Error: {e}")
 
     added_list_str = ""
     removed_list_str = ""
@@ -1407,7 +1408,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Removed {label[:-1]}", user, item, "")
             except Exception as e:
-                print(f"* Error - {e}")
+                print(f"* Error: {e}")
         print()
 
     if added_items:
@@ -1422,7 +1423,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", user, "", item)
             except Exception as e:
-                print(f"* Error - {e}")
+                print(f"* Error: {e}")
         print()
 
     if diff == 0:
@@ -1467,7 +1468,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"Repo {label} Count", repo_name, old_count, new_count)
         except Exception as e:
-            print(f"* Error - {e}")
+            print(f"* Error: {e}")
 
     added_list_str = ""
     removed_list_str = ""
@@ -1494,7 +1495,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests"] else item
                         write_csv_entry(csv_file_name, now_local_naive(), f"{removal_text} {label[:-1]}", repo_name, value, "")
                 except Exception as e:
-                    print(f"* Error - {e}")
+                    print(f"* Error: {e}")
             print()
 
         if added_items:
@@ -1509,7 +1510,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests"] else item
                         write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", repo_name, "", value)
                 except Exception as e:
-                    print(f"* Error - {e}")
+                    print(f"* Error: {e}")
             print()
 
     if diff == 0:
@@ -1536,7 +1537,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
         if csv_file_name:
             init_csv_file(csv_file_name)
     except Exception as e:
-        print(f"* Error - {e}")
+        print(f"* Error: {e}")
 
     followers_count = 0
     followings_count = 0
@@ -1582,7 +1583,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             available_events = len(events)
 
     except Exception as e:
-        print(f"* Error - {e}")
+        print(f"* Error: {e}")
         sys.exit(1)
 
     last_event_id = 0
@@ -1600,7 +1601,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                 if last_event_id:
                     last_event_ts = newest.created_at
             except Exception as e:
-                print(f"* Cannot get event IDs / timestamps - {e}\n")
+                print(f"* Cannot get event IDs / timestamps: {e}\n")
                 pass
 
     followers_old_count = followers_count
@@ -1666,7 +1667,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
         try:
             list_of_repos = github_process_repos(repos_list)
         except Exception as e:
-            print(f"Cannot process list of public repositories - {e}")
+            print(f"* Cannot process list of public repositories: {e}")
         print_cur_ts("\nTimestamp:\t\t\t")
 
     list_of_repos_old = list_of_repos
@@ -1680,7 +1681,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             try:
                 github_print_event(events[0], g, True)
             except Exception as e:
-                print(f"\nWarning: cannot fetch last event details - {e}")
+                print(f"\n* Warning: cannot fetch last event details: {e}")
 
         print_cur_ts("\nTimestamp:\t\t\t")
 
@@ -1695,7 +1696,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
         repos_old = [repo.name for repo in repos_list]
         starred_old = [star.full_name for star in starred_list]
     except Exception as e:
-        print(f"* Error - {e}")
+        print(f"* Error: {e}")
         sys.exit(1)
 
     g.close()
@@ -1712,7 +1713,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             email_sent = False
 
         except (GithubException, Exception) as e:
-            print(f"Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)} - {e}")
+            print(f"* Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)}: {e}")
 
             should_notify = False
             reason_msg = None
@@ -1775,7 +1776,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Bio", user, bio_old, bio)
             except Exception as e:
-                print(f"* Error - {e}")
+                print(f"* Error: {e}")
 
             m_subject = f"Github user {user} bio has changed!"
             m_body = f"Github user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -1798,7 +1799,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Location", user, location_old, location)
             except Exception as e:
-                print(f"* Error - {e}")
+                print(f"* Error: {e}")
 
             m_subject = f"Github user {user} location has changed!"
             m_body = f"Github user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -1821,7 +1822,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "User Name", user, user_name_old, user_name)
             except Exception as e:
-                print(f"* Error - {e}")
+                print(f"* Error: {e}")
 
             m_subject = f"Github user {user} name has changed!"
             m_body = f"Github user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -1844,7 +1845,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Company", user, company_old, company)
             except Exception as e:
-                print(f"* Error - {e}")
+                print(f"* Error: {e}")
 
             m_subject = f"Github user {user} company has changed!"
             m_body = f"Github user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -1867,7 +1868,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Email", user, email_old, email)
             except Exception as e:
-                print(f"* Error - {e}")
+                print(f"* Error: {e}")
 
             m_subject = f"Github user {user} email has changed!"
             m_body = f"Github user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -1890,7 +1891,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Blog URL", user, blog_old, blog)
             except Exception as e:
-                print(f"* Error - {e}")
+                print(f"* Error: {e}")
 
             m_subject = f"Github user {user} blog URL has changed!"
             m_body = f"Github user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -1913,7 +1914,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Account Update Date", user, convert_to_local_naive(account_updated_date_old), convert_to_local_naive(account_updated_date))
             except Exception as e:
-                print(f"* Error - {e}")
+                print(f"* Error: {e}")
 
             m_subject = f"Github user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
             m_body = f"Github user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -1936,7 +1937,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                     list_of_repos_ok = True
                 except Exception as e:
                     list_of_repos = list_of_repos_old
-                    print(f"Cannot process list of public repositories, keeping old list - {e}")
+                    print(f"* Cannot process list of public repositories, keeping old list: {e}")
                     list_of_repos_ok = False
 
                 if list_of_repos_ok:
@@ -1982,7 +1983,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                                         if csv_file_name:
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Update Date", r_name, convert_to_local_naive(r_update_old), convert_to_local_naive(r_update))
                                     except Exception as e:
-                                        print(f"* Error - {e}")
+                                        print(f"* Error: {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     if repo_update_date_notification:
@@ -2013,7 +2014,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                                         if csv_file_name:
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Description", r_name, r_descr_old, r_descr)
                                     except Exception as e:
-                                        print(f"* Error - {e}")
+                                        print(f"* Error: {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' description has changed !"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     if repo_notification:
@@ -2040,7 +2041,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                     except Exception as e:
                         last_event_id = 0
                         last_event_ts = None
-                        print(f"* Cannot get last event ID / timestamp - {e}")
+                        print(f"* Cannot get last event ID / timestamp: {e}")
                         print_cur_ts("Timestamp:\t\t\t")
 
                 events_list_of_ids = set()
@@ -2069,7 +2070,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                             try:
                                 event_date, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
                             except Exception as e:
-                                print(f"\nWarning: cannot fetch all event details - {e}")
+                                print(f"\n* Warning, cannot fetch all event details: {e}")
 
                             first_new = False
 
@@ -2079,7 +2080,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                                     if csv_file_name:
                                         write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                                 except Exception as e:
-                                    print(f"* Error - {e}")
+                                    print(f"* Error: {e}")
 
                                 m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
                                 m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -2116,26 +2117,148 @@ if __name__ == "__main__":
 
     print(f"Github Monitoring Tool v{VERSION}\n")
 
-    parser = argparse.ArgumentParser("github_monitor")
-    parser.add_argument("GITHUB_USERNAME", nargs="?", help="Github username", type=str)
-    parser.add_argument("-t", "--github_token", help="Github personal access token (classic) to override the value defined within the script (GITHUB_TOKEN)", type=str)
-    parser.add_argument("-x", "--github_url", help="Github API URL to override the default value defined within the script (GITHUB_API_URL)", type=str)
-    parser.add_argument("-p", "--profile_notification", help="Send email notification once user's profile changes (e.g. changed followers, followings, starred repos, username, email, bio, location, blog URL, number of repositories)", action='store_true')
-    parser.add_argument("-s", "--event_notification", help="Send email notification once new Github events show up for the user (e.g. new pushes, PRs, issues, forks, releases etc.)", action='store_true')
-    parser.add_argument("-q", "--repo_notification", help="Send email notification once changes in user's repositories are detected (e.g. changed stargazers, watchers, forks, issues, PRs, description etc., except for update date), works only if tracking of repos changes is enabled (-j)", action='store_true')
-    parser.add_argument("-u", "--repo_update_date_notification", help="Send email notification once changes in user's repositories update date are detected, works only if tracking of repos changes is enabled (-j); these email notifications might be quite verbose, so be careful", action='store_true')
-    parser.add_argument("-e", "--error_notification", help="Disable sending email notifications in case of errors like expired token", action='store_false')
-    parser.add_argument("-c", "--check_interval", help="Time between monitoring checks, in seconds", type=int)
-    parser.add_argument("-b", "--csv_file", help="Write info about new events & profile changes to CSV file", type=str, metavar="CSV_FILENAME")
-    parser.add_argument("-j", "--track_repos_changes", help="Track changes of user repos like changed stargazers, watchers, forks, description, update date etc.", action='store_true')
-    parser.add_argument("-k", "--do_not_monitor_github_events", help="Do not monitor Github events for the user (e.g. new pushes, PRs, issues, forks, releases etc.)", action='store_true')
-    parser.add_argument("-r", "--repos", help="List repositories for the user with some basic statistics", action='store_true')
-    parser.add_argument("-g", "--starred_repos", help="List repositories starred by the user", action='store_true')
-    parser.add_argument("-f", "--followers_and_followings", help="List followers & followings for the user", action='store_true')
-    parser.add_argument("-l", "--list_recent_events", help="List recent Github events for the user", action='store_true')
-    parser.add_argument("-n", "--number_of_recent_events", help="Number of Github events to display if used with -l", type=int)
-    parser.add_argument("-d", "--disable_logging", help="Disable logging to file 'github_monitor_user.log' file", action='store_true')
-    parser.add_argument("-z", "--send_test_email_notification", help="Send test email notification to verify SMTP settings defined in the script", action='store_true')
+    parser = argparse.ArgumentParser(
+        prog="github_monitor",
+        description="Monitor a GitHub user’s profile and activity with customizable email alerts [ https://github.com/misiektoja/github_monitor/ ]"
+    )
+
+    # Positional
+    parser.add_argument(
+        "username",
+        nargs="?",
+        metavar="GITHUB_USERNAME",
+        help="GitHub username",
+        type=str
+    )
+
+    # API settings
+    creds = parser.add_argument_group("API settings")
+    creds.add_argument(
+        "-t", "--github-token",
+        dest="github_token",
+        metavar="GITHUB_TOKEN",
+        type=str,
+        help="GitHub personal access token (classic)"
+    )
+    creds.add_argument(
+        "-x", "--github-url",
+        dest="github_url",
+        metavar="GITHUB_URL",
+        type=str,
+        help="GitHub API URL"
+    )
+
+    # Notifications
+    notify = parser.add_argument_group("Notifications")
+    notify.add_argument(
+        "-p", "--notify-profile",
+        dest="notify_profile",
+        action="store_true",
+        help="Email when user’s profile changes"
+    )
+    notify.add_argument(
+        "-s", "--notify-events",
+        dest="notify_events",
+        action="store_true",
+        help="Email when new GitHub events appear"
+    )
+    notify.add_argument(
+        "-q", "--notify-repo-changes",
+        dest="notify_repo_changes",
+        action="store_true",
+        help="Email when user’s repositories change (stargazers, watchers, forks, issues, PRs, description etc., except for update date)"
+    )
+    notify.add_argument(
+        "-u", "--notify-repo-update-date",
+        dest="notify_repo_update_date",
+        action="store_true",
+        help="Email when user’s repositories update date changes"
+    )
+    notify.add_argument(
+        "-e", "--no-error-notify",
+        dest="notify_errors",
+        action="store_false",
+        help="Disable email on errors"
+    )
+    notify.add_argument(
+        "-z", "--send-test-email",
+        dest="send_test_email",
+        action="store_true",
+        help="Send test email to verify SMTP settings"
+    )
+
+    # Intervals & timers
+    times = parser.add_argument_group("Intervals & timers")
+    times.add_argument(
+        "-c", "--check-interval",
+        dest="check_interval",
+        metavar="SECONDS",
+        type=int,
+        help="Time between monitoring checks, in seconds"
+    )
+
+    # Listing
+    listing = parser.add_argument_group("Listing")
+    listing.add_argument(
+        "-r", "--list-repos",
+        dest="list_repos",
+        action="store_true",
+        help="List user’s repositories with stats"
+    )
+    listing.add_argument(
+        "-g", "--list-starred-repos",
+        dest="list_starred_repos",
+        action="store_true",
+        help="List user’s starred repositories"
+    )
+    listing.add_argument(
+        "-f", "--list-followers-followings",
+        dest="list_followers_and_followings",
+        action="store_true",
+        help="List user’s followers & followings"
+    )
+    listing.add_argument(
+        "-l", "--list-recent-events",
+        dest="list_recent_events",
+        action="store_true",
+        help="List user's recent GitHub events"
+    )
+    listing.add_argument(
+        "-n", "--recent-events-count",
+        dest="recent_events_count",
+        metavar="N",
+        type=int,
+        help="Number of events to list (use with -l)"
+    )
+
+    # Features & output
+    opts = parser.add_argument_group("Features & output")
+    opts.add_argument(
+        "-j", "--track-repos-changes",
+        dest="track_repos_changes",
+        action="store_true",
+        help="Track user's repository changes (changed stargazers, watchers, forks, description, update date etc.)"
+    )
+    opts.add_argument(
+        "-k", "--no-monitor-events",
+        dest="no_monitor_events",
+        action="store_true",
+        help="Disable event monitoring"
+    )
+    opts.add_argument(
+        "-b", "--csv-file",
+        dest="csv_file",
+        metavar="CSV_FILE",
+        type=str,
+        help="Write new events & profile changes to CSV"
+    )
+    opts.add_argument(
+        "-d", "--disable-logging",
+        dest="disable_logging",
+        action="store_true",
+        help="Disable logging to github_monitor_<user>.log"
+    )
+
     args = parser.parse_args()
 
     if len(sys.argv) == 1:
@@ -2162,7 +2285,7 @@ if __name__ == "__main__":
     if not check_internet():
         sys.exit(1)
 
-    if args.send_test_email_notification:
+    if args.send_test_email:
         print("* Sending test email notification ...\n")
         if send_email("github_monitor: test email", "This is test email - your SMTP settings seems to be correct !", "", SMTP_SSL, smtp_timeout=5) == 0:
             print("* Email sent successfully !")
@@ -2177,7 +2300,7 @@ if __name__ == "__main__":
         print("* Error: GITHUB_TOKEN (-t / --github_token) value is empty or incorrect")
         sys.exit(1)
 
-    if not args.GITHUB_USERNAME:
+    if not args.username:
         print("* Error: GITHUB_USERNAME argument is required !")
         sys.exit(1)
 
@@ -2188,27 +2311,27 @@ if __name__ == "__main__":
         print("* Error: GITHUB_API_URL (-x / --github_url) value is empty")
         sys.exit(1)
 
-    if args.followers_and_followings:
+    if args.list_followers_and_followings:
         try:
-            github_print_followers_and_followings(args.GITHUB_USERNAME)
+            github_print_followers_and_followings(args.username)
         except Exception as e:
-            print(f"* Error - {e}")
+            print(f"* Error: {e}")
             sys.exit(1)
         sys.exit(0)
 
-    if args.repos:
+    if args.list_repos:
         try:
-            github_print_repos(args.GITHUB_USERNAME)
+            github_print_repos(args.username)
         except Exception as e:
-            print(f"* Error - {e}")
+            print(f"* Error: {e}")
             sys.exit(1)
         sys.exit(0)
 
-    if args.starred_repos:
+    if args.list_starred_repos:
         try:
-            github_print_starred_repos(args.GITHUB_USERNAME)
+            github_print_starred_repos(args.username)
         except Exception as e:
-            print(f"* Error - {e}")
+            print(f"* Error: {e}")
             sys.exit(1)
         sys.exit(0)
 
@@ -2221,32 +2344,32 @@ if __name__ == "__main__":
             with open(args.csv_file, 'a', newline='', buffering=1, encoding="utf-8") as _:
                 pass
         except Exception as e:
-            print(f"* Error: CSV file cannot be opened for writing - {e}")
+            print(f"* Error, CSV file cannot be opened for writing: {e}")
             sys.exit(1)
 
     if args.list_recent_events:
-        if args.number_of_recent_events and args.number_of_recent_events > 0:
-            events_n = args.number_of_recent_events
+        if args.recent_events_count and args.recent_events_count > 0:
+            events_n = args.recent_events_count
         else:
             events_n = 5
         try:
-            github_list_events(args.GITHUB_USERNAME, events_n, args.csv_file)
+            github_list_events(args.username, events_n, args.csv_file)
         except Exception as e:
-            print(f"* Error - {e}")
+            print(f"* Error: {e}")
             sys.exit(1)
         sys.exit(0)
 
     if not args.disable_logging:
-        GITHUB_LOGFILE = f"{GITHUB_LOGFILE}_{args.GITHUB_USERNAME}.log"
+        GITHUB_LOGFILE = f"{GITHUB_LOGFILE}_{args.username}.log"
         sys.stdout = Logger(GITHUB_LOGFILE)
 
-    event_notification = args.event_notification
-    profile_notification = args.profile_notification
-    repo_notification = args.repo_notification
-    repo_update_date_notification = args.repo_update_date_notification
+    event_notification = args.notify_events
+    profile_notification = args.notify_profile
+    repo_notification = args.notify_repo_changes
+    repo_update_date_notification = args.notify_repo_update_date
     track_repos_changes = args.track_repos_changes
-    do_not_monitor_github_events = args.do_not_monitor_github_events
-    error_notification = args.error_notification
+    do_not_monitor_github_events = args.no_monitor_events
+    error_notification = args.notify_errors
 
     if not track_repos_changes:
         repo_notification = False
@@ -2269,7 +2392,8 @@ if __name__ == "__main__":
     print(f"* Monitor Github events:\t{not do_not_monitor_github_events}")
     print(f"* Output logging enabled:\t{not args.disable_logging}" + (f" ({GITHUB_LOGFILE})" if not args.disable_logging else ""))
     print(f"* CSV logging enabled:\t\t{bool(args.csv_file)}" + (f" ({args.csv_file})" if args.csv_file else ""))
-    out = f"\nMonitoring Github user {args.GITHUB_USERNAME}"
+
+    out = f"\nMonitoring Github user {args.username}"
     print(out)
     print("-" * len(out))
 
@@ -2282,7 +2406,7 @@ if __name__ == "__main__":
         signal.signal(signal.SIGTRAP, increase_check_signal_handler)
         signal.signal(signal.SIGABRT, decrease_check_signal_handler)
 
-    github_monitor_user(args.GITHUB_USERNAME, error_notification, args.csv_file)
+    github_monitor_user(args.username, error_notification, args.csv_file)
 
     sys.stdout = stdout_bck
     sys.exit(0)
