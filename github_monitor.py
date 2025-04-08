@@ -155,6 +155,7 @@ from github import Github, Auth, GithubException, UnknownObjectException
 from github.GithubException import BadCredentialsException
 from itertools import islice
 from dateutil.parser import isoparse
+import textwrap
 
 
 # Logger class to output messages to stdout and log file
@@ -408,7 +409,7 @@ def get_cur_ts(ts_str=""):
 # Prints the current date/time in human readable format with separator; eg. Sun 21 Apr 2024, 15:08:45
 def print_cur_ts(ts_str=""):
     print(get_cur_ts(str(ts_str)))
-    print("─" * HORIZONTAL_LINE1)
+    print(f"{'─' * HORIZONTAL_LINE1}\n{'─' * HORIZONTAL_LINE1}")
 
 
 # Returns the timestamp/datetime object in human readable format (long version); eg. Sun 21 Apr 2024, 15:08:45
@@ -657,7 +658,7 @@ def github_process_repos(repos_list):
                 list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "issues_list": issues_list, "pulls_list": pr_list})
             except Exception as e:
                 print(f"Error while processing info for repo '{repo.name}', skipping for now - {e}")
-                print_cur_ts("Timestamp:\t\t")
+                print_cur_ts("Timestamp:\t\t\t")
                 continue
 
     return list_of_repos
@@ -792,6 +793,12 @@ def human_readable_size(num):
             return f"{value:.1f} {unit}"
         value /= 1024.0
     return f"{value:.1f} PB"
+
+
+def format_body_block(content, indent="    "):
+    new_content = f"'{content}'"
+    indented = textwrap.indent(new_content.strip(), indent)
+    return f"\n{indented}"
 
 
 # Prints details about passed GitHub event
@@ -973,13 +980,17 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             st += print_v(f"Author association:\t\t{event.payload['review'].get('author_association')}")
 
         if event.payload["review"].get("id"):
-            st += print_v(f"Review ID:\t\t\t{event.payload['review'].get("id")}")
+            st += print_v(f"Review ID:\t\t\t{event.payload['review'].get('id')}")
         if event.payload["review"].get("commit_id"):
-            st += print_v(f"Commit SHA reviewed:\t\t{event.payload['review'].get("commit_id")}")
+            st += print_v(f"Commit SHA reviewed:\t\t{event.payload['review'].get('commit_id')}")
         if event.payload["review"].get("state"):
             st += print_v(f"Review state:\t\t\t{event.payload['review'].get('state')}")
         if event.payload["review"].get("body"):
-            st += print_v(f"Review body:\n'{event.payload['review'].get('body')}'")
+            review_body = event.payload['review'].get('body')
+            if len(review_body) > 750:
+                review_body = review_body[:750] + " ... <cut>"
+            st += print_v(f"Review body:")
+            st += print_v(format_body_block(review_body))
 
         if repo:
             try:
@@ -992,8 +1003,13 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
     if event.payload.get("issue"):
         st += print_v(f"\nIssue title:\t\t\t{event.payload['issue'].get('title')}")
+
         issue_date = event.payload["issue"].get("created_at")
         st += print_v(f"Issue date:\t\t\t{get_date_from_ts(issue_date)}")
+
+        issue_author = event.payload["issue"].get("user", {}).get("login")
+        if issue_author:
+            st += print_v(f"Issue author:\t\t\t{issue_author}")
 
         st += print_v(f"Issue URL:\t\t\t{event.payload['issue'].get('html_url')}")
 
@@ -1002,6 +1018,12 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
         st += print_v(f"Issue comments:\t\t\t{event.payload['issue'].get('comments', 0)}")
 
+        labels = event.payload["issue"].get("labels", [])
+        if labels:
+            label_names = ", ".join(label.get("name") for label in labels if label.get("name"))
+            if label_names:
+                st += print_v(f"Issue labels:\t\t\t{label_names}")
+
         if event.payload["issue"].get("assignees"):
             assignees = event.payload["issue"].get("assignees")
             for assignee in assignees:
@@ -1009,25 +1031,54 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                 if assignee != assignees[-1]:
                     st += print_v()
 
+        reactions = event.payload["issue"].get("reactions", {})
+
+        reaction_map = {
+            "+1": "👍",
+            "-1": "👎",
+            "laugh": "😄",
+            "hooray": "🎉",
+            "confused": "😕",
+            "heart": "❤️",
+            "rocket": "🚀",
+            "eyes": "👀",
+        }
+
+        reaction_display = []
+        for key, emoji in reaction_map.items():
+            count = reactions.get(key, 0)
+            if count > 0:
+                reaction_display.append(f"{emoji} {count}")
+
+        if reaction_display:
+            st += print_v(f"Issue reactions:\t\t{' / '.join(reaction_display)}")
+
         if event.payload["issue"].get("body"):
-            # st += print_v(f"\nIssue body:\n'{event.payload['issue'].get('body')}'")
             issue_body = event.payload['issue'].get('body')
             issue_snippet = issue_body if len(issue_body) <= 750 else issue_body[:750] + " ... <cut>"
-            st += print_v(f"\nIssue body:\n'{issue_snippet}'")
+            st += print_v(f"\nIssue body:")
+            st += print_v(format_body_block(issue_snippet))
 
     if event.payload.get("comment"):
         comment = event.payload["comment"]
 
         comment_date = comment.get("created_at")
         st += print_v(f"\nComment date:\t\t\t{get_date_from_ts(comment_date)}")
-        st += print_v(f"Comment URL:\t\t\t{comment.get('html_url')}")
-        if comment.get("path"):
-            st += print_v(f"Comment path:\t\t\t{comment.get('path')}")
 
         comment_author = comment.get("user", {}).get("login")
         if comment_author:
             st += print_v(f"Comment author:\t\t\t{comment_author}")
-        st += print_v(f"\nComment body:\n'{comment.get('body')}'")
+
+        st += print_v(f"Comment URL:\t\t\t{comment.get('html_url')}")
+        if comment.get("path"):
+            st += print_v(f"Comment path:\t\t\t{comment.get('path')}")
+
+        comment_body = comment.get("body")
+        if comment_body:
+            if len(comment_body) > 750:
+                comment_body = comment_body[:750] + " ... <cut>"
+            st += print_v(f"\nComment body:")
+            st += print_v(format_body_block(comment_body))
 
         if event.type == "PullRequestReviewCommentEvent":
             parent_id = comment.get("in_reply_to_id")
@@ -1039,32 +1090,95 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     parent = pr.get_review_comment(parent_id)
                     parent_date = get_date_from_ts(parent.created_at)
 
-                    st += print_v(f"\n↳ In reply to {parent.user.login} (@ {parent_date}):")
-                    st += print_v(f"'{parent.body}'")
-                    st += print_v(f"\nParent comment URL:\t\t{parent.html_url}")
+                    st += print_v(f"\nPrevious comment:\n\n↳ In reply to {parent.user.login} (@ {parent_date}):")
+
+                    parent_body = parent.body
+                    if len(parent_body) > 750:
+                        parent_body = parent_body[:750] + " ... <cut>"
+                    st += print_v(format_body_block(parent_body))
+
+                    st += print_v(f"\nPrevious comment URL:\t\t{parent.html_url}")
                 except Exception as e:
                     st += print_v(f"\nCould not fetch parent comment (ID {parent_id}): {e}")
             else:
                 st += print_v("\n(This is the first comment in its thread)")
         elif event.type in ("IssueCommentEvent", "CommitCommentEvent"):
             if repo:
+
+                comment_id = comment["id"]
+                comment_created = datetime.fromisoformat(comment["created_at"].replace("Z", "+00:00"))
+
                 if event.type == "IssueCommentEvent":
-                    comments = list(repo.get_issue(event.payload["issue"]["number"]).get_comments())
-                else:  # CommitCommentEvent
+
+                    issue_number = event.payload["issue"]["number"]
+                    issue = repo.get_issue(issue_number)
+
+                    virtual_comment_list = []
+
+                    if issue.body:
+                        virtual_comment_list.append({
+                            "id": f"issue-{issue.id}",  # fake ID so it doesn't collide
+                            "created_at": issue.created_at,
+                            "user": issue.user,
+                            "body": issue.body,
+                            "html_url": issue.html_url
+                        })
+
+                    for c in issue.get_comments():
+                        virtual_comment_list.append({
+                            "id": c.id,
+                            "created_at": c.created_at,
+                            "user": c.user,
+                            "body": c.body,
+                            "html_url": c.html_url
+                        })
+
+                    previous = None
+                    for c in virtual_comment_list:
+                        if c["id"] == comment_id or (isinstance(c["id"], int) and c["id"] == comment_id):
+                            continue
+
+                        if c["created_at"] < comment_created:
+                            if not previous or c["created_at"] > previous["created_at"]:
+                                previous = c
+
+                    if previous:
+                        prev_date = get_date_from_ts(previous["created_at"])
+                        st += print_v(f"\nPrevious comment:\n\n↳ In reply to {previous['user'].login} (@ {prev_date}):")
+
+                        parent_body = previous["body"]
+                        if len(parent_body) > 750:
+                            parent_body = parent_body[:750] + " ... <cut>"
+                        st += print_v(format_body_block(parent_body))
+
+                        st += print_v(f"\nPrevious comment URL:\t\t{previous['html_url']}")
+                    else:
+                        st += print_v("\n(This is the first comment in this thread)")
+
+                elif event.type == "CommitCommentEvent":
                     commit_sha = comment["commit_id"]
                     comments = list(repo.get_commit(commit_sha).get_comments())
 
-                for i, c in enumerate(comments):
-                    if c.id == comment["id"]:
-                        if i > 0:
-                            prev = comments[i - 1]
-                            prev_date = get_date_from_ts(prev.created_at)
-                            st += print_v(f"\n↳ In reply to {prev.user.login} (@ {prev_date}):")
-                            st += print_v(f"'{prev.body}'")
-                            st += print_v(f"\nPrevious comment URL:\t\t{prev.html_url}")
-                        else:
-                            st += print_v("\n(This is the first comment in this thread)")
-                        break
+                    previous = None
+                    for c in comments:
+                        if c.id == comment_id:
+                            continue
+                        if c.created_at < comment_created:
+                            if not previous or c.created_at > previous.created_at:
+                                previous = c
+
+                    if previous:
+                        prev_date = get_date_from_ts(previous.created_at)
+                        st += print_v(f"\nPrevious comment:\n\n↳ In reply to {previous.user.login} (@ {prev_date}):")
+
+                        parent_body = previous.body
+                        if len(parent_body) > 750:
+                            parent_body = parent_body[:750] + " ... <cut>"
+                        st += print_v(format_body_block(parent_body))
+
+                        st += print_v(f"\nPrevious comment URL:\t\t{previous.html_url}")
+                    else:
+                        st += print_v("\n(This is the first comment in this thread)")
 
     if event.payload.get("forkee"):
         st += print_v(f"\nForked to repo:\t\t\t{event.payload['forkee'].get('full_name')}")
@@ -1098,7 +1212,10 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         if comment_author:
             st += print_v(f"\nDiscussion comment by:\t\t{comment_author}")
         if comment_body:
-            st += print_v(f"Comment body:\t\t\t'{comment_body}'")
+            if len(comment_body) > 750:
+                comment_body = comment_body[:750] + " ... <cut>"
+            st += print_v(f"\nComment body:")
+            st += print_v(format_body_block(comment_body))
 
     return event_date, repo_name, repo_url, st
 
@@ -1153,7 +1270,7 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
         print(f"CSV export enabled:\t\t{csv_enabled} ({csv_file_name})")
     print(f"Local timezone:\t\t\t{LOCAL_TIMEZONE}")
     print(f"Available events:\t\t{total_available}")
-    print("─" * HORIZONTAL_LINE1)
+    print(f"\n{'─' * HORIZONTAL_LINE1}\n{'─' * HORIZONTAL_LINE1}")
 
     if available_events == 0:
         print("There are no events yet")
@@ -1420,13 +1537,13 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
     last_event_id = 0
     last_event_ts: datetime | None = None
-    events_list_of_ids = []
+    events_list_of_ids = set()
 
     if not do_not_monitor_github_events:
         if available_events:
             try:
                 for event in reversed(events):
-                    events_list_of_ids.append(event.id)
+                    events_list_of_ids.add(event.id)
 
                 newest = events[0]
                 last_event_id = newest.id
@@ -1450,7 +1567,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
     last_event_id_old = last_event_id
     last_event_ts_old = last_event_ts
-    events_list_of_ids_old = events_list_of_ids
+    events_list_of_ids_old = events_list_of_ids.copy()
 
     user_myself_name_str = user_myself_login
     if user_myself_name:
@@ -1871,7 +1988,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
                     print(f"* Cannot get last event ID / timestamp - {e}")
                     print_cur_ts("Timestamp:\t\t\t")
 
-            events_list_of_ids = []
+            events_list_of_ids = set()
             first_new = True
 
             # New events showed up
@@ -1879,9 +1996,12 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
                 for event in reversed(events):
 
-                    events_list_of_ids.append(event.id)
+                    events_list_of_ids.add(event.id)
 
                     if event.id in events_list_of_ids_old:
+                        continue
+
+                    if last_event_ts_old and event.created_at <= last_event_ts_old:
                         continue
 
                     if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
@@ -1917,7 +2037,7 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
                 last_event_id_old = last_event_id
                 last_event_ts_old = last_event_ts
-                events_list_of_ids_old = events_list_of_ids
+                events_list_of_ids_old = events_list_of_ids.copy()
 
         alive_counter += 1
 
