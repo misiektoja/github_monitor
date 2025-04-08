@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.8
+v1.8.1
 
 OSINT tool implementing real-time tracking of Github users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -15,7 +15,7 @@ python-dateutil
 requests
 """
 
-VERSION = "1.8"
+VERSION = "1.8.1"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -24,39 +24,36 @@ VERSION = "1.8"
 # The URL of the Github API
 # For Public Web Github use the default: https://api.github.com
 # For Github Enterprise change to: https://{your_hostname}/api/v3
-# You can also change it by using -x parameter
+# Can also be set using the -x parameter
 GITHUB_API_URL = "https://api.github.com"
 
-# Get your Github personal access token (classic) by going to: https://github.com/settings/apps
-# Then click Personal access tokens -> Tokens (classic) -> Generate new token (classic)
-# Put the token value below (or use -t parameter)
+# Get your Github personal access token (classic) by visiting: https://github.com/settings/apps
+# Then go to: Personal access tokens -> Tokens (classic) -> Generate new token (classic)
+# Paste the token below or provide it using the -t parameter
 GITHUB_TOKEN = "your_github_classic_personal_access_token"
 
-# SMTP settings for sending email notifications, you can leave it as it is below and no notifications will be sent
+# SMTP settings for sending email notifications
+# If left as-is, no notifications will be sent
 SMTP_HOST = "your_smtp_server_ssl"
 SMTP_PORT = 587
 SMTP_USER = "your_smtp_user"
 SMTP_PASSWORD = "your_smtp_password"
 SMTP_SSL = True
 SENDER_EMAIL = "your_sender_email"
-# SMTP_HOST = "your_smtp_server_plaintext"
-# SMTP_PORT = 25
-# SMTP_USER = "your_smtp_user"
-# SMTP_PASSWORD = "your_smtp_password"
-# SMTP_SSL = False
-# SENDER_EMAIL = "your_sender_email"
 RECEIVER_EMAIL = "your_receiver_email"
 
-# How often do we perform checks for user activity, you can also use -c parameter; in seconds
+# How often to check for user profile changes / activities; in seconds
+# Can also be set using the -c parameter
 GITHUB_CHECK_INTERVAL = 1800  # 30 mins
 
-# Specify your local time zone so we convert Github API timestamps to your time (for example: 'Europe/Warsaw')
-# You can get the list of all time zones supported by pytz like this:
+# Set your local time zone so that Github API timestamps are converted accordingly (e.g. 'Europe/Warsaw').
+# Use this command to list all time zones supported by pytz:
 # python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
-# If you leave it as 'Auto' we will try to automatically detect the local timezone
+# If set to 'Auto', the tool will try to detect your local time zone automatically
 LOCAL_TIMEZONE = 'Auto'
 
-# What kind of events we want to monitor, if you put 'ALL' then all of them will be monitored
+# Events to monitor
+# Use 'ALL' to monitor all available event types
 EVENTS_TO_MONITOR = [
     'ALL',
     'PushEvent',
@@ -79,23 +76,26 @@ EVENTS_TO_MONITOR = [
     'WorkflowRunEvent',
 ]
 
-# How many last events we check when we get signal that last event ID has changed
+# Number of recent events to fetch when a change in the last event ID is detected
 EVENTS_NUMBER = 15
 
-# How often do we perform alive check by printing "alive check" message in the output; in seconds
+# How often to print an "alive check" message to the output; in seconds
 TOOL_ALIVE_INTERVAL = 21600  # 6 hours
 
-# URL we check in the beginning to make sure we have internet connectivity
-CHECK_INTERNET_URL = 'http://www.google.com/'
+# URL used to verify internet connectivity at startup
+CHECK_INTERNET_URL = GITHUB_API_URL
 
-# Default value for initial checking of internet connectivity; in seconds
+# Timeout used when checking initial internet connectivity; in seconds
 CHECK_INTERNET_TIMEOUT = 5
 
-# The name of the .log file; the tool by default will output its messages to github_monitor_username.log file
+# Base name of the log file. The tool will save its output to github_monitor_{username}.log file
 GITHUB_LOGFILE = "github_monitor"
 
-# Value used by signal handlers increasing/decreasing the user activity check (GITHUB_CHECK_INTERVAL); in seconds
+# Value used by signal handlers to increase/decrease profile/user activity check (GITHUB_CHECK_INTERVAL); in seconds
 GITHUB_CHECK_SIGNAL_VALUE = 60  # 1 minute
+
+# Whether to clear the terminal screen after starting the tool
+CLEAR_SCREEN = True
 
 # -------------------------
 # CONFIGURATION SECTION END
@@ -106,6 +106,12 @@ HORIZONTAL_LINE1 = 105
 
 # Width of horizontal line for repositories list output (─)
 HORIZONTAL_LINE2 = 80
+
+# Maximum number of times to retry a failed GitHub API/network call
+NET_MAX_RETRIES = 5
+
+# Base number of seconds to wait before each retry, multiplied by the attempt count
+NET_BASE_BACKOFF_SEC = 5
 
 TOOL_ALIVE_COUNTER = TOOL_ALIVE_INTERVAL / GITHUB_CHECK_INTERVAL
 
@@ -156,6 +162,17 @@ from github.GithubException import BadCredentialsException
 from itertools import islice
 from dateutil.parser import isoparse
 import textwrap
+import urllib3
+import socket
+from typing import Any, Callable
+
+
+NET_ERRORS = (
+    req.exceptions.RequestException,
+    urllib3.exceptions.HTTPError,
+    socket.gaierror,
+    GithubException,
+)
 
 
 # Logger class to output messages to stdout and log file
@@ -182,15 +199,25 @@ def signal_handler(sig, frame):
 
 
 # Checks internet connectivity
-def check_internet():
-    url = CHECK_INTERNET_URL
+def check_internet(url=CHECK_INTERNET_URL, timeout=CHECK_INTERNET_TIMEOUT):
     try:
-        _ = req.get(url, timeout=CHECK_INTERNET_TIMEOUT)
-        print("OK")
+        _ = req.get(url, timeout=timeout)
         return True
-    except Exception as e:
-        print(f"No connectivity, please check your network - {e}")
-        sys.exit(1)
+    except req.RequestException as e:
+        print(f"No connectivity, please check your network: {e}")
+        return False
+
+
+def clear_screen(enabled=True):
+    if not enabled:
+        return
+    try:
+        if platform.system() == 'Windows':
+            os.system('cls')
+        else:
+            os.system('clear')
+    except Exception:
+        print("* Cannot clear the screen contents")
 
 
 # Converts absolute value of seconds to human readable format
@@ -557,6 +584,26 @@ def decrease_check_signal_handler(sig, frame):
     print(f"* Signal {sig_name} received")
     print(f"* Github timers: [check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
     print_cur_ts("Timestamp:\t\t\t")
+
+
+# List subclass used as a safe fallback for paginated responses
+class EmptyPaginatedList(list):
+    def __init__(self):
+        super().__init__()
+        self.totalCount = 0
+
+
+# Wraps GitHub API call with retry and linear back-off, returning a specified default on failure
+def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BACKOFF_SEC, default: Any = None,) -> Callable[..., Any]:
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        for i in range(1, retries + 1):
+            try:
+                return fn(*args, **kwargs)
+            except NET_ERRORS as e:
+                print(f"{fn.__name__} error: {e} (retry {i}/{retries})")
+                time.sleep(backoff * i)
+        return default
+    return wrapped
 
 
 # Prints followers and followings for a GitHub user (-f)
@@ -1690,29 +1737,33 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             continue
 
         # Changed followings
-        followings_raw = list(g_user.get_following())
-        followings_count = g_user.following
-        followings_old, followings_old_count = handle_profile_change("Followings", followings_old_count, followings_count, followings_old, followings_raw, user, csv_file_name, field="login")
+        followings_raw = list(gh_call(g_user.get_following)())
+        followings_count = gh_call(lambda: g_user.following)()
+        if followings_raw is not None and followings_count is not None:
+            followings_old, followings_old_count = handle_profile_change("Followings", followings_old_count, followings_count, followings_old, followings_raw, user, csv_file_name, field="login")
 
         # Changed followers
-        followers_raw = list(g_user.get_followers())
-        followers_count = g_user.followers
-        followers_old, followers_old_count = handle_profile_change("Followers", followers_old_count, followers_count, followers_old, followers_raw, user, csv_file_name, field="login")
+        followers_raw = list(gh_call(g_user.get_followers)())
+        followers_count = gh_call(lambda: g_user.followers)()
+        if followers_raw is not None and followers_count is not None:
+            followers_old, followers_old_count = handle_profile_change("Followers", followers_old_count, followers_count, followers_old, followers_raw, user, csv_file_name, field="login")
 
         # Changed public repositories
-        repos_raw = list(g_user.get_repos())
-        repos_count = g_user.public_repos
-        repos_old, repos_old_count = handle_profile_change("Repos", repos_old_count, repos_count, repos_old, repos_raw, user, csv_file_name, field="name")
+        repos_raw = list(gh_call(g_user.get_repos)())
+        repos_count = gh_call(lambda: g_user.public_repos)()
+        if repos_raw is not None and repos_count is not None:
+            repos_old, repos_old_count = handle_profile_change("Repos", repos_old_count, repos_count, repos_old, repos_raw, user, csv_file_name, field="name")
 
         # Changed starred repositories
-        starred_list = g_user.get_starred()
-        starred_raw = list(starred_list)
-        starred_count = starred_list.totalCount
-        starred_old, starred_old_count = handle_profile_change("Starred Repos", starred_old_count, starred_count, starred_old, starred_raw, user, csv_file_name, field="full_name")
+        starred_raw = gh_call(g_user.get_starred)()
+        if starred_raw is not None:
+            starred_list = list(starred_raw)
+            starred_count = starred_raw.totalCount
+            starred_old, starred_old_count = handle_profile_change("Starred Repos", starred_old_count, starred_count, starred_old, starred_list, user, csv_file_name, field="full_name")
 
         # Changed bio
-        bio = g_user.bio
-        if bio != bio_old:
+        bio = gh_call(lambda: g_user.bio)()
+        if bio is not None and bio != bio_old:
             print(f"* Bio has changed for user {user} !\n")
             print(f"Old bio:\n\n{bio_old}\n")
             print(f"New bio:\n\n{bio}\n")
@@ -1734,8 +1785,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed location
-        location = g_user.location
-        if location != location_old:
+        location = gh_call(lambda: g_user.location)()
+        if location is not None and location != location_old:
             print(f"* Location has changed for user {user} !\n")
             print(f"Old location:\t\t\t{location_old}\n")
             print(f"New location:\t\t\t{location}\n")
@@ -1757,8 +1808,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed user name
-        user_name = g_user.name
-        if user_name != user_name_old:
+        user_name = gh_call(lambda: g_user.name)()
+        if user_name is not None and user_name != user_name_old:
             print(f"* User name has changed for user {user} !\n")
             print(f"Old user name:\t\t\t{user_name_old}\n")
             print(f"New user name:\t\t\t{user_name}\n")
@@ -1780,8 +1831,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed company
-        company = g_user.company
-        if company != company_old:
+        company = gh_call(lambda: g_user.company)()
+        if company is not None and company != company_old:
             print(f"* User company has changed for user {user} !\n")
             print(f"Old company:\t\t\t{company_old}\n")
             print(f"New company:\t\t\t{company}\n")
@@ -1803,8 +1854,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed email
-        email = g_user.email
-        if email != email_old:
+        email = gh_call(lambda: g_user.email)()
+        if email is not None and email != email_old:
             print(f"* User email has changed for user {user} !\n")
             print(f"Old email:\t\t\t{email_old}\n")
             print(f"New email:\t\t\t{email}\n")
@@ -1826,8 +1877,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed blog URL
-        blog = g_user.blog
-        if blog != blog_old:
+        blog = gh_call(lambda: g_user.blog)()
+        if blog is not None and blog != blog_old:
             print(f"* User blog URL has changed for user {user} !\n")
             print(f"Old blog URL:\t\t\t{blog_old}\n")
             print(f"New blog URL:\t\t\t{blog}\n")
@@ -1849,8 +1900,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed account update date
-        account_updated_date = g_user.updated_at
-        if account_updated_date != account_updated_date_old:
+        account_updated_date = gh_call(lambda: g_user.updated_at)()
+        if account_updated_date is not None and account_updated_date != account_updated_date_old:
             print(f"* User account has been updated for user {user} ! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n")
             print(f"Old account update date:\t{get_date_from_ts(account_updated_date_old)}\n")
             print(f"New account update date:\t{get_date_from_ts(account_updated_date)}\n")
@@ -1875,8 +1926,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
         # Changed repos details
         if track_repos_changes:
-            repos_list = g_user.get_repos()
-            if repos_list:
+            repos_list = gh_call(g_user.get_repos)()
+            if repos_list is not None:
                 try:
                     list_of_repos = github_process_repos(repos_list)
                     list_of_repos_ok = True
@@ -1971,73 +2022,74 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
         # New Github events
         if not do_not_monitor_github_events:
-            events = list(islice(g_user.get_events(), EVENTS_NUMBER))
-            available_events = len(events)
-            if available_events == 0:
-                last_event_id = 0
-                last_event_ts = None
-            else:
-                try:
-                    newest = events[0]
-                    last_event_id = newest.id
-                    if last_event_id:
-                        last_event_ts = newest.created_at
-                except Exception as e:
+            events = list(gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)))())
+            if events is not None:
+                available_events = len(events)
+                if available_events == 0:
                     last_event_id = 0
                     last_event_ts = None
-                    print(f"* Cannot get last event ID / timestamp - {e}")
-                    print_cur_ts("Timestamp:\t\t\t")
-
-            events_list_of_ids = set()
-            first_new = True
-
-            # New events showed up
-            if last_event_id and last_event_id != last_event_id_old:
-
-                for event in reversed(events):
-
-                    events_list_of_ids.add(event.id)
-
-                    if event.id in events_list_of_ids_old:
-                        continue
-
-                    if last_event_ts_old and event.created_at <= last_event_ts_old:
-                        continue
-
-                    if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
-
-                        event_date = None
-                        repo_name = ""
-                        repo_url = ""
-                        event_text = ""
-
-                        try:
-                            event_date, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
-                        except Exception as e:
-                            print(f"\nWarning: cannot fetch all event details - {e}")
-
-                        first_new = False
-
-                        if event_date and repo_name and event_text:
-
-                            try:
-                                if csv_file_name:
-                                    write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
-                            except Exception as e:
-                                print(f"* Cannot write CSV entry - {e}")
-
-                            m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
-                            m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-
-                            if event_notification:
-                                print(f"\nSending email notification to {RECEIVER_EMAIL}")
-                                send_email(m_subject, m_body, "", SMTP_SSL)
-
+                else:
+                    try:
+                        newest = events[0]
+                        last_event_id = newest.id
+                        if last_event_id:
+                            last_event_ts = newest.created_at
+                    except Exception as e:
+                        last_event_id = 0
+                        last_event_ts = None
+                        print(f"* Cannot get last event ID / timestamp - {e}")
                         print_cur_ts("Timestamp:\t\t\t")
 
-                last_event_id_old = last_event_id
-                last_event_ts_old = last_event_ts
-                events_list_of_ids_old = events_list_of_ids.copy()
+                events_list_of_ids = set()
+                first_new = True
+
+                # New events showed up
+                if last_event_id and last_event_id != last_event_id_old:
+
+                    for event in reversed(events):
+
+                        events_list_of_ids.add(event.id)
+
+                        if event.id in events_list_of_ids_old:
+                            continue
+
+                        if last_event_ts_old and event.created_at <= last_event_ts_old:
+                            continue
+
+                        if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
+
+                            event_date = None
+                            repo_name = ""
+                            repo_url = ""
+                            event_text = ""
+
+                            try:
+                                event_date, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
+                            except Exception as e:
+                                print(f"\nWarning: cannot fetch all event details - {e}")
+
+                            first_new = False
+
+                            if event_date and repo_name and event_text:
+
+                                try:
+                                    if csv_file_name:
+                                        write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
+                                except Exception as e:
+                                    print(f"* Cannot write CSV entry - {e}")
+
+                                m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
+                                m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+
+                                if event_notification:
+                                    print(f"\nSending email notification to {RECEIVER_EMAIL}")
+                                    send_email(m_subject, m_body, "", SMTP_SSL)
+
+                            print_cur_ts("Timestamp:\t\t\t")
+
+                    last_event_id_old = last_event_id
+                    last_event_ts_old = last_event_ts
+                    events_list_of_ids_old = events_list_of_ids.copy()
 
         alive_counter += 1
 
@@ -2057,13 +2109,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    try:
-        if platform.system() == 'Windows':
-            os.system('cls')
-        else:
-            os.system('clear')
-    except Exception:
-        print("* Cannot clear the screen contents")
+    clear_screen(CLEAR_SCREEN)
 
     print(f"Github Monitoring Tool v{VERSION}\n")
 
@@ -2110,10 +2156,8 @@ if __name__ == "__main__":
             print(f"* Error: Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid. Please use a valid pytz timezone name.")
             sys.exit(1)
 
-    sys.stdout.write("* Checking internet connectivity ... ")
-    sys.stdout.flush()
-    check_internet()
-    print("")
+    if not check_internet():
+        sys.exit(1)
 
     if args.send_test_email_notification:
         print("* Sending test email notification ...\n")
