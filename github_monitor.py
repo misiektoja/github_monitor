@@ -101,6 +101,12 @@ GITHUB_CHECK_SIGNAL_VALUE = 60  # 1 minute
 # CONFIGURATION SECTION END
 # -------------------------
 
+# Width of main horizontal line (─)
+HORIZONTAL_LINE1 = 105
+
+# Width of horizontal line for repositories list output (─)
+HORIZONTAL_LINE2 = 80
+
 TOOL_ALIVE_COUNTER = TOOL_ALIVE_INTERVAL / GITHUB_CHECK_INTERVAL
 
 stdout_bck = None
@@ -146,6 +152,7 @@ import platform
 import re
 import ipaddress
 from github import Github, Auth, GithubException, UnknownObjectException
+from github.GithubException import BadCredentialsException
 from itertools import islice
 from dateutil.parser import isoparse
 
@@ -173,7 +180,7 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 
-# Function to check internet connectivity
+# Checks internet connectivity
 def check_internet():
     url = CHECK_INTERNET_URL
     try:
@@ -185,7 +192,7 @@ def check_internet():
         sys.exit(1)
 
 
-# Function to convert absolute value of seconds to human readable format
+# Converts absolute value of seconds to human readable format
 def display_time(seconds, granularity=2):
     intervals = (
         ('years', 31556952),  # approximation
@@ -211,8 +218,7 @@ def display_time(seconds, granularity=2):
         return '0 seconds'
 
 
-# Function to calculate time span between two timestamps in seconds
-# Accepts timestamp integers, floats and datetime objects
+# Calculates time span between two timestamps, accepts timestamp integers, floats and datetime objects
 def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True, show_minutes=True, show_seconds=True, granularity=3):
     result = []
     intervals = ['years', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds']
@@ -271,21 +277,18 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
         date_diff = relativedelta.relativedelta(dt1, dt2)
         years = date_diff.years
         months = date_diff.months
-        weeks = date_diff.weeks
-        if not show_weeks:
+        days_total = date_diff.days
+
+        if show_weeks:
+            weeks = days_total // 7
+            days = days_total % 7
+        else:
             weeks = 0
-        days = date_diff.days
-        if weeks > 0:
-            days = days - (weeks * 7)
-        hours = date_diff.hours
-        if not show_hours and ts_diff > 86400:
-            hours = 0
-        minutes = date_diff.minutes
-        if not show_minutes and ts_diff > 3600:
-            minutes = 0
-        seconds = date_diff.seconds
-        if not show_seconds and ts_diff > 60:
-            seconds = 0
+            days = days_total
+
+        hours = date_diff.hours if show_hours or ts_diff <= 86400 else 0
+        minutes = date_diff.minutes if show_minutes or ts_diff <= 3600 else 0
+        seconds = date_diff.seconds if show_seconds or ts_diff <= 60 else 0
 
         date_list = [years, months, weeks, days, hours, minutes, seconds]
 
@@ -301,7 +304,7 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
         return '0 seconds'
 
 
-# Function to send email notification
+# Sends email notification
 def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
     fqdn_re = re.compile(r'(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}\.?$)')
     email_re = re.compile(r'[^@]+@[^@]+\.[^@]+')
@@ -368,7 +371,7 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
     return 0
 
 
-# Function to write CSV entry
+# Writes CSV entry
 def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new):
     try:
         csv_file = open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8")
@@ -397,18 +400,18 @@ def now_local_naive():
     return datetime.now(pytz.timezone(LOCAL_TIMEZONE)).replace(microsecond=0, tzinfo=None)
 
 
-# Function to return the current date/time in human readable format; eg. Sun 21 Apr 2024, 15:08:45
+# Returns the current date/time in human readable format; eg. Sun 21 Apr 2024, 15:08:45
 def get_cur_ts(ts_str=""):
     return (f'{ts_str}{calendar.day_abbr[(now_local_naive()).weekday()]}, {now_local_naive().strftime("%d %b %Y, %H:%M:%S")}')
 
 
-# Function to print the current date/time in human readable format with separator; eg. Sun 21 Apr 2024, 15:08:45
+# Prints the current date/time in human readable format with separator; eg. Sun 21 Apr 2024, 15:08:45
 def print_cur_ts(ts_str=""):
     print(get_cur_ts(str(ts_str)))
-    print("─" * 105)
+    print("─" * HORIZONTAL_LINE1)
 
 
-# Function to return the timestamp/datetime object in human readable format (long version); eg. Sun 21 Apr 2024, 15:08:45
+# Returns the timestamp/datetime object in human readable format (long version); eg. Sun 21 Apr 2024, 15:08:45
 def get_date_from_ts(ts):
     tz = pytz.timezone(LOCAL_TIMEZONE)
 
@@ -436,12 +439,17 @@ def get_date_from_ts(ts):
     return (f'{calendar.day_abbr[ts_new.weekday()]} {ts_new.strftime("%d %b %Y, %H:%M:%S")}')
 
 
-# Function to return the timestamp/datetime object in human readable format (short version); eg.
+# Returns the timestamp/datetime object in human readable format (short version); eg.
 # Sun 21 Apr 15:08
 # Sun 21 Apr 24, 15:08 (if show_year == True and current year is different)
+# Sun 21 Apr 25, 15:08 (if always_show_year == True and current year can be the same)
 # Sun 21 Apr (if show_hour == False)
-def get_short_date_from_ts(ts, show_year=False, show_hour=True):
+# Sun 21 Apr 15:08:32 (if show_seconds == True)
+# 21 Apr 15:08 (if show_weekday == False)
+def get_short_date_from_ts(ts, show_year=False, show_hour=True, show_weekday=True, show_seconds=False, always_show_year=False):
     tz = pytz.timezone(LOCAL_TIMEZONE)
+    if always_show_year:
+        show_year = True
 
     if isinstance(ts, str):
         try:
@@ -452,35 +460,38 @@ def get_short_date_from_ts(ts, show_year=False, show_hour=True):
     if isinstance(ts, datetime):
         if ts.tzinfo is None:
             ts = pytz.utc.localize(ts)
-        ts_local = ts.astimezone(tz)
-        ts_new = int(round(ts.timestamp()))
+        ts_new = ts.astimezone(tz)
 
     elif isinstance(ts, int):
-        ts_new = ts
-        ts_local = datetime.fromtimestamp(ts_new, tz)
+        ts_new = datetime.fromtimestamp(ts, tz)
 
     elif isinstance(ts, float):
-        ts_new = int(round(ts))
-        ts_local = datetime.fromtimestamp(ts_new, tz)
+        ts_rounded = int(round(ts))
+        ts_new = datetime.fromtimestamp(ts_rounded, tz)
 
     else:
         return ""
 
-    hour_strftime = " %H:%M" if show_hour else ""
-
-    if show_year and ts_local.year != datetime.now(tz).year:
-        hour_prefix = "," if show_hour else ""
-        return f'{calendar.day_abbr[ts_local.weekday()]} {ts_local.strftime(f"%d %b %y{hour_prefix}{hour_strftime}")}'
+    if show_hour:
+        hour_strftime = " %H:%M:%S" if show_seconds else " %H:%M"
     else:
-        return f'{calendar.day_abbr[ts_local.weekday()]} {ts_local.strftime(f"%d %b{hour_strftime}")}'
+        hour_strftime = ""
+
+    weekday_str = f"{calendar.day_abbr[ts_new.weekday()]} " if show_weekday else ""
+
+    if (show_year and ts_new.year != datetime.now(tz).year) or always_show_year:
+        hour_prefix = "," if show_hour else ""
+        return f'{weekday_str}{ts_new.strftime(f"%d %b %y{hour_prefix}{hour_strftime}")}'
+    else:
+        return f'{weekday_str}{ts_new.strftime(f"%d %b{hour_strftime}")}'
 
 
-# Function to check if the timezone name is correct
+# Checks if the timezone name is correct
 def is_valid_timezone(tz_name):
     return tz_name in pytz.all_timezones
 
 
-# Function to print and returned the printed text with new line
+# Prints and returns the printed text with new line
 def print_v(text=""):
     print(text)
     return text + "\n"
@@ -547,7 +558,7 @@ def decrease_check_signal_handler(sig, frame):
     print_cur_ts("Timestamp:\t\t\t")
 
 
-# Function printing followers & followings for Github user (-f)
+# Prints followers and followings for a GitHub user (-f)
 def github_print_followers_and_followings(user):
     user_name_str = user
     user_url = "-"
@@ -617,7 +628,7 @@ def github_print_followers_and_followings(user):
     g.close()
 
 
-# Function processing items of all passed repos and returning list of dictionaries
+# Processes items from all passed repositories and returns a list of dictionaries
 def github_process_repos(repos_list):
     list_of_repos = []
     stargazers_list = []
@@ -633,8 +644,6 @@ def github_process_repos(repos_list):
                 subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
                 forked_repos = [fork.full_name for fork in repo.get_forks()]
 
-                # approach below is the most accurate, but is very slow
-
                 issues = list(repo.get_issues(state='open'))
                 pulls = list(repo.get_pulls(state='open'))
 
@@ -645,15 +654,6 @@ def github_process_repos(repos_list):
                 issues_list = [f"#{i.number} {i.title} ({i.user.login}) [ {i.html_url} ]" for i in real_issues]
                 pr_list = [f"#{pr.number} {pr.title} ({pr.user.login}) [ {pr.html_url} ]" for pr in pulls]
 
-                # faster approach just to get issue and PRs count
-
-                # try:
-                #     pr_count = repo.get_pulls(state='open').totalCount
-                #     issue_count = repo.open_issues_count - pr_count
-                # except Exception:
-                #     pr_count = 0
-                #     issue_count = 0
-
                 list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "issues_list": issues_list, "pulls_list": pr_list})
             except Exception as e:
                 print(f"Error while processing info for repo '{repo.name}', skipping for now - {e}")
@@ -663,7 +663,7 @@ def github_process_repos(repos_list):
     return list_of_repos
 
 
-# Function printing list of public repositories for Github user (-r)
+# Prints a list of public repositories for a GitHub user (-r)
 def github_print_repos(user):
     user_name_str = user
     user_url = "-"
@@ -699,17 +699,9 @@ def github_print_repos(user):
 
     try:
         if repos_list:
-            print("─" * 80)
+            print("─" * HORIZONTAL_LINE2)
             for repo in repos_list:
                 print(f"🔸 {repo.name} {'(fork)' if repo.fork else ''} \n")
-
-                # approach below is the most accurate, but is very slow
-
-                # issues = list(repo.get_issues(state='open'))
-                # pulls = list(repo.get_pulls(state='open'))
-                # real_issues = [i for i in issues if not i.pull_request]
-                # pr_count = len(pulls)
-                # issue_count = len(real_issues)
 
                 try:
                     pr_count = repo.get_pulls(state='open').totalCount
@@ -719,11 +711,11 @@ def github_print_repos(user):
                     issue_count = "?"
 
                 print(f" - 🌐 URL:\t\t{repo.html_url}")
-                print(f" - 🧑‍💻 Language:\t\t{repo.language}")
+                print(f" - 💻 Language:\t\t{repo.language}")
 
                 print(f"\n - ⭐ Stars:\t\t{repo.stargazers_count}")
                 print(f" - 🍴 Forks:\t\t{repo.forks_count}")
-                print(f" - 👁  Watchers:\t\t{repo.subscribers_count}")
+                print(f" - 👓 Watchers:\t\t{repo.subscribers_count}")
 
                 # print(f" - 🐞 Issues+PRs:\t{repo.open_issues_count}")
                 print(f" - 🐞 Issues:\t\t{issue_count}")
@@ -738,14 +730,14 @@ def github_print_repos(user):
 
                 if repo.description:
                     print(f"\n - 📝 Desc:\t\t{repo.description}")
-                print("─" * 80)
+                print("─" * HORIZONTAL_LINE2)
     except Exception as e:
         raise RuntimeError(f"Cannot fetch user's repositories list - {e}")
 
     g.close()
 
 
-# Function printing list of starred repositories by Github user (-g)
+# Prints a list of starred repositories by a GitHub user (-g)
 def github_print_starred_repos(user):
     user_name_str = user
     user_url = "-"
@@ -792,7 +784,7 @@ def github_print_starred_repos(user):
     g.close()
 
 
-# Function returning size in human readable format
+# Returns size in human readable format
 def human_readable_size(num):
     value = float(num)
     for unit in ["B", "KB", "MB", "GB", "TB", "PB"]:
@@ -802,7 +794,7 @@ def human_readable_size(num):
     return f"{value:.1f} PB"
 
 
-# Function printing details about passed GitHub event
+# Prints details about passed GitHub event
 def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
     event_date: datetime | None = None
@@ -859,7 +851,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         st += print_v(f"\nNumber of commits:\t\t{commits_total}")
         for commit_count, commit in enumerate(commits, start=1):
             st += print_v(f"\n=== Commit {commit_count}/{commits_total} ===")
-            st += print_v("." * 105)
+            st += print_v("." * HORIZONTAL_LINE1)
 
             commit_details = None
             if repo:
@@ -894,7 +886,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                         st += print_v(f"     • '{f.filename}' — {f.status} (+{f.additions} / -{f.deletions})")
 
             st += print_v(f"\n - Commit message:\t\t'{commit['message']}'")
-            st += print_v("." * 105)
+            st += print_v("." * HORIZONTAL_LINE1)
 
     if event.payload.get("commits") == []:
         st += print_v("\nNo new commits (forced push, tag push, branch reset or other ref update)")
@@ -930,7 +922,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         pr = repo.get_pull(pr_number)
 
         st += print_v(f"\n=== PR #{pr.number}: {pr.title} ===")
-        st += print_v("." * 105)
+        st += print_v("." * HORIZONTAL_LINE1)
 
         st += print_v(f"Author:\t\t\t\t{pr.user.login}")
         st += print_v(f"State:\t\t\t\t{pr.state}")
@@ -970,7 +962,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             for assignee in pr.assignees:
                 st += print_v(f"\nAssignee:\t\t\t{assignee.login} ({assignee.html_url})")
 
-        st += print_v("." * 105)
+        st += print_v("." * HORIZONTAL_LINE1)
 
     if event.payload.get("review"):
         review_date = event.payload["review"].get("submitted_at")
@@ -1111,7 +1103,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     return event_date, repo_name, repo_url, st
 
 
-# Function listing recent events for the user (-l) and potentially dumping the entries to CSV file (if -b is used)
+# Lists recent events for the user (-l) and potentially dumps the entries to CSV file (if -b is used)
 def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
     events = []
     available_events = 0
@@ -1161,7 +1153,7 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
         print(f"CSV export enabled:\t\t{csv_enabled} ({csv_file_name})")
     print(f"Local timezone:\t\t\t{LOCAL_TIMEZONE}")
     print(f"Available events:\t\t{total_available}")
-    print("─" * 105)
+    print("─" * HORIZONTAL_LINE1)
 
     if available_events == 0:
         print("There are no events yet")
@@ -1190,7 +1182,7 @@ def github_list_events(user, number, csv_file_name, csv_enabled, csv_exists):
             print(f"Cannot fetch events - {e}")
 
 
-# Function detecting and reporting changes in a user's profile-level entities (followers, followings, public repos, starred repos)
+# Detects and reports changes in a user's profile-level entities (followers, followings, public repos, starred repos)
 def handle_profile_change(label, count_old, count_new, list_old, raw_list, user, csv_file_name, field):
     try:
         list_new = []
@@ -1281,7 +1273,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
     return list_new, new_count
 
 
-# Function detecting and reporting changes in repository-level entities (like stargazers, watchers, forks, issues, pull requests)
+# Detects and reports changes in repository-level entities (like stargazers, watchers, forks, issues, pull requests)
 def check_repo_list_changes(count_old, count_new, list_old, list_new, label, repo_name, repo_url, user, csv_file_name):
     if not list_new and count_new > 0:
         return
@@ -1366,7 +1358,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     print_cur_ts("Timestamp:\t\t\t")
 
 
-# Main function monitoring activity of the specified GitHub user
+# Main function that monitors activity of the specified GitHub user
 def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
     try:
@@ -1485,8 +1477,8 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
     if blog:
         print(f"Blog URL:\t\t\t{blog}")
 
-    print(f"\nAccount creation date:\t\t{get_date_from_ts(account_created_date)} ({calculate_timespan(int(time.time()), account_created_date, granularity=2)} ago)")
-    print(f"Account updated date:\t\t{get_date_from_ts(account_updated_date)} ({calculate_timespan(int(time.time()), account_updated_date, granularity=2)} ago)")
+    print(f"\nAccount creation date:\t\t{get_date_from_ts(account_created_date)} ({calculate_timespan(int(time.time()), account_created_date, show_seconds=False)} ago)")
+    print(f"Account updated date:\t\t{get_date_from_ts(account_updated_date)} ({calculate_timespan(int(time.time()), account_updated_date, show_seconds=False)} ago)")
     account_updated_date_old = account_updated_date
 
     print(f"\nFollowers:\t\t\t{followers_count}")
@@ -1547,22 +1539,34 @@ def github_monitor_user(user, error_notification, csv_file_name, csv_exists):
 
     # main loop
     while True:
-        try:
-            g = Github(base_url=GITHUB_API_URL, auth=auth)
-            g_user = g.get_user(user)
 
+        try:
+            g_user = g.get_user(user)
             email_sent = False
 
-        except Exception as e:
+        except (GithubException, Exception) as e:
             print(f"Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)} - {e}")
-            if 'Bad credentials' in str(e) or 'Forbidden' in str(e) or 'Bad Request' in str(e):
-                print("* Session might not be valid anymore!")
-                if error_notification and not email_sent:
-                    m_subject = f"github_monitor: session error! (user: {user})"
-                    m_body = f"Session might not be valid anymore: {e}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
-                    print(f"Sending email notification to {RECEIVER_EMAIL}")
-                    send_email(m_subject, m_body, "", SMTP_SSL)
-                    email_sent = True
+
+            should_notify = False
+            reason_msg = None
+
+            if isinstance(e, BadCredentialsException):
+                reason_msg = "GitHub token might not be valid anymore (bad credentials error)!"
+            else:
+                matched = next((msg for msg in ["Forbidden", "Bad Request"] if msg in str(e)), None)
+                if matched:
+                    reason_msg = f"Session might not be valid ('{matched}' error)"
+
+            if reason_msg:
+                print(f"* {reason_msg}")
+                should_notify = True
+
+            if should_notify and error_notification and not email_sent:
+                m_subject = f"github_monitor: session error! (user: {user})"
+                m_body = f"{reason_msg}\n{e}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
+                print(f"Sending email notification to {RECEIVER_EMAIL}")
+                send_email(m_subject, m_body, "", SMTP_SSL)
+                email_sent = True
 
             print_cur_ts("Timestamp:\t\t\t")
             time.sleep(GITHUB_CHECK_INTERVAL)
