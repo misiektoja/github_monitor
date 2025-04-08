@@ -2,6 +2,25 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 1.8 (08 Apr 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Added monitoring of repository issues and PRs
+- **NEW:** Added support for additional GitHub event types (Member, Public, Discussion, Discussion Comment)
+- **NEW:** Added logic to fetch parent/previous comments for all new comments (issues, PRs, commits, etc.)
+- **NEW:** Detection of forced pushes, tag pushes, branch resets and other ref updates
+- **IMPROVE:** Extended event logging with more detailed information
+- **IMPROVE:** Enhanced visual output of the repository list with some nice emojis for better readability
+- **IMPROVE:** Display event number in event list output
+- **IMPROVE:** Refactored and cleaned up code to reduce redundant API requests
+- **IMPROVE:** Improved exception and error handling in several places
+- **IMPROVE:** Enhanced output formatting for readability
+
+**Bug fixes**:
+
+- **BUGFIX:** Fixed issue where manually defined LOCAL_TIMEZONE wasn't applied during timestamp conversion (fixes [#3](https://github.com/misiektoja/github_monitor/issues/3))
+
 # Changes in 1.7.1 (25 Mar 2025)
 
 **Features and Improvements**:
