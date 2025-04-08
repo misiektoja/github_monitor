@@ -187,7 +187,7 @@ If you want to display a list of public repositories (with some basic statistics
 ```
 
 <p align="center">
-   <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="70%"/>
+   <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="90%"/>
 </p>
 
 If you want to display a list of repositories starred by the user then use the **-g** parameter:
