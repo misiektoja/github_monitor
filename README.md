@@ -5,8 +5,8 @@ github_monitor is an OSINT tool that allows for real-time monitoring of GitHub u
 ## Features
 
 - Real-time tracking of GitHub users' activities, including profile and repository changes:
-   - new GitHub events for the user like new pushes, PRs, issues, forks, releases etc.
-   - repository changes such as updated stargazers, watchers, forks, description and repo update dates
+   - new GitHub events for the user like new pushes, PRs, issues, forks, releases, reviews etc.
+   - repository changes such as updated stargazers, watchers, forks, issues, PRs, description and repo update dates
    - added/removed followings and followers
    - added/removed starred repositories
    - added/removed public repositories
@@ -28,7 +28,7 @@ Release notes can be found [here](RELEASE_NOTES.md)
 
 ## Requirements
 
-The tool requires Python 3.x.
+The tool requires Python 3.10 or higher.
 
 It uses [PyGithub](https://github.com/PyGithub/PyGithub) library, also requires requests, python-dateutil, tzlocal and pytz.
 
