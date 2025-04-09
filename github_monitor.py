@@ -1912,7 +1912,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
 
             try:
                 if csv_file_name:
-                    write_csv_entry(csv_file_name, now_local_naive(), "Account Update Date", user, convert_to_local_naive(account_updated_date_old), convert_to_local_naive(account_updated_date))
+                    write_csv_entry(csv_file_name, convert_to_local_naive(account_updated_date), "Account Update Date", user, convert_to_local_naive(account_updated_date_old), convert_to_local_naive(account_updated_date))
             except Exception as e:
                 print(f"* Error: {e}")
 
@@ -2392,6 +2392,7 @@ if __name__ == "__main__":
     print(f"* Monitor Github events:\t{not do_not_monitor_github_events}")
     print(f"* Output logging enabled:\t{not args.disable_logging}" + (f" ({GITHUB_LOGFILE})" if not args.disable_logging else ""))
     print(f"* CSV logging enabled:\t\t{bool(args.csv_file)}" + (f" ({args.csv_file})" if args.csv_file else ""))
+    print(f"* Local timezone:\t\t{LOCAL_TIMEZONE}")
 
     out = f"\nMonitoring Github user {args.username}"
     print(out)
