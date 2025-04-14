@@ -1733,6 +1733,7 @@ def github_monitor_user(user, csv_file_name):
         g_user_myself = g.get_user()
         user_myself_login = g_user_myself.login
         user_myself_name = g_user_myself.name
+        user_myself_url = g_user_myself.html_url
 
         g_user = g.get_user(user)
         user_login = g_user.login
@@ -1803,7 +1804,7 @@ def github_monitor_user(user, csv_file_name):
     if user_myself_name:
         user_myself_name_str += f" ({user_myself_name})"
 
-    print(f"Token belongs to:\t\t{user_myself_name_str}")
+    print(f"Token belongs to:\t\t{user_myself_name_str}" + f"\n\t\t\t\t[ {user_myself_url} ]" if user_myself_url else "")
 
     user_name_str = user_login
     if user_name:
