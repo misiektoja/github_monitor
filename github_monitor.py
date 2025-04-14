@@ -77,7 +77,9 @@ EVENTS_TO_MONITOR = [
 ]
 
 # Number of recent events to fetch when a change in the last event ID is detected
-EVENTS_NUMBER = 15
+# Note: if more than EVENTS_NUMBER events occur between two checks,
+# any events older than the most recent EVENTS_NUMBER will be missed
+EVENTS_NUMBER = 30  # 1 page
 
 # How often to print an "alive check" message to the output; in seconds
 TOOL_ALIVE_INTERVAL = 21600  # 6 hours
@@ -419,7 +421,7 @@ def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new
             csvwriter = csv.DictWriter(csv_file, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
             csvwriter.writerow({'Date': timestamp, 'Type': object_type, 'Name': object_name, 'Old': old, 'New': new})
 
-    except Exception:
+    except Exception as e:
         raise RuntimeError(f"Failed to write to CSV file '{csv_file_name}': {e}")
 
 
@@ -2055,9 +2057,6 @@ def github_monitor_user(user, error_notification, csv_file_name):
                         events_list_of_ids.add(event.id)
 
                         if event.id in events_list_of_ids_old:
-                            continue
-
-                        if last_event_ts_old and event.created_at <= last_event_ts_old:
                             continue
 
                         if event.type in EVENTS_TO_MONITOR or 'ALL' in EVENTS_TO_MONITOR:
