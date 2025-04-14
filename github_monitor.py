@@ -10,9 +10,10 @@ Python pip3 requirements:
 
 PyGithub
 pytz
-tzlocal
 python-dateutil
 requests
+tzlocal (optional)
+python-dotenv (optional)
 """
 
 VERSION = "1.9"
@@ -21,19 +22,36 @@ VERSION = "1.9"
 # CONFIGURATION SECTION START
 # ---------------------------
 
+CONFIG_BLOCK = """
+# Get your Github personal access token (classic) by visiting:
+# https://github.com/settings/apps
+#
+# Then go to: Personal access tokens -> Tokens (classic) -> Generate new token (classic)
+#
+# Provide the GITHUB_TOKEN secret using one of the following methods:
+#   - Pass it at runtime with -t / --github-token
+#   - Set it as an environment variable (e.g. export GITHUB_TOKEN=...)
+#   - Add it to ".env" file (GITHUB_TOKEN=...) for persistent use
+# Fallback:
+#   - Hard-code it in the code or config file
+GITHUB_TOKEN = "your_github_classic_personal_access_token"
+
 # The URL of the Github API
+#
 # For Public Web Github use the default: https://api.github.com
 # For Github Enterprise change to: https://{your_hostname}/api/v3
+#
 # Can also be set using the -x parameter
 GITHUB_API_URL = "https://api.github.com"
 
-# Get your Github personal access token (classic) by visiting: https://github.com/settings/apps
-# Then go to: Personal access tokens -> Tokens (classic) -> Generate new token (classic)
-# Paste the token below or provide it using the -t parameter
-GITHUB_TOKEN = "your_github_classic_personal_access_token"
-
 # SMTP settings for sending email notifications
 # If left as-is, no notifications will be sent
+#
+# Provide the SMTP_PASSWORD secret using one of the following methods:
+#   - Set it as an environment variable (e.g. export SMTP_PASSWORD=...)
+#   - Add it to ".env" file (SMTP_PASSWORD=...) for persistent use
+# Fallback:
+#   - Hard-code it in the code or config file
 SMTP_HOST = "your_smtp_server_ssl"
 SMTP_PORT = 587
 SMTP_USER = "your_smtp_user"
@@ -42,14 +60,34 @@ SMTP_SSL = True
 SENDER_EMAIL = "your_sender_email"
 RECEIVER_EMAIL = "your_receiver_email"
 
+# Whether to send an email when user's profile changes
+# Can also be enabled via the -p parameter
+PROFILE_NOTIFICATION = False
+
+# Whether to send an email when new GitHub events appear
+# Can also be enabled via the -s parameter
+EVENT_NOTIFICATION = False
+
+# Whether to send an email when user's repositories change (stargazers, watchers, forks, issues, PRs, description etc., except for update date)
+# Can also be enabled via the -q parameter
+REPO_NOTIFICATION = False
+
+# Whether to send an email when user's repositories update date changes
+# Can also be enabled via the -u parameter
+REPO_UPDATE_DATE_NOTIFICATION = False
+
+# Whether to send an email on errors
+# Can also be disabled via the -e parameter
+ERROR_NOTIFICATION = True
+
 # How often to check for user profile changes / activities; in seconds
 # Can also be set using the -c parameter
 GITHUB_CHECK_INTERVAL = 1800  # 30 mins
 
-# Set your local time zone so that Github API timestamps are converted accordingly (e.g. 'Europe/Warsaw').
+# Set your local time zone so that Github API timestamps are converted accordingly (e.g. 'Europe/Warsaw')
 # Use this command to list all time zones supported by pytz:
-# python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
-# If set to 'Auto', the tool will try to detect your local time zone automatically
+#   python3 -c "import pytz; print('\\n'.join(pytz.all_timezones))"
+# If set to 'Auto', the tool will try to detect your local time zone automatically (requires tzlocal)
 LOCAL_TIMEZONE = 'Auto'
 
 # Events to monitor
@@ -81,8 +119,9 @@ EVENTS_TO_MONITOR = [
 # any events older than the most recent EVENTS_NUMBER will be missed
 EVENTS_NUMBER = 30  # 1 page
 
-# How often to print an "alive check" message to the output; in seconds
-TOOL_ALIVE_INTERVAL = 21600  # 6 hours
+# How often to print a "liveness check" message to the output; in seconds
+# Set to 0 to disable
+LIVENESS_CHECK_INTERVAL = 43200  # 12 hours
 
 # URL used to verify internet connectivity at startup
 CHECK_INTERNET_URL = GITHUB_API_URL
@@ -90,18 +129,22 @@ CHECK_INTERNET_URL = GITHUB_API_URL
 # Timeout used when checking initial internet connectivity; in seconds
 CHECK_INTERNET_TIMEOUT = 5
 
-# Base name of the log file. The tool will save its output to github_monitor_{username}.log file
+# CSV file to write new events & profile changes
+# Can also be set using the -b parameter
+CSV_FILE = ""
+
+# Location of the optional dotenv file which can keep secrets
+# If not specified it will try to auto-search for .env files
+# To disable auto-search, set this to the literal string "none"
+# Can also be set using the --env-file parameter
+DOTENV_FILE = ""
+
+# Base name of the log file. The tool will save its output to github_monitor_<username>.log file
 GITHUB_LOGFILE = "github_monitor"
 
-# Value used by signal handlers to increase/decrease profile/user activity check (GITHUB_CHECK_INTERVAL); in seconds
-GITHUB_CHECK_SIGNAL_VALUE = 60  # 1 minute
-
-# Whether to clear the terminal screen after starting the tool
-CLEAR_SCREEN = True
-
-# -------------------------
-# CONFIGURATION SECTION END
-# -------------------------
+# Whether to disable logging to github_monitor_<username>.log
+# Can also be disabled via the -d parameter
+DISABLE_LOGGING = False
 
 # Width of main horizontal line (─)
 HORIZONTAL_LINE1 = 105
@@ -109,22 +152,74 @@ HORIZONTAL_LINE1 = 105
 # Width of horizontal line for repositories list output (─)
 HORIZONTAL_LINE2 = 80
 
+# Whether to clear the terminal screen after starting the tool
+CLEAR_SCREEN = True
+
 # Maximum number of times to retry a failed GitHub API/network call
 NET_MAX_RETRIES = 5
 
 # Base number of seconds to wait before each retry, multiplied by the attempt count
 NET_BASE_BACKOFF_SEC = 5
 
-TOOL_ALIVE_COUNTER = TOOL_ALIVE_INTERVAL / GITHUB_CHECK_INTERVAL
+# Value used by signal handlers to increase/decrease profile/user activity check (GITHUB_CHECK_INTERVAL); in seconds
+GITHUB_CHECK_SIGNAL_VALUE = 60  # 1 minute
+"""
+
+# -------------------------
+# CONFIGURATION SECTION END
+# -------------------------
+
+# Default dummy values so linters shut up
+# Do not change values below - modify them in the configuration section or config file instead
+GITHUB_TOKEN = ""
+GITHUB_API_URL = ""
+SMTP_HOST = ""
+SMTP_PORT = 0
+SMTP_USER = ""
+SMTP_PASSWORD = ""
+SMTP_SSL = False
+SENDER_EMAIL = ""
+RECEIVER_EMAIL = ""
+PROFILE_NOTIFICATION = False
+EVENT_NOTIFICATION = False
+REPO_NOTIFICATION = False
+REPO_UPDATE_DATE_NOTIFICATION = False
+ERROR_NOTIFICATION = False
+GITHUB_CHECK_INTERVAL = 0
+LOCAL_TIMEZONE = ""
+EVENTS_TO_MONITOR = []
+EVENTS_NUMBER = 0
+LIVENESS_CHECK_INTERVAL = 0
+CHECK_INTERNET_URL = ""
+CHECK_INTERNET_TIMEOUT = 0
+CSV_FILE = ""
+DOTENV_FILE = ""
+GITHUB_LOGFILE = ""
+DISABLE_LOGGING = False
+HORIZONTAL_LINE1 = 0
+HORIZONTAL_LINE2 = 0
+CLEAR_SCREEN = False
+NET_MAX_RETRIES = 0
+NET_BASE_BACKOFF_SEC = 0
+GITHUB_CHECK_SIGNAL_VALUE = 0
+
+exec(CONFIG_BLOCK, globals())
+
+# Default name for the optional config file
+DEFAULT_CONFIG_FILENAME = "github_monitor.conf"
+
+# List of secret keys to load from env/config
+SECRET_KEYS = ("GITHUB_TOKEN", "SMTP_PASSWORD")
+
+LIVENESS_CHECK_COUNTER = LIVENESS_CHECK_INTERVAL / GITHUB_CHECK_INTERVAL
 
 stdout_bck = None
 csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
 
-event_notification = False
-profile_notification = False
-repo_notification = False
-repo_update_date_notification = False
-track_repos_changes = False
+TRACK_REPOS_CHANGES = False
+DO_NOT_MONITOR_GITHUB_EVENTS = False
+
+CLI_CONFIG_PATH = None
 
 # to solve the issue: 'SyntaxError: f-string expression part cannot include a backslash'
 nl_ch = "\n"
@@ -152,7 +247,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import argparse
 import csv
-import pytz
+try:
+    import pytz
+except ModuleNotFoundError:
+    raise SystemExit("Error: Couldn't find the pytz library !\n\nTo install it, run:\n    pip3 install pytz\n\nOnce installed, re-run this tool")
 try:
     from tzlocal import get_localzone
 except ImportError:
@@ -160,13 +258,18 @@ except ImportError:
 import platform
 import re
 import ipaddress
-from github import Github, Auth, GithubException, UnknownObjectException
-from github.GithubException import BadCredentialsException
+try:
+    from github import Github, Auth, GithubException, UnknownObjectException
+    from github.GithubException import BadCredentialsException
+except ModuleNotFoundError:
+    raise SystemExit("Error: Couldn't find the PyGitHub library !\n\nTo install it, run:\n    pip3 install PyGithub\n\nOnce installed, re-run this tool. For more help, visit:\nhttps://github.com/PyGithub/PyGithub")
 from itertools import islice
 import textwrap
 import urllib3
 import socket
 from typing import Any, Callable
+import shutil
+from pathlib import Path
 
 
 NET_ERRORS = (
@@ -544,41 +647,41 @@ def print_v(text=""):
 
 # Signal handler for SIGUSR1 allowing to switch email notifications for user's profile changes
 def toggle_profile_changes_notifications_signal_handler(sig, frame):
-    global profile_notification
-    profile_notification = not profile_notification
+    global PROFILE_NOTIFICATION
+    PROFILE_NOTIFICATION = not PROFILE_NOTIFICATION
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Email notifications: [profile changes = {profile_notification}]")
+    print(f"* Email notifications: [profile changes = {PROFILE_NOTIFICATION}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
 # Signal handler for SIGUSR2 allowing to switch email notifications for user's new events
 def toggle_new_events_notifications_signal_handler(sig, frame):
-    global event_notification
-    event_notification = not event_notification
+    global EVENT_NOTIFICATION
+    EVENT_NOTIFICATION = not EVENT_NOTIFICATION
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Email notifications: [new events = {event_notification}]")
+    print(f"* Email notifications: [new events = {EVENT_NOTIFICATION}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
 # Signal handler for SIGCONT allowing to switch email notifications for user's repositories changes (except for update date)
 def toggle_repo_changes_notifications_signal_handler(sig, frame):
-    global repo_notification
-    repo_notification = not repo_notification
+    global REPO_NOTIFICATION
+    REPO_NOTIFICATION = not REPO_NOTIFICATION
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Email notifications: [repos changes = {repo_notification}]")
+    print(f"* Email notifications: [repos changes = {REPO_NOTIFICATION}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
 # Signal handler for SIGPIPE allowing to switch email notifications for user's repositories update date changes
 def toggle_repo_update_date_changes_notifications_signal_handler(sig, frame):
-    global repo_update_date_notification
-    repo_update_date_notification = not repo_update_date_notification
+    global REPO_UPDATE_DATE_NOTIFICATION
+    REPO_UPDATE_DATE_NOTIFICATION = not REPO_UPDATE_DATE_NOTIFICATION
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Email notifications: [repos update date = {repo_update_date_notification}]")
+    print(f"* Email notifications: [repos update date = {REPO_UPDATE_DATE_NOTIFICATION}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -600,6 +703,41 @@ def decrease_check_signal_handler(sig, frame):
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
     print(f"* Github timers: [check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
+    print_cur_ts("Timestamp:\t\t\t")
+
+
+# Signal handler for SIGHUP allowing to reload secrets from .env
+def reload_secrets_signal_handler(sig, frame):
+    sig_name = signal.Signals(sig).name
+    print(f"* Signal {sig_name} received")
+
+    # disable autoscan if DOTENV_FILE set to none
+    if DOTENV_FILE and DOTENV_FILE.lower() == 'none':
+        env_path = None
+    else:
+        # reload .env if python-dotenv is installed
+        try:
+            from dotenv import load_dotenv, find_dotenv
+            if DOTENV_FILE:
+                env_path = DOTENV_FILE
+            else:
+                env_path = find_dotenv()
+            if env_path:
+                load_dotenv(env_path, override=True)
+            else:
+                print("* No .env file found, skipping env-var reload")
+        except ImportError:
+            env_path = None
+            print("* python-dotenv not installed, skipping env-var reload")
+
+    if env_path:
+        for secret in SECRET_KEYS:
+            old_val = globals().get(secret)
+            val = os.getenv(secret)
+            if val is not None and val != old_val:
+                globals()[secret] = val
+                print(f"* Reloaded {secret} from {env_path}")
+
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -859,6 +997,7 @@ def human_readable_size(num):
     return f"{value:.1f} PB"
 
 
+# Formats the given string as a quoted, indented block
 def format_body_block(content, indent="    "):
     new_content = f"'{content}'"
     indented = textwrap.indent(new_content.strip(), indent)
@@ -954,7 +1093,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                 if file_count:
                     st += print_v(f" - Changed files list:")
                     for f in commit_details.files:
-                        st += print_v(f"     • '{f.filename}' — {f.status} (+{f.additions} / -{f.deletions})")
+                        st += print_v(f"     • '{f.filename}' - {f.status} (+{f.additions} / -{f.deletions})")
 
             st += print_v(f"\n - Commit message:\t\t'{commit['message']}'")
             st += print_v("." * HORIZONTAL_LINE1)
@@ -1439,7 +1578,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
                   f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
 
-    if profile_notification:
+    if PROFILE_NOTIFICATION:
         print(f"Sending email notification to {RECEIVER_EMAIL}")
         send_email(m_subject, m_body, "", SMTP_SSL)
 
@@ -1526,14 +1665,52 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                   f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
 
-    if repo_notification:
+    if REPO_NOTIFICATION:
         print(f"Sending email notification to {RECEIVER_EMAIL}")
         send_email(m_subject, m_body, "", SMTP_SSL)
     print_cur_ts("Timestamp:\t\t\t")
 
 
+# Finds an optional config file
+def find_config_file(cli_path=None):
+    """
+    Search for an optional config file in:
+      1) CLI-provided path (must exist if given)
+      2) ./{DEFAULT_CONFIG_FILENAME}
+      3) ~/.{DEFAULT_CONFIG_FILENAME}
+      4) script-directory/{DEFAULT_CONFIG_FILENAME}
+    """
+
+    if cli_path:
+        p = Path(os.path.expanduser(cli_path))
+        return str(p) if p.is_file() else None
+
+    candidates = [
+        Path.cwd() / DEFAULT_CONFIG_FILENAME,
+        Path.home() / f".{DEFAULT_CONFIG_FILENAME}",
+        Path(__file__).parent / DEFAULT_CONFIG_FILENAME,
+    ]
+
+    for p in candidates:
+        if p.is_file():
+            return str(p)
+    return None
+
+
+# Resolves an executable path by checking if it's a valid file or searching in $PATH
+def resolve_executable(path):
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+        return path
+
+    found = shutil.which(path)
+    if found:
+        return found
+
+    raise FileNotFoundError(f"Could not find executable '{path}'")
+
+
 # Main function that monitors activity of the specified GitHub user
-def github_monitor_user(user, error_notification, csv_file_name):
+def github_monitor_user(user, csv_file_name):
 
     try:
         if csv_file_name:
@@ -1580,7 +1757,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
         starred_list = g_user.get_starred()
         starred_count = starred_list.totalCount
 
-        if not do_not_monitor_github_events:
+        if not DO_NOT_MONITOR_GITHUB_EVENTS:
             events = list(islice(g_user.get_events(), EVENTS_NUMBER))
             available_events = len(events)
 
@@ -1592,7 +1769,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
     last_event_ts: datetime | None = None
     events_list_of_ids = set()
 
-    if not do_not_monitor_github_events:
+    if not DO_NOT_MONITOR_GITHUB_EVENTS:
         if available_events:
             try:
                 for event in reversed(events):
@@ -1655,7 +1832,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
     print(f"Followings:\t\t\t{followings_count}")
     print(f"Repositories:\t\t\t{repos_count}")
     print(f"Starred repos:\t\t\t{starred_count}")
-    if not do_not_monitor_github_events:
+    if not DO_NOT_MONITOR_GITHUB_EVENTS:
         print(f"Available events:\t\t{available_events}{'+' if available_events == EVENTS_NUMBER else ''}")
 
     if bio:
@@ -1664,7 +1841,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
     print_cur_ts("\nTimestamp:\t\t\t")
 
     list_of_repos = []
-    if repos_list and track_repos_changes:
+    if repos_list and TRACK_REPOS_CHANGES:
         print("Processing list of public repositories (be patient, it might take a while) ...")
         try:
             list_of_repos = github_process_repos(repos_list)
@@ -1674,7 +1851,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
 
     list_of_repos_old = list_of_repos
 
-    if not do_not_monitor_github_events:
+    if not DO_NOT_MONITOR_GITHUB_EVENTS:
         print(f"Latest event:\n")
 
         if available_events == 0:
@@ -1731,7 +1908,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                 print(f"* {reason_msg}")
                 should_notify = True
 
-            if should_notify and error_notification and not email_sent:
+            if should_notify and ERROR_NOTIFICATION and not email_sent:
                 m_subject = f"github_monitor: session error! (user: {user})"
                 m_body = f"{reason_msg}\n{e}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -1783,7 +1960,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             m_subject = f"Github user {user} bio has changed!"
             m_body = f"Github user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
-            if profile_notification:
+            if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
@@ -1806,7 +1983,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             m_subject = f"Github user {user} location has changed!"
             m_body = f"Github user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
-            if profile_notification:
+            if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
@@ -1829,7 +2006,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             m_subject = f"Github user {user} name has changed!"
             m_body = f"Github user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
-            if profile_notification:
+            if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
@@ -1852,7 +2029,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             m_subject = f"Github user {user} company has changed!"
             m_body = f"Github user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
-            if profile_notification:
+            if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
@@ -1875,7 +2052,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             m_subject = f"Github user {user} email has changed!"
             m_body = f"Github user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
-            if profile_notification:
+            if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
@@ -1898,7 +2075,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             m_subject = f"Github user {user} blog URL has changed!"
             m_body = f"Github user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
-            if profile_notification:
+            if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
@@ -1921,7 +2098,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
             m_subject = f"Github user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
             m_body = f"Github user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
-            if profile_notification:
+            if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
@@ -1931,7 +2108,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
         list_of_repos = []
 
         # Changed repos details
-        if track_repos_changes:
+        if TRACK_REPOS_CHANGES:
             repos_list = gh_call(g_user.get_repos)()
             if repos_list is not None:
                 try:
@@ -1988,7 +2165,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                                         print(f"* Error: {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                    if repo_update_date_notification:
+                                    if REPO_UPDATE_DATE_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, "", SMTP_SSL)
                                     print_cur_ts("Timestamp:\t\t\t")
@@ -2019,7 +2196,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                                         print(f"* Error: {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' description has changed !"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                    if repo_notification:
+                                    if REPO_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, "", SMTP_SSL)
                                     print_cur_ts("Timestamp:\t\t\t")
@@ -2027,7 +2204,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                     list_of_repos_old = list_of_repos
 
         # New Github events
-        if not do_not_monitor_github_events:
+        if not DO_NOT_MONITOR_GITHUB_EVENTS:
             events = list(gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)))())
             if events is not None:
                 available_events = len(events)
@@ -2084,7 +2261,7 @@ def github_monitor_user(user, error_notification, csv_file_name):
                                 m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
                                 m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
 
-                                if event_notification:
+                                if EVENT_NOTIFICATION:
                                     print(f"\nSending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
 
@@ -2096,8 +2273,8 @@ def github_monitor_user(user, error_notification, csv_file_name):
 
         alive_counter += 1
 
-        if alive_counter >= TOOL_ALIVE_COUNTER:
-            print_cur_ts("Alive check, timestamp: ")
+        if LIVENESS_CHECK_COUNTER and alive_counter >= LIVENESS_CHECK_COUNTER:
+            print_cur_ts("Liveness check, timestamp: ")
             alive_counter = 0
 
         g.close()
@@ -2105,7 +2282,16 @@ def github_monitor_user(user, error_notification, csv_file_name):
         time.sleep(GITHUB_CHECK_INTERVAL)
 
 
-if __name__ == "__main__":
+def main():
+    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES
+
+    if "--generate-config" in sys.argv:
+        print(CONFIG_BLOCK.strip("\n"))
+        sys.exit(0)
+
+    if "--version" in sys.argv:
+        print(f"{os.path.basename(sys.argv[0])} v{VERSION}")
+        sys.exit(0)
 
     stdout_bck = sys.stdout
 
@@ -2118,7 +2304,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         prog="github_monitor",
-        description="Monitor a GitHub user’s profile and activity with customizable email alerts [ https://github.com/misiektoja/github_monitor/ ]"
+        description=("Monitor a GitHub user's profile and activity with customizable email alerts [ https://github.com/misiektoja/github_monitor/ ]"), formatter_class=argparse.RawTextHelpFormatter
     )
 
     # Positional
@@ -2128,6 +2314,33 @@ if __name__ == "__main__":
         metavar="GITHUB_USERNAME",
         help="GitHub username",
         type=str
+    )
+
+    # Version, just to list in help, it is handled earlier
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s v{VERSION}"
+    )
+
+    # Configuration & dotenv files
+    conf = parser.add_argument_group("Configuration & dotenv files")
+    conf.add_argument(
+        "--config-file",
+        dest="config_file",
+        metavar="PATH",
+        help="Location of the optional config file",
+    )
+    conf.add_argument(
+        "--generate-config",
+        action="store_true",
+        help="Print default config template and exit",
+    )
+    conf.add_argument(
+        "--env-file",
+        dest="env_file",
+        metavar="PATH",
+        help="Path to optional dotenv file (auto-search if not set, disable with 'none')",
     )
 
     # API settings
@@ -2153,34 +2366,39 @@ if __name__ == "__main__":
         "-p", "--notify-profile",
         dest="notify_profile",
         action="store_true",
-        help="Email when user’s profile changes"
+        default=None,
+        help="Email when user's profile changes"
     )
     notify.add_argument(
         "-s", "--notify-events",
         dest="notify_events",
         action="store_true",
+        default=None,
         help="Email when new GitHub events appear"
     )
     notify.add_argument(
         "-q", "--notify-repo-changes",
         dest="notify_repo_changes",
         action="store_true",
-        help="Email when user’s repositories change (stargazers, watchers, forks, issues, PRs, description etc., except for update date)"
+        default=None,
+        help="Email when user's repositories change (stargazers, watchers, forks, issues, PRs, description etc., except for update date)"
     )
     notify.add_argument(
         "-u", "--notify-repo-update-date",
         dest="notify_repo_update_date",
         action="store_true",
-        help="Email when user’s repositories update date changes"
+        default=None,
+        help="Email when user's repositories update date changes"
     )
     notify.add_argument(
         "-e", "--no-error-notify",
         dest="notify_errors",
         action="store_false",
+        default=None,
         help="Disable email on errors"
     )
     notify.add_argument(
-        "-z", "--send-test-email",
+        "--send-test-email",
         dest="send_test_email",
         action="store_true",
         help="Send test email to verify SMTP settings"
@@ -2202,24 +2420,28 @@ if __name__ == "__main__":
         "-r", "--list-repos",
         dest="list_repos",
         action="store_true",
-        help="List user’s repositories with stats"
+        default=None,
+        help="List user's repositories with stats"
     )
     listing.add_argument(
         "-g", "--list-starred-repos",
         dest="list_starred_repos",
         action="store_true",
-        help="List user’s starred repositories"
+        default=None,
+        help="List user's starred repositories"
     )
     listing.add_argument(
         "-f", "--list-followers-followings",
         dest="list_followers_and_followings",
         action="store_true",
-        help="List user’s followers & followings"
+        default=None,
+        help="List user's followers & followings"
     )
     listing.add_argument(
         "-l", "--list-recent-events",
         dest="list_recent_events",
         action="store_true",
+        default=None,
         help="List user's recent GitHub events"
     )
     listing.add_argument(
@@ -2236,12 +2458,14 @@ if __name__ == "__main__":
         "-j", "--track-repos-changes",
         dest="track_repos_changes",
         action="store_true",
+        default=None,
         help="Track user's repository changes (changed stargazers, watchers, forks, description, update date etc.)"
     )
     opts.add_argument(
         "-k", "--no-monitor-events",
         dest="no_monitor_events",
         action="store_true",
+        default=None,
         help="Disable event monitoring"
     )
     opts.add_argument(
@@ -2255,7 +2479,8 @@ if __name__ == "__main__":
         "-d", "--disable-logging",
         dest="disable_logging",
         action="store_true",
-        help="Disable logging to github_monitor_<user>.log"
+        default=None,
+        help="Disable logging to github_monitor_<username>.log"
     )
 
     args = parser.parse_args()
@@ -2263,6 +2488,56 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         sys.exit(1)
+
+    if args.config_file:
+        CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
+
+    cfg_path = find_config_file(CLI_CONFIG_PATH)
+
+    if not cfg_path and CLI_CONFIG_PATH:
+        print(f"* Error: Config file '{CLI_CONFIG_PATH}' does not exist")
+        sys.exit(1)
+
+    if cfg_path:
+        try:
+            with open(cfg_path, "r") as cf:
+                exec(cf.read(), globals())
+        except Exception as e:
+            print(f"* Error loading config file '{cfg_path}': {e}")
+            sys.exit(1)
+
+    if args.env_file:
+        DOTENV_FILE = os.path.expanduser(args.env_file)
+    else:
+        if DOTENV_FILE:
+            DOTENV_FILE = os.path.expanduser(DOTENV_FILE)
+
+    if DOTENV_FILE and DOTENV_FILE.lower() == 'none':
+        env_path = None
+    else:
+        try:
+            from dotenv import load_dotenv, find_dotenv
+
+            if DOTENV_FILE:
+                env_path = DOTENV_FILE
+                if not os.path.isfile(env_path):
+                    print(f"* Warning: dotenv file '{env_path}' does not exist\n")
+                else:
+                    load_dotenv(env_path, override=True)
+            else:
+                env_path = find_dotenv() or None
+                if env_path:
+                    load_dotenv(env_path, override=True)
+        except ImportError:
+            env_path = DOTENV_FILE if DOTENV_FILE else None
+            if env_path:
+                print(f"* Warning: Cannot load dotenv file '{env_path}' because 'python-dotenv' is not installed\n\nTo install it, run:\n    pip3 install python-dotenv\n\nOnce installed, re-run this tool\n")
+
+    if env_path:
+        for secret in SECRET_KEYS:
+            val = os.getenv(secret)
+            if val is not None:
+                globals()[secret] = val
 
     local_tz = None
     if LOCAL_TIMEZONE == "Auto":
@@ -2336,14 +2611,20 @@ if __name__ == "__main__":
 
     if args.check_interval:
         GITHUB_CHECK_INTERVAL = args.check_interval
-        TOOL_ALIVE_COUNTER = TOOL_ALIVE_INTERVAL / GITHUB_CHECK_INTERVAL
+        LIVENESS_CHECK_COUNTER = LIVENESS_CHECK_INTERVAL / GITHUB_CHECK_INTERVAL
 
     if args.csv_file:
+        CSV_FILE = os.path.expanduser(args.csv_file)
+    else:
+        if CSV_FILE:
+            CSV_FILE = os.path.expanduser(CSV_FILE)
+
+    if CSV_FILE:
         try:
-            with open(args.csv_file, 'a', newline='', buffering=1, encoding="utf-8") as _:
+            with open(CSV_FILE, 'a', newline='', buffering=1, encoding="utf-8") as _:
                 pass
         except Exception as e:
-            print(f"* Error, CSV file cannot be opened for writing: {e}")
+            print(f"* Error: CSV file cannot be opened for writing: {e}")
             sys.exit(1)
 
     if args.list_recent_events:
@@ -2352,45 +2633,72 @@ if __name__ == "__main__":
         else:
             events_n = 5
         try:
-            github_list_events(args.username, events_n, args.csv_file)
+            github_list_events(args.username, events_n, CSV_FILE)
         except Exception as e:
             print(f"* Error: {e}")
             sys.exit(1)
         sys.exit(0)
 
-    if not args.disable_logging:
-        GITHUB_LOGFILE = f"{GITHUB_LOGFILE}_{args.username}.log"
-        sys.stdout = Logger(GITHUB_LOGFILE)
+    if args.disable_logging is True:
+        DISABLE_LOGGING = True
 
-    event_notification = args.notify_events
-    profile_notification = args.notify_profile
-    repo_notification = args.notify_repo_changes
-    repo_update_date_notification = args.notify_repo_update_date
-    track_repos_changes = args.track_repos_changes
-    do_not_monitor_github_events = args.no_monitor_events
-    error_notification = args.notify_errors
+    if not DISABLE_LOGGING:
+        log_path = Path(os.path.expanduser(GITHUB_LOGFILE))
+        if log_path.is_dir():
+            raise SystemExit(f"* Error: GITHUB_LOGFILE '{log_path}' is a directory, expected a filename")
+        if log_path.suffix == "":
+            log_path = log_path.with_name(f"{log_path.name}_{args.username}.log")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        FINAL_LOG_PATH = str(log_path)
+        sys.stdout = Logger(FINAL_LOG_PATH)
+    else:
+        FINAL_LOG_PATH = None
 
-    if not track_repos_changes:
-        repo_notification = False
-        repo_update_date_notification = False
+    if args.notify_profile is True:
+        PROFILE_NOTIFICATION = True
 
-    if do_not_monitor_github_events:
-        event_notification = False
+    if args.notify_events is True:
+        EVENT_NOTIFICATION = True
 
-    if SMTP_HOST == "your_smtp_server_ssl" or SMTP_HOST == "your_smtp_server_plaintext":
-        event_notification = False
-        profile_notification = False
-        repo_notification = False
-        repo_update_date_notification = False
-        error_notification = False
+    if args.notify_repo_changes is True:
+        REPO_NOTIFICATION = True
 
-    print(f"* Github timers:\t\t[check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
-    print(f"* Email notifications:\t\t[profile changes = {profile_notification}] [new events = {event_notification}]\n*\t\t\t\t[repos changes = {repo_notification}] [repos update date = {repo_update_date_notification}]\n*\t\t\t\t[errors = {error_notification}]")
+    if args.notify_repo_update_date is True:
+        REPO_UPDATE_DATE_NOTIFICATION = True
+
+    if args.notify_errors is False:
+        ERROR_NOTIFICATION = False
+
+    if args.track_repos_changes is True:
+        TRACK_REPOS_CHANGES = True
+
+    if args.no_monitor_events is True:
+        DO_NOT_MONITOR_GITHUB_EVENTS = True
+
+    if not TRACK_REPOS_CHANGES:
+        REPO_NOTIFICATION = False
+        REPO_UPDATE_DATE_NOTIFICATION = False
+
+    if DO_NOT_MONITOR_GITHUB_EVENTS:
+        EVENT_NOTIFICATION = False
+
+    if SMTP_HOST.startswith("your_smtp_server_"):
+        EVENT_NOTIFICATION = False
+        PROFILE_NOTIFICATION = False
+        REPO_NOTIFICATION = False
+        REPO_UPDATE_DATE_NOTIFICATION = False
+        ERROR_NOTIFICATION = False
+
+    print(f"* Github polling interval:\t[ {display_time(GITHUB_CHECK_INTERVAL)} ]")
+    print(f"* Email notifications:\t\t[profile changes = {PROFILE_NOTIFICATION}] [new events = {EVENT_NOTIFICATION}]\n*\t\t\t\t[repos changes = {REPO_NOTIFICATION}] [repos update date = {REPO_UPDATE_DATE_NOTIFICATION}]\n*\t\t\t\t[errors = {ERROR_NOTIFICATION}]")
     print(f"* Github API URL:\t\t{GITHUB_API_URL}")
-    print(f"* Track repos changes:\t\t{track_repos_changes}")
-    print(f"* Monitor Github events:\t{not do_not_monitor_github_events}")
-    print(f"* Output logging enabled:\t{not args.disable_logging}" + (f" ({GITHUB_LOGFILE})" if not args.disable_logging else ""))
-    print(f"* CSV logging enabled:\t\t{bool(args.csv_file)}" + (f" ({args.csv_file})" if args.csv_file else ""))
+    print(f"* Track repos changes:\t\t{TRACK_REPOS_CHANGES}")
+    print(f"* Monitor Github events:\t{not DO_NOT_MONITOR_GITHUB_EVENTS}")
+    print(f"* Liveness check:\t\t{bool(LIVENESS_CHECK_INTERVAL)}" + (f" ({display_time(LIVENESS_CHECK_INTERVAL)})" if LIVENESS_CHECK_INTERVAL else ""))
+    print(f"* CSV logging enabled:\t\t{bool(CSV_FILE)}" + (f" ({CSV_FILE})" if CSV_FILE else ""))
+    print(f"* Output logging enabled:\t{not DISABLE_LOGGING}" + (f" ({FINAL_LOG_PATH})" if not DISABLE_LOGGING else ""))
+    print(f"* Configuration file:\t\t{cfg_path}")
+    print(f"* Dotenv file:\t\t\t{env_path or 'None'}")
     print(f"* Local timezone:\t\t{LOCAL_TIMEZONE}")
 
     out = f"\nMonitoring Github user {args.username}"
@@ -2405,8 +2713,13 @@ if __name__ == "__main__":
         signal.signal(signal.SIGPIPE, toggle_repo_update_date_changes_notifications_signal_handler)
         signal.signal(signal.SIGTRAP, increase_check_signal_handler)
         signal.signal(signal.SIGABRT, decrease_check_signal_handler)
+        signal.signal(signal.SIGHUP, reload_secrets_signal_handler)
 
-    github_monitor_user(args.username, error_notification, args.csv_file)
+    github_monitor_user(args.username, CSV_FILE)
 
     sys.stdout = stdout_bck
     sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
