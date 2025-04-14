@@ -634,6 +634,74 @@ def get_short_date_from_ts(ts, show_year=False, show_hour=True, show_weekday=Tru
         return f'{weekday_str}{ts_new.strftime(f"%d %b{hour_strftime}")}'
 
 
+# Returns the timestamp/datetime object in human readable format (only hour, minutes and optionally seconds): eg. 15:08:12
+def get_hour_min_from_ts(ts, show_seconds=False):
+    tz = pytz.timezone(LOCAL_TIMEZONE)
+
+    if isinstance(ts, str):
+        try:
+            ts = isoparse(ts)
+        except Exception:
+            return ""
+
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            ts = pytz.utc.localize(ts)
+        ts_new = ts.astimezone(tz)
+
+    elif isinstance(ts, int):
+        ts_new = datetime.fromtimestamp(ts, tz)
+
+    elif isinstance(ts, float):
+        ts_rounded = int(round(ts))
+        ts_new = datetime.fromtimestamp(ts_rounded, tz)
+
+    else:
+        return ""
+
+    out_strf = "%H:%M:%S" if show_seconds else "%H:%M"
+    return ts_new.strftime(out_strf)
+
+
+# Returns the range between two timestamps/datetime objects; eg. Sun 21 Apr 14:09 - 14:15
+def get_range_of_dates_from_tss(ts1, ts2, between_sep=" - ", short=False):
+    tz = pytz.timezone(LOCAL_TIMEZONE)
+
+    if isinstance(ts1, datetime):
+        ts1_new = int(round(ts1.timestamp()))
+    elif isinstance(ts1, int):
+        ts1_new = ts1
+    elif isinstance(ts1, float):
+        ts1_new = int(round(ts1))
+    else:
+        return ""
+
+    if isinstance(ts2, datetime):
+        ts2_new = int(round(ts2.timestamp()))
+    elif isinstance(ts2, int):
+        ts2_new = ts2
+    elif isinstance(ts2, float):
+        ts2_new = int(round(ts2))
+    else:
+        return ""
+
+    ts1_strf = datetime.fromtimestamp(ts1_new, tz).strftime("%Y%m%d")
+    ts2_strf = datetime.fromtimestamp(ts2_new, tz).strftime("%Y%m%d")
+
+    if ts1_strf == ts2_strf:
+        if short:
+            out_str = f"{get_short_date_from_ts(ts1_new)}{between_sep}{get_hour_min_from_ts(ts2_new)}"
+        else:
+            out_str = f"{get_date_from_ts(ts1_new)}{between_sep}{get_hour_min_from_ts(ts2_new, show_seconds=True)}"
+    else:
+        if short:
+            out_str = f"{get_short_date_from_ts(ts1_new)}{between_sep}{get_short_date_from_ts(ts2_new)}"
+        else:
+            out_str = f"{get_date_from_ts(ts1_new)}{between_sep}{get_date_from_ts(ts2_new)}"
+
+    return str(out_str)
+
+
 # Checks if the timezone name is correct
 def is_valid_timezone(tz_name):
     return tz_name in pytz.all_timezones
@@ -1571,17 +1639,18 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
         m_subject = f"Github user {user} {label.lower()} list changed"
         m_body = (f"{label} list changed {label_context} user {user}\n"
                   f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
-                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
+                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
     else:
         m_subject = f"Github user {user} {label.lower()} number has changed! ({diff_str}, {old_count} -> {new_count})"
         m_body = (f"{label} number changed {label_context} user {user} from {old_count} to {new_count} ({diff_str})\n"
                   f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
-                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
+                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
 
     if PROFILE_NOTIFICATION:
         print(f"Sending email notification to {RECEIVER_EMAIL}")
         send_email(m_subject, m_body, "", SMTP_SSL)
 
+    print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
     print_cur_ts("Timestamp:\t\t\t")
     return list_new, new_count
 
@@ -1658,16 +1727,17 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
         m_subject = f"Github user {user} {label.lower()} list changed for repo '{repo_name}'!"
         m_body = (f"* Repo '{repo_name}': {label.lower()} list changed\n"
                   f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
-                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
+                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
     else:
         m_subject = f"Github user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {old_count} -> {new_count})"
         m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {old_count} to {new_count} ({diff_str})\n"
                   f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
-                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}")
+                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
 
     if REPO_NOTIFICATION:
         print(f"Sending email notification to {RECEIVER_EMAIL}")
         send_email(m_subject, m_body, "", SMTP_SSL)
+    print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -1959,13 +2029,14 @@ def github_monitor_user(user, csv_file_name):
                 print(f"* Error: {e}")
 
             m_subject = f"Github user {user} bio has changed!"
-            m_body = f"Github user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"Github user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
             bio_old = bio
+            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed location
@@ -1982,13 +2053,14 @@ def github_monitor_user(user, csv_file_name):
                 print(f"* Error: {e}")
 
             m_subject = f"Github user {user} location has changed!"
-            m_body = f"Github user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"Github user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
             location_old = location
+            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed user name
@@ -2005,13 +2077,14 @@ def github_monitor_user(user, csv_file_name):
                 print(f"* Error: {e}")
 
             m_subject = f"Github user {user} name has changed!"
-            m_body = f"Github user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"Github user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
             user_name_old = user_name
+            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed company
@@ -2028,13 +2101,14 @@ def github_monitor_user(user, csv_file_name):
                 print(f"* Error: {e}")
 
             m_subject = f"Github user {user} company has changed!"
-            m_body = f"Github user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"Github user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
             company_old = company
+            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed email
@@ -2051,13 +2125,14 @@ def github_monitor_user(user, csv_file_name):
                 print(f"* Error: {e}")
 
             m_subject = f"Github user {user} email has changed!"
-            m_body = f"Github user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"Github user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
             email_old = email
+            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed blog URL
@@ -2074,13 +2149,14 @@ def github_monitor_user(user, csv_file_name):
                 print(f"* Error: {e}")
 
             m_subject = f"Github user {user} blog URL has changed!"
-            m_body = f"Github user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"Github user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
             blog_old = blog
+            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed account update date
@@ -2097,13 +2173,14 @@ def github_monitor_user(user, csv_file_name):
                 print(f"* Error: {e}")
 
             m_subject = f"Github user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
-            m_body = f"Github user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"Github user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
             account_updated_date_old = account_updated_date
+            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
             print_cur_ts("Timestamp:\t\t\t")
 
         list_of_repos = []
@@ -2165,10 +2242,11 @@ def github_monitor_user(user, csv_file_name):
                                     except Exception as e:
                                         print(f"* Error: {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
-                                    m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                    m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     if REPO_UPDATE_DATE_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, "", SMTP_SSL)
+                                    print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
                                 # Number of stars for repo changed
@@ -2196,10 +2274,11 @@ def github_monitor_user(user, csv_file_name):
                                     except Exception as e:
                                         print(f"* Error: {e}")
                                     m_subject = f"Github user {user} repo '{r_name}' description has changed !"
-                                    m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                    m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     if REPO_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, "", SMTP_SSL)
+                                    print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
                     list_of_repos_old = list_of_repos
@@ -2260,12 +2339,13 @@ def github_monitor_user(user, csv_file_name):
                                     print(f"* Error: {e}")
 
                                 m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
-                                m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
                                 if EVENT_NOTIFICATION:
                                     print(f"\nSending email notification to {RECEIVER_EMAIL}")
                                     send_email(m_subject, m_body, "", SMTP_SSL)
 
+                            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
                             print_cur_ts("Timestamp:\t\t\t")
 
                     last_event_id_old = last_event_id
