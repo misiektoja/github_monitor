@@ -9,9 +9,9 @@ https://github.com/misiektoja/github_monitor/
 Python pip3 requirements:
 
 PyGithub
-pytz
-python-dateutil
 requests
+python-dateutil
+pytz
 tzlocal (optional)
 python-dotenv (optional)
 """
@@ -41,7 +41,7 @@ GITHUB_TOKEN = "your_github_classic_personal_access_token"
 # For Public Web Github use the default: https://api.github.com
 # For Github Enterprise change to: https://{your_hostname}/api/v3
 #
-# Can also be set using the -x parameter
+# Can also be set using the -x flag
 GITHUB_API_URL = "https://api.github.com"
 
 # SMTP settings for sending email notifications
@@ -61,27 +61,28 @@ SENDER_EMAIL = "your_sender_email"
 RECEIVER_EMAIL = "your_receiver_email"
 
 # Whether to send an email when user's profile changes
-# Can also be enabled via the -p parameter
+# Can also be enabled via the -p flag
 PROFILE_NOTIFICATION = False
 
 # Whether to send an email when new GitHub events appear
-# Can also be enabled via the -s parameter
+# Can also be enabled via the -s flag
 EVENT_NOTIFICATION = False
 
-# Whether to send an email when user's repositories change (stargazers, watchers, forks, issues, PRs, description etc., except for update date)
-# Can also be enabled via the -q parameter
+# Whether to send an email when user's repositories change (stargazers, watchers, forks, issues,
+# PRs, description etc., except for update date)
+# Can also be enabled via the -q flag
 REPO_NOTIFICATION = False
 
 # Whether to send an email when user's repositories update date changes
-# Can also be enabled via the -u parameter
+# Can also be enabled via the -u flag
 REPO_UPDATE_DATE_NOTIFICATION = False
 
 # Whether to send an email on errors
-# Can also be disabled via the -e parameter
+# Can also be disabled via the -e flag
 ERROR_NOTIFICATION = True
 
 # How often to check for user profile changes / activities; in seconds
-# Can also be set using the -c parameter
+# Can also be set using the -c flag
 GITHUB_CHECK_INTERVAL = 1800  # 30 mins
 
 # Set your local time zone so that Github API timestamps are converted accordingly (e.g. 'Europe/Warsaw')
@@ -130,20 +131,20 @@ CHECK_INTERNET_URL = GITHUB_API_URL
 CHECK_INTERNET_TIMEOUT = 5
 
 # CSV file to write new events & profile changes
-# Can also be set using the -b parameter
+# Can also be set using the -b flag
 CSV_FILE = ""
 
 # Location of the optional dotenv file which can keep secrets
 # If not specified it will try to auto-search for .env files
 # To disable auto-search, set this to the literal string "none"
-# Can also be set using the --env-file parameter
+# Can also be set using the --env-file flag
 DOTENV_FILE = ""
 
 # Base name of the log file. The tool will save its output to github_monitor_<username>.log file
 GITHUB_LOGFILE = "github_monitor"
 
 # Whether to disable logging to github_monitor_<username>.log
-# Can also be disabled via the -d parameter
+# Can also be disabled via the -d flag
 DISABLE_LOGGING = False
 
 # Width of main horizontal line (─)
@@ -161,7 +162,7 @@ NET_MAX_RETRIES = 5
 # Base number of seconds to wait before each retry, multiplied by the attempt count
 NET_BASE_BACKOFF_SEC = 5
 
-# Value used by signal handlers to increase/decrease profile/user activity check (GITHUB_CHECK_INTERVAL); in seconds
+# Value used by signal handlers increasing/decreasing profile/user activity check (GITHUB_CHECK_INTERVAL); in seconds
 GITHUB_CHECK_SIGNAL_VALUE = 60  # 1 minute
 """
 
@@ -1098,7 +1099,13 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         st += print_v(f"Repo URL:\t\t\t{repo_url}")
 
         try:
+            desc_len = 80
             repo = g.get_repo(event.repo.name)
+            desc = repo.description or ''
+            cleaned = desc.replace('\n', ' ')
+            short_desc = cleaned[:desc_len] + '...' if len(cleaned) > desc_len else cleaned
+            if short_desc:
+                st += print_v(f"Repo description:\t\t{short_desc}")
         except UnknownObjectException:
             repo = None
             st += print_v("\nRepository not found or has been removed")
@@ -1112,6 +1119,9 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     if hasattr(event.actor, 'name'):
         if event.actor.name:
             st += print_v(f"Event actor name:\t\t{event.actor.name}")
+    if hasattr(event.actor, 'html_url'):
+        if event.actor.html_url:
+            st += print_v(f"Event actor URL:\t\t{event.actor.html_url}")
 
     if event.payload.get("ref"):
         st += print_v(f"\nObject name:\t\t\t{event.payload.get('ref')}")
@@ -1141,6 +1151,9 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
             st += print_v(f" - Commit SHA:\t\t\t{commit['sha']}")
             st += print_v(f" - Commit author:\t\t{commit['author']['name']}")
+
+            if commit_details and commit_details.author:
+                st += print_v(f" - Commit author URL:\t\t{commit_details.author.html_url}")
 
             if commit_details:
                 st += print_v(f" - Commit URL:\t\t\t{commit_details.html_url}")
@@ -1175,6 +1188,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         st += print_v(f"Release URL:\t\t\t{event.payload['release'].get('html_url')}")
 
         st += print_v(f"\nPublished by:\t\t\t{event.payload['release']['author']['login']}")
+        if event.payload['release']['author'].get('html_url'):
+            st += print_v(f"Published by URL:\t\t{event.payload['release']['author']['html_url']}")
         if event.payload['release'].get('published_at'):
             pub_ts = event.payload['release']['published_at']
             st += print_v(f"Published at:\t\t\t{get_date_from_ts(pub_ts)}")
@@ -1203,6 +1218,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         st += print_v("." * HORIZONTAL_LINE1)
 
         st += print_v(f"Author:\t\t\t\t{pr.user.login}")
+        st += print_v(f"Author URL:\t\t\t{pr.user.html_url}")
         st += print_v(f"State:\t\t\t\t{pr.state}")
         st += print_v(f"Merged:\t\t\t\t{pr.merged}")
         st += print_v(f"PR URL:\t\t\t\t{pr.html_url}")
@@ -1282,6 +1298,10 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         if issue_author:
             st += print_v(f"Issue author:\t\t\t{issue_author}")
 
+        issue_author_url = event.payload["issue"].get("user", {}).get("html_url")
+        if issue_author_url:
+            st += print_v(f"Issue author URL:\t\t{issue_author_url}")
+
         st += print_v(f"Issue URL:\t\t\t{event.payload['issue'].get('html_url')}")
 
         if event.payload["issue"].get("state"):
@@ -1339,6 +1359,10 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         comment_author = comment.get("user", {}).get("login")
         if comment_author:
             st += print_v(f"Comment author:\t\t\t{comment_author}")
+
+        comment_author_url = comment.get("user", {}).get("html_url")
+        if comment_author_url:
+            st += print_v(f"Comment author URL:\t\t{comment_author_url}")
 
         st += print_v(f"Comment URL:\t\t\t{comment.get('html_url')}")
         if comment.get("path"):
@@ -1460,6 +1484,9 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         member_role = event.payload.get("membership", {}).get("role")
         if member_login:
             st += print_v(f"\nMember added:\t\t\t{member_login}")
+            member_url = event.payload.get("member", {}).get("html_url")
+            if member_url:
+                st += print_v(f"Member added URL:\t\t{member_url}")
         if member_role:
             st += print_v(f"Permission level:\t\t{member_role}")
 
@@ -2355,7 +2382,7 @@ def github_monitor_user(user, csv_file_name):
         alive_counter += 1
 
         if LIVENESS_CHECK_COUNTER and alive_counter >= LIVENESS_CHECK_COUNTER:
-            print_cur_ts("Liveness check, timestamp: ")
+            print_cur_ts("Liveness check, timestamp:\t")
             alive_counter = 0
 
         g.close()
