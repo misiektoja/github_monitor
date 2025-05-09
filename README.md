@@ -2,6 +2,7 @@
 
 github_monitor is a tool for real-time monitoring of GitHub users' activities, including profile and repository changes.
 
+<a id="features"></a>
 ## Features
 
 - Real-time tracking of GitHub users' activities, including profile and repository changes:
@@ -19,9 +20,10 @@ github_monitor is a tool for real-time monitoring of GitHub users' activities, i
 - Support for Public Web GitHub and GitHub Enterprise
 
 <p align="center">
-   <img src="./assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
+   <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
 </p>
 
+<a id="table-of-contents"></a>
 ## Table of Contents
 
 1. [Requirements](#requirements)
@@ -48,6 +50,7 @@ github_monitor is a tool for real-time monitoring of GitHub users' activities, i
 6. [Change Log](#change-log)
 7. [License](#license)
 
+<a id="requirements"></a>
 ## Requirements
 
 * Python 3.10 or higher
@@ -61,17 +64,20 @@ Tested on:
 
 It should work on other versions of macOS, Linux, Unix and Windows as well.
 
+<a id="installation"></a>
 ## Installation
 
+<a id="install-from-pypi"></a>
 ### Install from PyPI
 
 ```sh
 pip install github_monitor
 ```
 
+<a id="manual-installation"></a>
 ### Manual Installation
 
-Download the *[github_monitor.py](github_monitor.py)* file to the desired location.
+Download the *[github_monitor.py](https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/github_monitor.py)* file to the desired location.
 
 Install dependencies via pip:
 
@@ -79,12 +85,13 @@ Install dependencies via pip:
 pip install PyGithub requests python-dateutil pytz tzlocal python-dotenv
 ```
 
-Alternatively, from the downloaded *[requirements.txt](requirements.txt)*:
+Alternatively, from the downloaded *[requirements.txt](https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/requirements.txt)*:
 
 ```sh
 pip install -r requirements.txt
 ```
 
+<a id="quick-start"></a>
 ## Quick Start
 
 - Grab your [GitHub personal access token](#github-personal-access-token) and track the `github_username` activities:
@@ -106,8 +113,10 @@ To get the list of all supported command-line arguments / flags:
 github_monitor --help
 ```
 
+<a id="configuration"></a>
 ## Configuration
 
+<a id="configuration-file"></a>
 ### Configuration File
 
 Most settings can be configured via command-line arguments.
@@ -121,6 +130,7 @@ github_monitor --generate-config > github_monitor.conf
 
 Edit the `github_monitor.conf` file and change any desired configuration options (detailed comments are provided for each).
 
+<a id="github-personal-access-token"></a>
 ### GitHub Personal Access Token
 
 Go to your GitHub Apps settings: [https://github.com/settings/apps](https://github.com/settings/apps)
@@ -137,6 +147,7 @@ Fallback:
 
 If you store the `GITHUB_TOKEN` in a dotenv file you can update its value and send a `SIGHUP` signal to the process to reload the file with the new token without restarting the tool. More info in [Storing Secrets](#storing-secrets) and [Signal Controls (macOS/Linux/Unix)](#signal-controls-macoslinuxunix).
 
+<a id="github-api-url"></a>
 ### GitHub API URL
 
 By default the tool uses Public Web GitHub API URL: [https://api.github.com](https://api.github.com)
@@ -144,6 +155,7 @@ By default the tool uses Public Web GitHub API URL: [https://api.github.com](htt
 If you want to use GitHub Enterprise API URL then change `GITHUB_API_URL` (or use `-x` flag) to: https://{your_hostname}/api/v3
 
 
+<a id="events-to-monitor"></a>
 ### Events to Monitor
 
 You can limit the type of events that will be monitored and reported by the tool. You can do it by changing the `EVENTS_TO_MONITOR` configuration option.
@@ -154,6 +166,7 @@ By default all events are monitored, but if you want to limit it, then remove th
 EVENTS_TO_MONITOR=['PushEvent','PullRequestEvent', 'IssuesEvent', 'ForkEvent', 'ReleaseEvent']
 ```
 
+<a id="time-zone"></a>
 ### Time Zone
 
 By default, time zone is auto-detected using `tzlocal`. You can set it manually in `github_monitor.conf`:
@@ -167,6 +180,7 @@ You can get the list of all time zones supported by pytz like this:
 ```sh
 python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
 ```
+<a id="smtp-settings"></a>
 ### SMTP Settings
 
 If you want to use email notifications functionality, configure SMTP settings in the `github_monitor.conf` file. 
@@ -177,6 +191,7 @@ Verify your SMTP settings by using `--send-test-email` flag (the tool will try t
 github_monitor --send-test-email
 ```
 
+<a id="storing-secrets"></a>
 ### Storing Secrets
 
 It is recommended to store secrets like `GITHUB_TOKEN` or `SMTP_PASSWORD` as either an environment variable or in a dotenv file.
@@ -213,8 +228,10 @@ github_monitor <github_username> --env-file none
 
 As a fallback, you can also store secrets in the configuration file or source code.
 
+<a id="usage"></a>
 ## Usage
 
+<a id="monitoring-mode"></a>
 ### Monitoring Mode
 
 To monitor specific user activities and profile changes, simply enter the GitHub username as a command-line argument (`github_username` in the example below):
@@ -261,6 +278,7 @@ You can monitor multiple GitHub users by running multiple instances of the scrip
 
 The tool automatically saves its output to `github_monitor_<username>.log` file. It can be changed in the settings via `GITHUB_LOGFILE` configuration option or disabled completely via `DISABLE_LOGGING` / `-d` flag.
 
+<a id="listing-mode"></a>
 ### Listing Mode
 
 There is another mode of the tool that displays various requested information (`-r`, `-g`, `-f` and `-l` flags).
@@ -272,7 +290,7 @@ github_monitor github_username -r
 ```
 
 <p align="center">
-   <img src="./assets/github_list_of_repos.png" alt="github_list_of_repos" width="90%"/>
+   <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_list_of_repos.png" alt="github_list_of_repos" width="90%"/>
 </p>
 
 If you want to display a list of repositories starred by the user then use the `-g` flag:
@@ -299,6 +317,7 @@ If you want to not only display, but also save the list of recent GitHub events 
 github_monitor github_username -l -n 10 -b github_username.csv
 ```
 
+<a id="email-notifications"></a>
 ### Email Notifications
 
 To enable email notifications for all user profile changes (e.g. changes in followers, followings, starred repositories, username, email, bio, location, blog URL and number of repositories):
@@ -350,9 +369,10 @@ Make sure you defined your SMTP settings earlier (see [SMTP settings](#smtp-sett
 Example email:
 
 <p align="center">
-   <img src="./assets/github_monitor_email_notifications.png" alt="github_monitor_email_notifications" width="90%"/>
+   <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor_email_notifications.png" alt="github_monitor_email_notifications" width="90%"/>
 </p>
 
+<a id="csv-export"></a>
 ### CSV Export
 
 If you want to save all GitHub user events, profile changes and repository updates to a CSV file, set `CSV_FILE` or use `-b` flag:
@@ -363,6 +383,7 @@ github_monitor <github_username> -b github_username.csv
 
 The file will be automatically created if it does not exist.
 
+<a id="check-intervals"></a>
 ### Check Intervals
 
 If you want to customize the polling interval, use `-c` flag (or `GITHUB_CHECK_INTERVAL` configuration option):
@@ -373,6 +394,7 @@ github_monitor <github_username> -c 900
 
 It is generally not recommended to use values lower than 10 minutes as new events are very often delayed by GitHub API.
 
+<a id="signal-controls-macoslinuxunix"></a>
 ### Signal Controls (macOS/Linux/Unix)
 
 The tool has several signal handlers implemented which allow to change behavior of the tool without a need to restart it with new configuration options / flags.
@@ -397,6 +419,7 @@ pkill -USR1 -f "github_monitor <github_username>"
 
 As Windows supports limited number of signals, this functionality is available only on Linux/Unix/macOS.
 
+<a id="coloring-log-output-with-grc"></a>
 ### Coloring Log Output with GRC
 
 You can use [GRC](https://github.com/garabik/grc) to color logs.
@@ -409,7 +432,7 @@ Add to your GRC config (`~/.grc/grc.conf`):
 conf.monitor_logs
 ```
 
-Now copy the [conf.monitor_logs](grc/conf.monitor_logs) to your `~/.grc/` and log files should be nicely colored when using `grc` tool.
+Now copy the [conf.monitor_logs](https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/grc/conf.monitor_logs) to your `~/.grc/` and log files should be nicely colored when using `grc` tool.
 
 Example:
 
@@ -417,10 +440,12 @@ Example:
 grc tail -F -n 100 github_monitor_<username>.log
 ```
 
+<a id="change-log"></a>
 ## Change Log
 
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for details.
+See [RELEASE_NOTES.md](https://github.com/misiektoja/github_monitor/blob/main/RELEASE_NOTES.md) for details.
 
+<a id="license"></a>
 ## License
 
-Licensed under GPLv3. See [LICENSE](LICENSE).
+Licensed under GPLv3. See [LICENSE](https://github.com/misiektoja/github_monitor/blob/main/LICENSE).
