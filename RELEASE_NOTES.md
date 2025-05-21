@@ -2,6 +2,35 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 1.9 (22 May 2025)
+
+**Features and Improvements**:
+
+- **NEW:** The tool can now be installed via pip: `pip install github_monitor`
+- **NEW:** Added support for external config files, environment-based secrets and dotenv integration with auto-discovery
+- **NEW:** Introduced retry-enabled GitHub API call wrapper with fallback on failure
+- **NEW:** Display GitHub user profile URL for the token owner and for event actors
+- **NEW:** Display truncated GitHub repo description in relevant places
+- **IMPROVE:** Increased GitHub event fetch size to 30 and removed fragile timestamp-based filtering
+- **IMPROVE:** Enhanced startup summary to show loaded config and dotenv file paths
+- **IMPROVE:** Simplified and renamed command-line arguments for improved usability
+- **NEW:** Implemented SIGHUP handler for dynamic reload of secrets from dotenv files
+- **IMPROVE:** Added configuration option to control clearing the terminal screen at startup
+- **IMPROVE:** Changed connectivity check to use GitHub API endpoint for reliability
+- **IMPROVE:** Added check for missing pip dependencies with install guidance
+- **IMPROVE:** Allow disabling liveness check by setting interval to 0 (default changed to 12h)
+- **IMPROVE:** Improved handling of log file creation
+- **IMPROVE:** Refactored CSV file initialization and processing
+- **IMPROVE:** Added support for `~` path expansion across all file paths
+- **IMPROVE:** Refactored code structure to support packaging for PyPI
+- **IMPROVE:** Enforced configuration option precedence: code defaults < config file < env vars < CLI flags
+- **IMPROVE:** Display monitoring check interval range in output
+- **IMPROVE:** Removed short option for `--send-test-email` to avoid ambiguity
+
+**Bug fixes**:
+
+- **BUGFIX:** Fixed account update date saving logic to CSV file
+
 # Changes in 1.8 (08 Apr 2025)
 
 **Features and Improvements**:
