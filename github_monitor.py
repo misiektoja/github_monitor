@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.9
+v1.9.1
 
 OSINT tool implementing real-time tracking of Github users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "1.9"
+VERSION = "1.9.1"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -148,10 +148,10 @@ GITHUB_LOGFILE = "github_monitor"
 # Can also be disabled via the -d flag
 DISABLE_LOGGING = False
 
-# Width of main horizontal line (─)
+# Width of main horizontal line
 HORIZONTAL_LINE1 = 105
 
-# Width of horizontal line for repositories list output (─)
+# Width of horizontal line for repositories list output
 HORIZONTAL_LINE2 = 80
 
 # Whether to clear the terminal screen after starting the tool
