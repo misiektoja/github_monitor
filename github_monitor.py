@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v1.9.1
+v2.0
 
-OSINT tool implementing real-time tracking of Github users activities including profile and repositories changes:
+OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
 
 Python pip3 requirements:
@@ -16,14 +16,14 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "1.9.1"
+VERSION = "2.0"
 
 # ---------------------------
 # CONFIGURATION SECTION START
 # ---------------------------
 
 CONFIG_BLOCK = """
-# Get your Github personal access token (classic) by visiting:
+# Get your GitHub personal access token (classic) by visiting:
 # https://github.com/settings/apps
 #
 # Then go to: Personal access tokens -> Tokens (classic) -> Generate new token (classic)
@@ -36,13 +36,20 @@ CONFIG_BLOCK = """
 #   - Hard-code it in the code or config file
 GITHUB_TOKEN = "your_github_classic_personal_access_token"
 
-# The URL of the Github API
+# The URL of the GitHub API
 #
-# For Public Web Github use the default: https://api.github.com
-# For Github Enterprise change to: https://{your_hostname}/api/v3
+# For Public Web GitHub use the default: https://api.github.com
+# For GitHub Enterprise change to: https://{your_hostname}/api/v3
 #
 # Can also be set using the -x flag
 GITHUB_API_URL = "https://api.github.com"
+
+# The base URL of the GitHub web interface
+# Required to check if the profile is public or private
+#
+# For public GitHub use the default: https://github.com
+# For GitHub Enterprise change to: https://{your_hostname}
+GITHUB_HTML_URL = "https://github.com"
 
 # SMTP settings for sending email notifications
 # If left as-is, no notifications will be sent
@@ -85,7 +92,7 @@ ERROR_NOTIFICATION = True
 # Can also be set using the -c flag
 GITHUB_CHECK_INTERVAL = 1800  # 30 mins
 
-# Set your local time zone so that Github API timestamps are converted accordingly (e.g. 'Europe/Warsaw')
+# Set your local time zone so that GitHub API timestamps are converted accordingly (e.g. 'Europe/Warsaw')
 # Use this command to list all time zones supported by pytz:
 #   python3 -c "import pytz; print('\\n'.join(pytz.all_timezones))"
 # If set to 'Auto', the tool will try to detect your local time zone automatically (requires tzlocal)
@@ -175,6 +182,7 @@ GITHUB_CHECK_SIGNAL_VALUE = 60  # 1 minute
 # Do not change values below - modify them in the configuration section or config file instead
 GITHUB_TOKEN = ""
 GITHUB_API_URL = ""
+GITHUB_HTML_URL = ""
 SMTP_HOST = ""
 SMTP_PORT = 0
 SMTP_USER = ""
@@ -721,7 +729,7 @@ def toggle_profile_changes_notifications_signal_handler(sig, frame):
     PROFILE_NOTIFICATION = not PROFILE_NOTIFICATION
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Email notifications: [profile changes = {PROFILE_NOTIFICATION}]")
+    print(f"* Email notifications:\t\t[profile changes = {PROFILE_NOTIFICATION}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -731,7 +739,7 @@ def toggle_new_events_notifications_signal_handler(sig, frame):
     EVENT_NOTIFICATION = not EVENT_NOTIFICATION
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Email notifications: [new events = {EVENT_NOTIFICATION}]")
+    print(f"* Email notifications:\t\t[new events = {EVENT_NOTIFICATION}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -741,7 +749,7 @@ def toggle_repo_changes_notifications_signal_handler(sig, frame):
     REPO_NOTIFICATION = not REPO_NOTIFICATION
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Email notifications: [repos changes = {REPO_NOTIFICATION}]")
+    print(f"* Email notifications:\t\t[repos changes = {REPO_NOTIFICATION}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -751,7 +759,7 @@ def toggle_repo_update_date_changes_notifications_signal_handler(sig, frame):
     REPO_UPDATE_DATE_NOTIFICATION = not REPO_UPDATE_DATE_NOTIFICATION
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Email notifications: [repos update date = {REPO_UPDATE_DATE_NOTIFICATION}]")
+    print(f"* Email notifications:\t\t[repos update date = {REPO_UPDATE_DATE_NOTIFICATION}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -761,7 +769,7 @@ def increase_check_signal_handler(sig, frame):
     GITHUB_CHECK_INTERVAL = GITHUB_CHECK_INTERVAL + GITHUB_CHECK_SIGNAL_VALUE
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Github timers: [check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
+    print(f"* GitHub polling interval:\t[ {display_time(GITHUB_CHECK_INTERVAL)} ]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -772,7 +780,7 @@ def decrease_check_signal_handler(sig, frame):
         GITHUB_CHECK_INTERVAL = GITHUB_CHECK_INTERVAL - GITHUB_CHECK_SIGNAL_VALUE
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
-    print(f"* Github timers: [check interval: {display_time(GITHUB_CHECK_INTERVAL)}]")
+    print(f"* GitHub polling interval:\t[ {display_time(GITHUB_CHECK_INTERVAL)} ]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -865,7 +873,7 @@ def github_print_followers_and_followings(user):
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
-    print(f"Github API URL:\t\t{GITHUB_API_URL}")
+    print(f"GitHub API URL:\t\t{GITHUB_API_URL}")
     print(f"Local timezone:\t\t{LOCAL_TIMEZONE}")
 
     print(f"\nFollowers:\t\t{followers_count}")
@@ -965,7 +973,7 @@ def github_print_repos(user):
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
-    print(f"Github API URL:\t\t{GITHUB_API_URL}")
+    print(f"GitHub API URL:\t\t{GITHUB_API_URL}")
     print(f"Local timezone:\t\t{LOCAL_TIMEZONE}")
 
     print(f"\nRepositories:\t\t{repos_count}\n")
@@ -1039,7 +1047,7 @@ def github_print_starred_repos(user):
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
-    print(f"Github API URL:\t\t{GITHUB_API_URL}")
+    print(f"GitHub API URL:\t\t{GITHUB_API_URL}")
     print(f"Local timezone:\t\t{LOCAL_TIMEZONE}")
 
     print(f"\nRepos starred by user:\t{starred_count}")
@@ -1557,7 +1565,7 @@ def github_list_events(user, number, csv_file_name):
 
     print(f"Username:\t\t\t{user_name_str}")
     print(f"User URL:\t\t\t{user_url}/")
-    print(f"Github API URL:\t\t\t{GITHUB_API_URL}")
+    print(f"GitHub API URL:\t\t\t{GITHUB_API_URL}")
     if csv_file_name:
         print(f"CSV export enabled:\t\t{bool(csv_file_name)}" + (f" ({csv_file_name})" if csv_file_name else ""))
     print(f"Local timezone:\t\t\t{LOCAL_TIMEZONE}")
@@ -1664,12 +1672,12 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
         print()
 
     if diff == 0:
-        m_subject = f"Github user {user} {label.lower()} list changed"
+        m_subject = f"GitHub user {user} {label.lower()} list changed"
         m_body = (f"{label} list changed {label_context} user {user}\n"
                   f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
     else:
-        m_subject = f"Github user {user} {label.lower()} number has changed! ({diff_str}, {old_count} -> {new_count})"
+        m_subject = f"GitHub user {user} {label.lower()} number has changed! ({diff_str}, {old_count} -> {new_count})"
         m_body = (f"{label} number changed {label_context} user {user} from {old_count} to {new_count} ({diff_str})\n"
                   f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
@@ -1752,12 +1760,12 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             print()
 
     if diff == 0:
-        m_subject = f"Github user {user} {label.lower()} list changed for repo '{repo_name}'!"
+        m_subject = f"GitHub user {user} {label.lower()} list changed for repo '{repo_name}'!"
         m_body = (f"* Repo '{repo_name}': {label.lower()} list changed\n"
                   f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
     else:
-        m_subject = f"Github user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {old_count} -> {new_count})"
+        m_subject = f"GitHub user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {old_count} -> {new_count})"
         m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {old_count} to {new_count} ({diff_str})\n"
                   f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
@@ -1807,7 +1815,119 @@ def resolve_executable(path):
     raise FileNotFoundError(f"Could not find executable '{path}'")
 
 
-# Main function that monitors activity of the specified GitHub user
+# Checks if the authenticated user (token's owner) is blocked by user
+def is_blocked_by(user):
+    try:
+
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        response = req.get(f"{GITHUB_API_URL}/user", headers=headers, timeout=15)
+        if response.status_code != 200:
+            return False
+        me_login = response.json().get("login", "").lower()
+        if user.lower() == me_login:
+            return False
+
+        graphql_endpoint = GITHUB_API_URL.rstrip("/") + "/graphql"
+        query = """
+        query($login: String!) {
+          user(login: $login) {
+            viewerCanFollow
+          }
+        }
+        """
+        payload = {"query": query, "variables": {"login": user}}
+        response_graphql = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15)
+
+        if response_graphql.status_code == 404:
+            return False
+
+        if not response_graphql.ok:
+            return False
+
+        data = response_graphql.json()
+        can_follow = (data.get("data", {}).get("user", {}).get("viewerCanFollow", True))
+        return not bool(can_follow)
+
+    except Exception:
+        return False
+
+
+# Return the total number of repositories the user has starred (faster than via PyGithub)
+def get_starred_count(user):
+    try:
+
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        }
+
+        graphql_endpoint = f"{GITHUB_API_URL.rstrip('/')}/graphql"
+        query = """
+        query($login:String!){
+          user(login:$login){
+            starredRepositories{
+              totalCount
+            }
+          }
+        }
+        """
+        payload = {"query": query, "variables": {"login": user}}
+        response = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15)
+
+        if not response.ok:
+            return 0
+
+        data = response.json()
+
+        return (data.get("data", {}).get("user", {}).get("starredRepositories", {}).get("totalCount", 0))
+
+    except Exception:
+        return 0
+
+
+# Returns True if the user's GitHub page shows "activity is private"
+def has_private_banner(user):
+    try:
+        url = f"{GITHUB_HTML_URL.rstrip('/')}/{user}"
+        r = req.get(url, timeout=15)
+        return r.ok and "activity is private" in r.text.lower()
+    except Exception:
+        return False
+
+
+# Returns True if the user's GitHub profile is public
+def is_profile_public(g: Github, user, new_account_days=30):
+
+    if has_private_banner(user):
+        return False
+
+    try:
+        u = g.get_user(user)
+
+        if any([
+            u.followers > 0,
+            u.following > 0,
+            get_starred_count(user) > 0,
+        ]):
+            return True
+
+        try:
+            events_iter = iter(u.get_events())
+            next(events_iter)
+            return True
+        except (StopIteration, GithubException):
+            pass
+
+    except GithubException:
+        pass
+
+    return False
+
+# Monitors activity of the specified GitHub user
 def github_monitor_user(user, csv_file_name):
 
     try:
@@ -1824,6 +1944,10 @@ def github_monitor_user(user, csv_file_name):
     events = []
     repos_list = []
     event_date: datetime | None = None
+    blocked = None
+    public = False
+
+    print("Sneaking into GitHub like a ninja ...")
 
     try:
         auth = Auth.Token(GITHUB_TOKEN)
@@ -1856,12 +1980,15 @@ def github_monitor_user(user, csv_file_name):
         starred_list = g_user.get_starred()
         starred_count = starred_list.totalCount
 
+        public = is_profile_public(g, user)
+        blocked = is_blocked_by(user) if public else None
+
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
             events = list(islice(g_user.get_events(), EVENTS_NUMBER))
             available_events = len(events)
 
     except Exception as e:
-        print(f"* Error: {e}")
+        print(f"\n* Error: {e}")
         sys.exit(1)
 
     last_event_id = 0
@@ -1879,7 +2006,7 @@ def github_monitor_user(user, csv_file_name):
                 if last_event_id:
                     last_event_ts = newest.created_at
             except Exception as e:
-                print(f"* Cannot get event IDs / timestamps: {e}\n")
+                print(f"\n* Cannot get event IDs / timestamps: {e}\n")
                 pass
 
     followers_old_count = followers_count
@@ -1893,6 +2020,8 @@ def github_monitor_user(user, csv_file_name):
     company_old = company
     email_old = email
     blog_old = blog
+    blocked_old = blocked
+    public_old = public
 
     last_event_id_old = last_event_id
     last_event_ts_old = last_event_ts
@@ -1902,7 +2031,7 @@ def github_monitor_user(user, csv_file_name):
     if user_myself_name:
         user_myself_name_str += f" ({user_myself_name})"
 
-    print(f"Token belongs to:\t\t{user_myself_name_str}" + f"\n\t\t\t\t[ {user_myself_url} ]" if user_myself_url else "")
+    print(f"\nToken belongs to:\t\t{user_myself_name_str}" + f"\n\t\t\t\t[ {user_myself_url} ]" if user_myself_url else "")
 
     user_name_str = user_login
     if user_name:
@@ -1923,6 +2052,9 @@ def github_monitor_user(user, csv_file_name):
     if blog:
         print(f"Blog URL:\t\t\t{blog}")
 
+    print(f"\nPublic profile:\t\t\t{'Yes' if public else 'No'}")
+    print(f"Blocked by the user:\t\t{'Unknown' if blocked is None else ('Yes' if blocked else 'No')}")
+
     print(f"\nAccount creation date:\t\t{get_date_from_ts(account_created_date)} ({calculate_timespan(int(time.time()), account_created_date, show_seconds=False)} ago)")
     print(f"Account updated date:\t\t{get_date_from_ts(account_updated_date)} ({calculate_timespan(int(time.time()), account_updated_date, show_seconds=False)} ago)")
     account_updated_date_old = account_updated_date
@@ -1931,6 +2063,7 @@ def github_monitor_user(user, csv_file_name):
     print(f"Followings:\t\t\t{followings_count}")
     print(f"Repositories:\t\t\t{repos_count}")
     print(f"Starred repos:\t\t\t{starred_count}")
+
     if not DO_NOT_MONITOR_GITHUB_EVENTS:
         print(f"Available events:\t\t{available_events}{'+' if available_events == EVENTS_NUMBER else ''}")
 
@@ -1983,7 +2116,7 @@ def github_monitor_user(user, csv_file_name):
     alive_counter = 0
     email_sent = False
 
-    # main loop
+    # Primary loop
     while True:
 
         try:
@@ -2056,8 +2189,8 @@ def github_monitor_user(user, csv_file_name):
             except Exception as e:
                 print(f"* Error: {e}")
 
-            m_subject = f"Github user {user} bio has changed!"
-            m_body = f"Github user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_subject = f"GitHub user {user} bio has changed!"
+            m_body = f"GitHub user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -2080,8 +2213,8 @@ def github_monitor_user(user, csv_file_name):
             except Exception as e:
                 print(f"* Error: {e}")
 
-            m_subject = f"Github user {user} location has changed!"
-            m_body = f"Github user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_subject = f"GitHub user {user} location has changed!"
+            m_body = f"GitHub user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -2104,8 +2237,8 @@ def github_monitor_user(user, csv_file_name):
             except Exception as e:
                 print(f"* Error: {e}")
 
-            m_subject = f"Github user {user} name has changed!"
-            m_body = f"Github user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_subject = f"GitHub user {user} name has changed!"
+            m_body = f"GitHub user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -2128,8 +2261,8 @@ def github_monitor_user(user, csv_file_name):
             except Exception as e:
                 print(f"* Error: {e}")
 
-            m_subject = f"Github user {user} company has changed!"
-            m_body = f"Github user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_subject = f"GitHub user {user} company has changed!"
+            m_body = f"GitHub user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -2152,8 +2285,8 @@ def github_monitor_user(user, csv_file_name):
             except Exception as e:
                 print(f"* Error: {e}")
 
-            m_subject = f"Github user {user} email has changed!"
-            m_body = f"Github user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_subject = f"GitHub user {user} email has changed!"
+            m_body = f"GitHub user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -2176,8 +2309,8 @@ def github_monitor_user(user, csv_file_name):
             except Exception as e:
                 print(f"* Error: {e}")
 
-            m_subject = f"Github user {user} blog URL has changed!"
-            m_body = f"Github user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_subject = f"GitHub user {user} blog URL has changed!"
+            m_body = f"GitHub user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -2200,14 +2333,70 @@ def github_monitor_user(user, csv_file_name):
             except Exception as e:
                 print(f"* Error: {e}")
 
-            m_subject = f"Github user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
-            m_body = f"Github user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_subject = f"GitHub user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
+            m_body = f"GitHub user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
                 send_email(m_subject, m_body, "", SMTP_SSL)
 
             account_updated_date_old = account_updated_date
+            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print_cur_ts("Timestamp:\t\t\t")
+
+        # Profile visibility changed
+        public = is_profile_public(g, user)
+        if public != public_old:
+
+            def _get_profile_status(public):
+                return "public" if public else "private"
+
+            print(f"* User {user} has changed profile visibility to '{_get_profile_status(public)}' !\n")
+
+            try:
+                if csv_file_name:
+                    write_csv_entry(csv_file_name, now_local_naive(), "Profile Visibility", user, _get_profile_status(public_old), _get_profile_status(public))
+            except Exception as e:
+                print(f"* Error: {e}")
+
+            m_subject = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !"
+            m_body = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+
+            if PROFILE_NOTIFICATION:
+                print(f"Sending email notification to {RECEIVER_EMAIL}")
+                send_email(m_subject, m_body, "", SMTP_SSL)
+
+            public_old = public
+            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print_cur_ts("Timestamp:\t\t\t")
+
+        # Blocked status changed
+        blocked = is_blocked_by(user) if public else None
+
+        if blocked is not None and blocked_old is None:
+            blocked_old = blocked
+
+        elif None not in (blocked_old, blocked) and blocked != blocked_old:
+
+            def _get_blocked_status(blocked, public):
+                return 'Unknown' if blocked is None else ('Yes' if blocked else 'No')
+
+            print(f"* User {user} has {'blocked' if blocked else 'unblocked'} you!\n")
+
+            try:
+                if csv_file_name:
+                    write_csv_entry(csv_file_name, now_local_naive(), "Block Status", user, _get_blocked_status(blocked_old, public), _get_blocked_status(blocked, public))
+            except Exception as e:
+                print(f"* Error: {e}")
+
+            m_subject = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!"
+            m_body = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+
+            if PROFILE_NOTIFICATION:
+                print(f"Sending email notification to {RECEIVER_EMAIL}")
+                send_email(m_subject, m_body, "", SMTP_SSL)
+
+            blocked_old = blocked
             print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
             print_cur_ts("Timestamp:\t\t\t")
 
@@ -2269,7 +2458,7 @@ def github_monitor_user(user, csv_file_name):
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Update Date", r_name, convert_to_local_naive(r_update_old), convert_to_local_naive(r_update))
                                     except Exception as e:
                                         print(f"* Error: {e}")
-                                    m_subject = f"Github user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
+                                    m_subject = f"GitHub user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     if REPO_UPDATE_DATE_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -2301,7 +2490,7 @@ def github_monitor_user(user, csv_file_name):
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Description", r_name, r_descr_old, r_descr)
                                     except Exception as e:
                                         print(f"* Error: {e}")
-                                    m_subject = f"Github user {user} repo '{r_name}' description has changed !"
+                                    m_subject = f"GitHub user {user} repo '{r_name}' description has changed !"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     if REPO_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
@@ -2311,7 +2500,7 @@ def github_monitor_user(user, csv_file_name):
 
                     list_of_repos_old = list_of_repos
 
-        # New Github events
+        # New GitHub events
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
             events = list(gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)))())
             if events is not None:
@@ -2366,8 +2555,8 @@ def github_monitor_user(user, csv_file_name):
                                 except Exception as e:
                                     print(f"* Error: {e}")
 
-                                m_subject = f"Github user {user} has new {event.type} (repo: {repo_name})"
-                                m_body = f"Github user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                m_subject = f"GitHub user {user} has new {event.type} (repo: {repo_name})"
+                                m_body = f"GitHub user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
 
                                 if EVENT_NOTIFICATION:
                                     print(f"\nSending email notification to {RECEIVER_EMAIL}")
@@ -2409,7 +2598,7 @@ def main():
 
     clear_screen(CLEAR_SCREEN)
 
-    print(f"Github Monitoring Tool v{VERSION}\n")
+    print(f"GitHub Monitoring Tool v{VERSION}\n")
 
     parser = argparse.ArgumentParser(
         prog="github_monitor",
@@ -2800,11 +2989,11 @@ def main():
         REPO_UPDATE_DATE_NOTIFICATION = False
         ERROR_NOTIFICATION = False
 
-    print(f"* Github polling interval:\t[ {display_time(GITHUB_CHECK_INTERVAL)} ]")
+    print(f"* GitHub polling interval:\t[ {display_time(GITHUB_CHECK_INTERVAL)} ]")
     print(f"* Email notifications:\t\t[profile changes = {PROFILE_NOTIFICATION}] [new events = {EVENT_NOTIFICATION}]\n*\t\t\t\t[repos changes = {REPO_NOTIFICATION}] [repos update date = {REPO_UPDATE_DATE_NOTIFICATION}]\n*\t\t\t\t[errors = {ERROR_NOTIFICATION}]")
-    print(f"* Github API URL:\t\t{GITHUB_API_URL}")
+    print(f"* GitHub API URL:\t\t{GITHUB_API_URL}")
     print(f"* Track repos changes:\t\t{TRACK_REPOS_CHANGES}")
-    print(f"* Monitor Github events:\t{not DO_NOT_MONITOR_GITHUB_EVENTS}")
+    print(f"* Monitor GitHub events:\t{not DO_NOT_MONITOR_GITHUB_EVENTS}")
     print(f"* Liveness check:\t\t{bool(LIVENESS_CHECK_INTERVAL)}" + (f" ({display_time(LIVENESS_CHECK_INTERVAL)})" if LIVENESS_CHECK_INTERVAL else ""))
     print(f"* CSV logging enabled:\t\t{bool(CSV_FILE)}" + (f" ({CSV_FILE})" if CSV_FILE else ""))
     print(f"* Output logging enabled:\t{not DISABLE_LOGGING}" + (f" ({FINAL_LOG_PATH})" if not DISABLE_LOGGING else ""))
@@ -2812,7 +3001,7 @@ def main():
     print(f"* Dotenv file:\t\t\t{env_path or 'None'}")
     print(f"* Local timezone:\t\t{LOCAL_TIMEZONE}")
 
-    out = f"\nMonitoring Github user {args.username}"
+    out = f"\nMonitoring GitHub user {args.username}"
     print(out)
     print("-" * len(out))
 
