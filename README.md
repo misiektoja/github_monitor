@@ -12,7 +12,9 @@ github_monitor is a tool for real-time monitoring of GitHub users' activities, i
    - added/removed starred repositories
    - added/removed public repositories
    - changes in user name, email, location, company, bio and blog URL
-   - detection of account changes
+   - changes in profile visibility (public to private and vice versa)
+   - detection when a user blocks or unblocks you
+   - detection of account metadata changes (such as account update date)
 - Email notifications for different events (new GitHub events, changed followings, followers, repositories, user name, email, location, company, bio, blog URL etc.)
 - Saving all user activities with timestamps to the CSV file
 - Clickable GitHub URLs printed in the console & included in email notifications (repos, PRs, commits, issues, releases etc.)
@@ -141,18 +143,16 @@ Provide the `GITHUB_TOKEN` secret using one of the following methods:
  - Pass it at runtime with `-t` / `--github-token`
  - Set it as an [environment variable](#storing-secrets) (e.g. `export GITHUB_TOKEN=...`)
  - Add it to [.env file](#storing-secrets) (`GITHUB_TOKEN=...`) for persistent use
+ - Fallback: hard-code it in the code or config file
 
-Fallback:
- - Hard-code it in the code or config file
-
-If you store the `GITHUB_TOKEN` in a dotenv file you can update its value and send a `SIGHUP` signal to the process to reload the file with the new token without restarting the tool. More info in [Storing Secrets](#storing-secrets) and [Signal Controls (macOS/Linux/Unix)](#signal-controls-macoslinuxunix).
+If you store the `GITHUB_TOKEN` in a dotenv file you can update its value and send a `SIGHUP` signal to reload the file with the new token without restarting the tool. More info in [Storing Secrets](#storing-secrets) and [Signal Controls (macOS/Linux/Unix)](#signal-controls-macoslinuxunix).
 
 <a id="github-api-url"></a>
 ### GitHub API URL
 
 By default the tool uses Public Web GitHub API URL: [https://api.github.com](https://api.github.com)
 
-If you want to use GitHub Enterprise API URL then change `GITHUB_API_URL` (or use `-x` flag) to: https://{your_hostname}/api/v3
+If you want to use GitHub Enterprise API URL then change `GITHUB_API_URL` (or use `-x` flag) to: `https://{your_hostname}/api/v3`
 
 
 <a id="events-to-monitor"></a>
