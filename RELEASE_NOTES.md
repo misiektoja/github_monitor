@@ -2,6 +2,13 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 2.0 (24 Jun 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Added block status detection identifying when a tracked user has blocked/unblocked the token owner
+- **NEW:** Introduced profile visibility detection distinguishing public profiles from private ones
+
 # Changes in 1.9.1 (13 Jun 2025)
 
 **Bug fixes**:
