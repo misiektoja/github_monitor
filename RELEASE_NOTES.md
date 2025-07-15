@@ -2,6 +2,14 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 2.1 (15 Jul 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Added `GET_ALL_REPOS` option and `-a` flag to toggle between all repos and user-owned only (default)
+- **NEW:** Added `BLOCKED_REPOS` to toggle alerts for blocked repos (403 TOS, 451 DMCA) in monitoring mode; always shown in listing mode (`-r`)
+- **IMPROVE:** Silently handle GitHub 403 (TOS violation) and 451 (DMCA block) repo errors in monitoring mode
+
 # Changes in 2.0 (24 Jun 2025)
 
 **Features and Improvements**:
