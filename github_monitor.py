@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.0
+v2.1
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "2.0"
+VERSION = "2.1"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -32,8 +32,7 @@ CONFIG_BLOCK = """
 #   - Pass it at runtime with -t / --github-token
 #   - Set it as an environment variable (e.g. export GITHUB_TOKEN=...)
 #   - Add it to ".env" file (GITHUB_TOKEN=...) for persistent use
-# Fallback:
-#   - Hard-code it in the code or config file
+#   - Fallback: hard-code it in the code or config file
 GITHUB_TOKEN = "your_github_classic_personal_access_token"
 
 # The URL of the GitHub API
@@ -127,6 +126,13 @@ EVENTS_TO_MONITOR = [
 # any events older than the most recent EVENTS_NUMBER will be missed
 EVENTS_NUMBER = 30  # 1 page
 
+# If True, fetch all user repos (owned, forks, collaborations); otherwise, fetch only owned repos
+GET_ALL_REPOS = False
+
+# Alert about blocked (403 - TOS violation and 451 - DMCA block) repos in the console output (in monitoring mode)
+# In listing mode (-r), blocked repos are always shown
+BLOCKED_REPOS = False
+
 # How often to print a "liveness check" message to the output; in seconds
 # Set to 0 to disable
 LIVENESS_CHECK_INTERVAL = 43200  # 12 hours
@@ -199,6 +205,8 @@ GITHUB_CHECK_INTERVAL = 0
 LOCAL_TIMEZONE = ""
 EVENTS_TO_MONITOR = []
 EVENTS_NUMBER = 0
+GET_ALL_REPOS = False
+BLOCKED_REPOS = False
 LIVENESS_CHECK_INTERVAL = 0
 CHECK_INTERNET_URL = ""
 CHECK_INTERNET_TIMEOUT = 0
@@ -911,6 +919,7 @@ def github_print_followers_and_followings(user):
 
 # Processes items from all passed repositories and returns a list of dictionaries
 def github_process_repos(repos_list):
+    import logging
     list_of_repos = []
     stargazers_list = []
     subscribers_list = []
@@ -921,9 +930,24 @@ def github_process_repos(repos_list):
             try:
                 repo_created_date = repo.created_at
                 repo_updated_date = repo.updated_at
-                stargazers_list = [star.login for star in repo.get_stargazers()]
-                subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
-                forked_repos = [fork.full_name for fork in repo.get_forks()]
+
+                github_logger = logging.getLogger('github')
+                original_level = github_logger.level
+                github_logger.setLevel(logging.ERROR)
+
+                try:
+                    stargazers_list = [star.login for star in repo.get_stargazers()]
+                    subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
+                    forked_repos = [fork.full_name for fork in repo.get_forks()]
+                except GithubException as e:
+                    if e.status in [403, 451]:
+                        if BLOCKED_REPOS:
+                            print(f"* Repo '{repo.name}' is blocked, skipping for now: {e}")
+                            print_cur_ts("Timestamp:\t\t\t")
+                        continue
+                    raise
+                finally:
+                    github_logger.setLevel(original_level)
 
                 issues = list(repo.get_issues(state='open'))
                 pulls = list(repo.get_pulls(state='open'))
@@ -936,8 +960,20 @@ def github_process_repos(repos_list):
                 pr_list = [f"#{pr.number} {pr.title} ({pr.user.login}) [ {pr.html_url} ]" for pr in pulls]
 
                 list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "issues_list": issues_list, "pulls_list": pr_list})
+
+            except GithubException as e:
+                # Skip TOS-blocked (403) and legally blocked (451) repositories
+                if e.status in [403, 451]:
+                    if BLOCKED_REPOS:
+                        print(f"* Repo '{repo.name}' is blocked, skipping for now: {e}")
+                        print_cur_ts("Timestamp:\t\t\t")
+                    continue
+                else:
+                    print(f"* Cannot process repo '{repo.name}', skipping for now: {e}")
+                    print_cur_ts("Timestamp:\t\t\t")
+                    continue
             except Exception as e:
-                print(f"* Error while processing info for repo '{repo.name}', skipping for now: {e}")
+                print(f"* Cannot process repo '{repo.name}', skipping for now: {e}")
                 print_cur_ts("Timestamp:\t\t\t")
                 continue
 
@@ -946,6 +982,7 @@ def github_process_repos(repos_list):
 
 # Prints a list of public repositories for a GitHub user (-r)
 def github_print_repos(user):
+    import logging
     user_name_str = user
     user_url = "-"
     repos_count = 0
@@ -962,8 +999,12 @@ def github_print_repos(user):
         user_name = g_user.name
         user_url = g_user.html_url
 
-        repos_count = g_user.public_repos
-        repos_list = g_user.get_repos()
+        if GET_ALL_REPOS:
+            repos_list = g_user.get_repos()
+            repos_count = g_user.public_repos
+        else:
+            repos_list = [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login]
+            repos_count = len(repos_list)
 
         user_name_str = user_login
         if user_name:
@@ -974,6 +1015,7 @@ def github_print_repos(user):
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
     print(f"GitHub API URL:\t\t{GITHUB_API_URL}")
+    print(f"Owned repos only:\t{not GET_ALL_REPOS}")
     print(f"Local timezone:\t\t{LOCAL_TIMEZONE}")
 
     print(f"\nRepositories:\t\t{repos_count}\n")
@@ -984,6 +1026,10 @@ def github_print_repos(user):
             for repo in repos_list:
                 print(f"🔸 {repo.name} {'(fork)' if repo.fork else ''} \n")
 
+                github_logger = logging.getLogger('github')
+                original_level = github_logger.level
+                github_logger.setLevel(logging.ERROR)
+
                 try:
                     pr_count = repo.get_pulls(state='open').totalCount
                     issue_count = repo.open_issues_count - pr_count
@@ -991,26 +1037,36 @@ def github_print_repos(user):
                     pr_count = "?"
                     issue_count = "?"
 
-                print(f" - 🌐 URL:\t\t{repo.html_url}")
-                print(f" - 💻 Language:\t\t{repo.language}")
+                try:
+                    print(f" - 🌐 URL:\t\t{repo.html_url}")
+                    print(f" - 💻 Language:\t\t{repo.language}")
 
-                print(f"\n - ⭐ Stars:\t\t{repo.stargazers_count}")
-                print(f" - 🍴 Forks:\t\t{repo.forks_count}")
-                print(f" - 👓 Watchers:\t\t{repo.subscribers_count}")
+                    print(f"\n - ⭐ Stars:\t\t{repo.stargazers_count}")
+                    print(f" - 🍴 Forks:\t\t{repo.forks_count}")
+                    print(f" - 👓 Watchers:\t\t{repo.subscribers_count}")
 
-                # print(f" - 🐞 Issues+PRs:\t{repo.open_issues_count}")
-                print(f" - 🐞 Issues:\t\t{issue_count}")
-                print(f" - 📬 PRs:\t\t{pr_count}")
+                    # print(f" - 🐞 Issues+PRs:\t{repo.open_issues_count}")
+                    print(f" - 🐞 Issues:\t\t{issue_count}")
+                    print(f" - 📬 PRs:\t\t{pr_count}")
 
-                print(f"\n - 📝 License:\t\t{repo.license.name if repo.license else 'None'}")
-                print(f" - 🌿 Branch (default):\t{repo.default_branch}")
+                    print(f"\n - 📝 License:\t\t{repo.license.name if repo.license else 'None'}")
+                    print(f" - 🌿 Branch (default):\t{repo.default_branch}")
 
-                print(f"\n - 📅 Created:\t\t{get_date_from_ts(repo.created_at)} ({calculate_timespan(int(time.time()), repo.created_at, granularity=2)} ago)")
-                print(f" - 🔄 Updated:\t\t{get_date_from_ts(repo.updated_at)} ({calculate_timespan(int(time.time()), repo.updated_at, granularity=2)} ago)")
-                print(f" - 🔃 Last push:\t{get_date_from_ts(repo.pushed_at)} ({calculate_timespan(int(time.time()), repo.pushed_at, granularity=2)} ago)")
+                    print(f"\n - 📅 Created:\t\t{get_date_from_ts(repo.created_at)} ({calculate_timespan(int(time.time()), repo.created_at, granularity=2)} ago)")
+                    print(f" - 🔄 Updated:\t\t{get_date_from_ts(repo.updated_at)} ({calculate_timespan(int(time.time()), repo.updated_at, granularity=2)} ago)")
+                    print(f" - 🔃 Last push:\t{get_date_from_ts(repo.pushed_at)} ({calculate_timespan(int(time.time()), repo.pushed_at, granularity=2)} ago)")
 
-                if repo.description:
-                    print(f"\n - 📝 Desc:\t\t{repo.description}")
+                    if repo.description:
+                        print(f"\n - 📝 Desc:\t\t{repo.description}")
+                except GithubException as e:
+                    # Inform about TOS-blocked (403) and legally blocked (451) repositories
+                    if e.status in [403, 451]:
+                        print(f"\n* Repo '{repo.name}' is blocked: {e}")
+                        print("─" * HORIZONTAL_LINE2)
+                        continue
+                finally:
+                    github_logger.setLevel(original_level)
+
                 print("─" * HORIZONTAL_LINE2)
     except Exception as e:
         raise RuntimeError(f"Cannot fetch user's repositories list: {e}")
@@ -1971,11 +2027,16 @@ def github_monitor_user(user, csv_file_name):
 
         followers_count = g_user.followers
         followings_count = g_user.following
-        repos_count = g_user.public_repos
 
         followers_list = g_user.get_followers()
         followings_list = g_user.get_following()
-        repos_list = g_user.get_repos()
+
+        if GET_ALL_REPOS:
+            repos_list = g_user.get_repos()
+            repos_count = g_user.public_repos
+        else:
+            repos_list = [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login]
+            repos_count = len(repos_list)
 
         starred_list = g_user.get_starred()
         starred_count = starred_list.totalCount
@@ -2164,8 +2225,13 @@ def github_monitor_user(user, csv_file_name):
             followers_old, followers_old_count = handle_profile_change("Followers", followers_old_count, followers_count, followers_old, followers_raw, user, csv_file_name, field="login")
 
         # Changed public repositories
-        repos_raw = list(gh_call(g_user.get_repos)())
-        repos_count = gh_call(lambda: g_user.public_repos)()
+        if GET_ALL_REPOS:
+            repos_raw = list(gh_call(g_user.get_repos)())
+            repos_count = gh_call(lambda: g_user.public_repos)()
+        else:
+            repos_raw = list(gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])())
+            repos_count = len(repos_raw)
+
         if repos_raw is not None and repos_count is not None:
             repos_old, repos_old_count = handle_profile_change("Repos", repos_old_count, repos_count, repos_old, repos_raw, user, csv_file_name, field="name")
 
@@ -2404,7 +2470,12 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed repos details
         if TRACK_REPOS_CHANGES:
-            repos_list = gh_call(g_user.get_repos)()
+
+            if GET_ALL_REPOS:
+                repos_list = gh_call(g_user.get_repos)()
+            else:
+                repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])()
+
             if repos_list is not None:
                 try:
                     list_of_repos = github_process_repos(repos_list)
@@ -2581,7 +2652,7 @@ def github_monitor_user(user, csv_file_name):
 
 
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES
+    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, GET_ALL_REPOS
 
     if "--generate-config" in sys.argv:
         print(CONFIG_BLOCK.strip("\n"))
@@ -2767,6 +2838,13 @@ def main():
         help="Disable event monitoring"
     )
     opts.add_argument(
+        "-a", "--get-all-repos",
+        dest="get_all_repos",
+        action="store_true",
+        default=None,
+        help="Fetch all user repos (owned, forks, collaborations)"
+    )
+    opts.add_argument(
         "-b", "--csv-file",
         dest="csv_file",
         metavar="CSV_FILE",
@@ -2883,6 +2961,9 @@ def main():
         print("* Error: GITHUB_API_URL (-x / --github_url) value is empty")
         sys.exit(1)
 
+    if args.get_all_repos is True:
+        GET_ALL_REPOS = True
+
     if args.list_followers_and_followings:
         try:
             github_print_followers_and_followings(args.username)
@@ -2994,6 +3075,7 @@ def main():
     print(f"* GitHub API URL:\t\t{GITHUB_API_URL}")
     print(f"* Track repos changes:\t\t{TRACK_REPOS_CHANGES}")
     print(f"* Monitor GitHub events:\t{not DO_NOT_MONITOR_GITHUB_EVENTS}")
+    print(f"* Get owned repos only:\t\t{not GET_ALL_REPOS}")
     print(f"* Liveness check:\t\t{bool(LIVENESS_CHECK_INTERVAL)}" + (f" ({display_time(LIVENESS_CHECK_INTERVAL)})" if LIVENESS_CHECK_INTERVAL else ""))
     print(f"* CSV logging enabled:\t\t{bool(CSV_FILE)}" + (f" ({CSV_FILE})" if CSV_FILE else ""))
     print(f"* Output logging enabled:\t{not DISABLE_LOGGING}" + (f" ({FINAL_LOG_PATH})" if not DISABLE_LOGGING else ""))
