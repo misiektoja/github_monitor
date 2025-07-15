@@ -1,6 +1,6 @@
 # github_monitor
 
-github_monitor is a tool for real-time monitoring of GitHub users' activities, including profile and repository changes.
+OSINT tool for real-time monitoring of GitHub users' activities, including profile and repository changes.
 
 <a id="features"></a>
 ## Features
@@ -266,6 +266,12 @@ If you want to monitor changes to user's public repositories (e.g. new stargazer
 github_monitor github_username -j
 ```
 
+By default, only user-owned repos are tracked. To include forks and collaborations, set `GET_ALL_REPOS` to `True` or use the `-a` flag:
+
+```sh
+github_monitor github_username -j -a
+```
+
 If for any reason you do not want to monitor GitHub events for the user (e.g. new pushes, PRs, issues, forks, releases etc.), then use the `-k` flag:
 
 ```sh
@@ -292,6 +298,12 @@ github_monitor github_username -r
 <p align="center">
    <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_list_of_repos.png" alt="github_list_of_repos" width="90%"/>
 </p>
+
+By default, only user-owned repos are listed. To include forks and collaborations, set `GET_ALL_REPOS` to `True` or use the `-a` flag:
+
+```sh
+github_monitor github_username -r -a
+```
 
 If you want to display a list of repositories starred by the user then use the `-g` flag:
 
