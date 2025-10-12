@@ -1229,6 +1229,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     if event.payload.get("action"):
         st += print_v(f"\nAction:\t\t\t\t{event.payload.get('action')}")
 
+    # Prefer commits from payload when present (older API behavior)
     if event.payload.get("commits"):
         commits = event.payload["commits"]
         commits_total = len(commits)
@@ -1239,7 +1240,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
             commit_details = None
             if repo:
-                commit_details = repo.get_commit(commit["sha"])
+                commit_details = gh_call(lambda: repo.get_commit(commit["sha"]))()
 
             if commit_details:
                 commit_date = commit_details.commit.author.date
@@ -1274,6 +1275,81 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
             st += print_v(f"\n - Commit message:\t\t'{commit['message']}'")
             st += print_v("." * HORIZONTAL_LINE1)
+
+    # Fallback for new Events API where PushEvent no longer includes commit summaries
+    elif event.type == "PushEvent" and repo:
+        before_sha = event.payload.get("before")
+        head_sha = event.payload.get("head") or event.payload.get("after")
+        size_hint = event.payload.get("size")
+
+        # Debug when payload has no commits
+        # st += print_v("\n[debug] PushEvent payload has no 'commits' array; using compare API")
+        # st += print_v(f"[debug] before:\t\t\t{before_sha}")
+        # st += print_v(f"[debug] head/after:\t\t{head_sha}")
+        if size_hint is not None:
+            st += print_v(f"[debug] size (hint):\t\t{size_hint}")
+
+        if before_sha and head_sha and before_sha != head_sha:
+            try:
+                compare = gh_call(lambda: repo.compare(before_sha, head_sha))()
+            except Exception as e:
+                compare = None
+                st += print_v(f"* Error using compare({before_sha[:12]}...{head_sha[:12]}): {e}")
+
+            if compare:
+                commits = list(compare.commits)
+                commits_total = len(commits)
+                short_repo = getattr(repo, "full_name", repo_name)
+                compare_url = f"https://github.com/{short_repo}/compare/{before_sha[:12]}...{head_sha[:12]}"
+                st += print_v(f"\nNumber of commits:\t\t{commits_total}")
+                st += print_v(f"Compare URL:\t\t\t{compare_url}")
+
+                for commit_count, c in enumerate(commits, start=1):
+                    st += print_v(f"\n=== Commit {commit_count}/{commits_total} ===")
+                    st += print_v("." * HORIZONTAL_LINE1)
+
+                    commit_sha = getattr(c, "sha", None) or getattr(c, "id", None)
+                    commit_details = gh_call(lambda: repo.get_commit(commit_sha))() if (repo and commit_sha) else None
+
+                    if commit_details:
+                        commit_date = commit_details.commit.author.date
+                        st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date)}")
+
+                    if commit_sha:
+                        st += print_v(f" - Commit SHA:\t\t\t{commit_sha}")
+
+                    author_name = None
+                    if commit_details and commit_details.commit and commit_details.commit.author:
+                        author_name = commit_details.commit.author.name
+                    st += print_v(f" - Commit author:\t\t{author_name or 'N/A'}")
+
+                    if commit_details and commit_details.author:
+                        st += print_v(f" - Commit author URL:\t\t{commit_details.author.html_url}")
+
+                    if commit_details:
+                        st += print_v(f" - Commit URL:\t\t\t{commit_details.html_url}")
+                        st += print_v(f" - Commit raw patch URL:\t{commit_details.html_url}.patch")
+
+                        stats = getattr(commit_details, "stats", None)
+                        additions = stats.additions if stats else 0
+                        deletions = stats.deletions if stats else 0
+                        stats_total = stats.total if stats else 0
+                        st += print_v(f"\n - Additions/Deletions:\t\t+{additions} / -{deletions} ({stats_total})")
+
+                        try:
+                            file_count = sum(1 for _ in commit_details.files)
+                        except Exception:
+                            file_count = "N/A"
+                        st += print_v(f" - Files changed:\t\t{file_count}")
+                        if file_count and file_count != "N/A":
+                            st += print_v(" - Changed files list:")
+                            for f in commit_details.files:
+                                st += print_v(f"     • '{f.filename}' - {f.status} (+{f.additions} / -{f.deletions})")
+
+                        st += print_v(f"\n - Commit message:\t\t'{commit_details.commit.message}'")
+                        st += print_v("." * HORIZONTAL_LINE1)
+        else:
+            st += print_v("\nNo compare range available (forced push, tag push, or identical before/after)")
 
     if event.payload.get("commits") == []:
         st += print_v("\nNo new commits (forced push, tag push, branch reset or other ref update)")
