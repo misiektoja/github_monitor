@@ -2,6 +2,18 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 2.2 (13 Oct 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Added daily contributions tracking and notifications (`-m` and `-y` flags)
+- **IMPROVE:** Added support to show original repo details for ForkEvent instead of fork target
+- **IMPROVE:** Added RateLimitExceededException handling in gh_call with safe sleep logic and header parsing
+
+**Bug fixes**:
+
+- **BUGFIX:** Restored missing PushEvent commits using compare API after GitHub Events API payload change in Aug 25
+
 # Changes in 2.1 (15 Jul 2025)
 
 **Features and Improvements**:
