@@ -13,6 +13,7 @@ OSINT tool for real-time monitoring of GitHub users' activities, including profi
    - added/removed public repositories
    - changes in user name, email, location, company, bio and blog URL
    - changes in profile visibility (public to private and vice versa)
+   - changes in user's daily contributions
    - detection when a user blocks or unblocks you
    - detection of account metadata changes (such as account update date)
 - Email notifications for different events (new GitHub events, changed followings, followers, repositories, user name, email, location, company, bio, blog URL etc.)
@@ -60,8 +61,8 @@ OSINT tool for real-time monitoring of GitHub users' activities, including profi
 
 Tested on:
 
-* **macOS**: Ventura, Sonoma, Sequoia
-* **Linux**: Raspberry Pi OS (Bullseye, Bookworm), Ubuntu 24, Rocky Linux 8.x/9.x, Kali Linux 2024/2025
+* **macOS**: Ventura, Sonoma, Sequoia, Tahoe
+* **Linux**: Raspberry Pi OS (Bullseye, Bookworm, Trixie), Ubuntu 24/25, Rocky Linux 8.x/9.x, Kali Linux 2024/2025
 * **Windows**: 10, 11
 
 It should work on other versions of macOS, Linux, Unix and Windows as well.
@@ -272,6 +273,12 @@ By default, only user-owned repos are tracked. To include forks and collaboratio
 github_monitor github_username -j -a
 ```
 
+If you want to track user's daily contributions then use the `-m` flag:
+
+```sh
+github_monitor github_username -m
+```
+
 If for any reason you do not want to monitor GitHub events for the user (e.g. new pushes, PRs, issues, forks, releases etc.), then use the `-k` flag:
 
 ```sh
@@ -353,7 +360,7 @@ To get email notifications when changes in user repositories are detected (e.g. 
 - or use the `-q` flag
 
 ```sh
-github_monitor github_username -q
+github_monitor github_username -j -q
 ```
 
 To be informed whenever changes in the update date of user repositories are detected:
@@ -361,10 +368,20 @@ To be informed whenever changes in the update date of user repositories are dete
 - or use the `-u` flag
 
 ```sh
-github_monitor github_username -u
+github_monitor github_username -j -u
 ```
 
 The last two options (`-q` and `-u`) only work if tracking of repositories changes is enabled (`-j`).
+
+To be informed about user's daily contributions:
+- set `CONTRIB_NOTIFICATION` to `True`
+- or use the `-y` flag
+
+```sh
+github_monitor github_username -m -y
+```
+
+The `-y` only works if tracking of daily contributions is enabled (`-m`).
 
 To disable sending an email on errors (enabled by default):
 - set `ERROR_NOTIFICATION` to `False`
