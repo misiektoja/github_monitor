@@ -297,6 +297,7 @@ import re
 import ipaddress
 try:
     from github import Github, Auth, GithubException, UnknownObjectException
+    from github.GithubException import RateLimitExceededException
     from github.GithubException import BadCredentialsException
 except ModuleNotFoundError:
     raise SystemExit("Error: Couldn't find the PyGitHub library !\n\nTo install it, run:\n    pip3 install PyGithub\n\nOnce installed, re-run this tool. For more help, visit:\nhttps://github.com/PyGithub/PyGithub")
@@ -871,6 +872,34 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
         for i in range(1, retries + 1):
             try:
                 return fn(*args, **kwargs)
+            except RateLimitExceededException as e:
+                headers = getattr(e, "headers", None)
+
+                reset_str = None
+                if headers:
+                    val = headers.get("X-RateLimit-Reset")
+                    if isinstance(val, str):
+                        reset_str = val
+
+                sleep_for: int
+                if reset_str is not None and reset_str.isdigit():
+                    reset_epoch = int(reset_str)
+                    sleep_for = max(0, reset_epoch - int(time.time()) + 1)
+                else:
+                    retry_after_str = None
+                    if headers:
+                        ra = headers.get("Retry-After")
+                        if isinstance(ra, str):
+                            retry_after_str = ra
+                    if retry_after_str is not None and retry_after_str.isdigit():
+                        sleep_for = int(retry_after_str)
+                    else:
+                        sleep_for = int(backoff * i)
+
+                print(f"* {fn.__name__} rate limited, sleeping {sleep_for}s (retry {i}/{retries})")
+                time.sleep(sleep_for)
+                continue
+
             except NET_ERRORS as e:
                 print(f"* {fn.__name__} error: {e} (retry {i}/{retries})")
                 time.sleep(backoff * i)
