@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.1
+v2.2
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "2.1"
+VERSION = "2.2"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -76,12 +76,18 @@ EVENT_NOTIFICATION = False
 
 # Whether to send an email when user's repositories change (stargazers, watchers, forks, issues,
 # PRs, description etc., except for update date)
+# Requires TRACK_REPOS_CHANGES to be enabled
 # Can also be enabled via the -q flag
 REPO_NOTIFICATION = False
 
 # Whether to send an email when user's repositories update date changes
 # Can also be enabled via the -u flag
 REPO_UPDATE_DATE_NOTIFICATION = False
+
+# Whether to send an email when user's daily contributions count changes
+# Requires TRACK_CONTRIB_CHANGES to be enabled
+# Can also be enabled via the -y flag
+CONTRIB_NOTIFICATION = False
 
 # Whether to send an email on errors
 # Can also be disabled via the -e flag
@@ -126,12 +132,24 @@ EVENTS_TO_MONITOR = [
 # any events older than the most recent EVENTS_NUMBER will be missed
 EVENTS_NUMBER = 30  # 1 page
 
+# If True, track user's repository changes (changed stargazers, watchers, forks, description, update date etc.)
+# Can also be enabled using the -j flag
+TRACK_REPOS_CHANGES = False
+
+# If True, disable event monitoring
+# Can also be disabled using the -k flag
+DO_NOT_MONITOR_GITHUB_EVENTS = False
+
 # If True, fetch all user repos (owned, forks, collaborations); otherwise, fetch only owned repos
 GET_ALL_REPOS = False
 
 # Alert about blocked (403 - TOS violation and 451 - DMCA block) repos in the console output (in monitoring mode)
 # In listing mode (-r), blocked repos are always shown
 BLOCKED_REPOS = False
+
+# If True, track and log user's daily contributions count changes
+# Can also be enabled using the -m flag
+TRACK_CONTRIB_CHANGES = False
 
 # How often to print a "liveness check" message to the output; in seconds
 # Set to 0 to disable
@@ -200,13 +218,17 @@ PROFILE_NOTIFICATION = False
 EVENT_NOTIFICATION = False
 REPO_NOTIFICATION = False
 REPO_UPDATE_DATE_NOTIFICATION = False
+CONTRIB_NOTIFICATION = False
 ERROR_NOTIFICATION = False
 GITHUB_CHECK_INTERVAL = 0
 LOCAL_TIMEZONE = ""
 EVENTS_TO_MONITOR = []
 EVENTS_NUMBER = 0
+TRACK_REPOS_CHANGES = False
+DO_NOT_MONITOR_GITHUB_EVENTS = False
 GET_ALL_REPOS = False
 BLOCKED_REPOS = False
+TRACK_CONTRIB_CHANGES = False
 LIVENESS_CHECK_INTERVAL = 0
 CHECK_INTERNET_URL = ""
 CHECK_INTERNET_TIMEOUT = 0
@@ -234,9 +256,6 @@ LIVENESS_CHECK_COUNTER = LIVENESS_CHECK_INTERVAL / GITHUB_CHECK_INTERVAL
 stdout_bck = None
 csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
 
-TRACK_REPOS_CHANGES = False
-DO_NOT_MONITOR_GITHUB_EVENTS = False
-
 CLI_CONFIG_PATH = None
 
 # to solve the issue: 'SyntaxError: f-string expression part cannot include a backslash'
@@ -252,7 +271,7 @@ if sys.version_info < (3, 10):
 import time
 import string
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from dateutil import relativedelta
 from dateutil.parser import isoparse
 import calendar
@@ -288,7 +307,9 @@ import socket
 from typing import Any, Callable
 import shutil
 from pathlib import Path
-
+from typing import Optional
+import datetime as dt
+import requests
 
 NET_ERRORS = (
     req.exceptions.RequestException,
@@ -566,6 +587,11 @@ def now_local_naive():
     return datetime.now(pytz.timezone(LOCAL_TIMEZONE)).replace(microsecond=0, tzinfo=None)
 
 
+# Returns today's date in LOCAL_TIMEZONE (naive date)
+def today_local() -> dt.date:
+    return now_local_naive().date()
+
+
 # Returns the current date/time in human readable format; eg. Sun 21 Apr 2024, 15:08:45
 def get_cur_ts(ts_str=""):
     return (f'{ts_str}{calendar.day_abbr[(now_local_naive()).weekday()]}, {now_local_naive().strftime("%d %b %Y, %H:%M:%S")}')
@@ -634,6 +660,11 @@ def get_short_date_from_ts(ts, show_year=False, show_hour=True, show_weekday=Tru
     elif isinstance(ts, float):
         ts_rounded = int(round(ts))
         ts_new = datetime.fromtimestamp(ts_rounded, tz)
+
+    elif isinstance(ts, date):
+        ts = datetime.combine(ts, datetime.min.time())
+        ts = pytz.utc.localize(ts)
+        ts_new = ts.astimezone(tz)
 
     else:
         return ""
@@ -1983,6 +2014,97 @@ def is_profile_public(g: Github, user, new_account_days=30):
 
     return False
 
+
+# Returns a dict mapping 'YYYY-MM-DD' -> int contribution count for the range
+def get_daily_contributions(username: str, start: Optional[dt.date] = None, end: Optional[dt.date] = None, token: Optional[str] = None) -> dict:
+    if token is None:
+        raise ValueError("GitHub token is required")
+
+    today = dt.date.today()
+    if start is None:
+        start = today
+    if end is None:
+        end = today
+
+    url = GITHUB_API_URL.rstrip("/") + "/graphql"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    start_iso = dt.datetime.combine(start, dt.time.min).isoformat()
+    to_exclusive = end + dt.timedelta(days=1)
+    end_iso = dt.datetime.combine(to_exclusive, dt.time.min).isoformat()
+
+    query = """
+    query($login: String!, $from: DateTime!, $to: DateTime!) {
+      user(login: $login) {
+        contributionsCollection(from: $from, to: $to) {
+          contributionCalendar {
+            weeks {
+              contributionDays {
+                date
+                contributionCount
+              }
+            }
+          }
+        }
+      }
+    }"""
+
+    variables = {"login": username, "from": start_iso, "to": end_iso}
+    r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+
+    days = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]["weeks"]
+    out = {}
+    for w in days:
+        for d in w["contributionDays"]:
+            date = d["date"]
+            if start <= dt.date.fromisoformat(date) <= end:
+                out[date] = d["contributionCount"]
+    return out
+
+
+# Return contribution count for a single day
+def get_daily_contributions_count(username: str, day: dt.date, token: str) -> int:
+    data = get_daily_contributions(username, day, day, token)
+    return next(iter(data.values()), 0)
+
+
+# Checks count for today and decides whether to notify based on stored state.
+def check_daily_contribs(username: str, token: str, state: dict, min_delta: int = 1, fail_threshold: int = 3) -> tuple[bool, int, bool]:
+    day = today_local()
+
+    try:
+        curr = get_daily_contributions_count(username, day, token=token)
+        state["consecutive_failures"] = 0
+        state["last_error"] = None
+    except Exception as e:
+        state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
+        state["last_error"] = f"{type(e).__name__}: {e}"
+        error_notify = state["consecutive_failures"] >= fail_threshold
+        return False, state.get("count", 0), error_notify
+
+    prev_day = state.get("day")
+    prev_cnt = state.get("count")
+
+    # New day -> reset baseline silently
+    if prev_day != day:
+        state["day"] = day
+        state["count"] = curr
+        state["prev_count"] = curr
+        return False, curr, False  # no notify on rollover
+
+    # Same day -> notify if change >= threshold
+    if prev_cnt is not None and abs(curr - prev_cnt) >= min_delta:
+        state["prev_count"] = prev_cnt
+        state["count"] = curr
+        return True, curr, False
+
+    # No change
+    state["count"] = curr
+    return False, curr, False
+
+
 # Monitors activity of the specified GitHub user
 def github_monitor_user(user, csv_file_name):
 
@@ -2002,6 +2124,8 @@ def github_monitor_user(user, csv_file_name):
     event_date: datetime | None = None
     blocked = None
     public = False
+    contrib_state = {}
+    contrib_curr = 0
 
     print("Sneaking into GitHub like a ninja ...")
 
@@ -2043,6 +2167,14 @@ def github_monitor_user(user, csv_file_name):
 
         public = is_profile_public(g, user)
         blocked = is_blocked_by(user) if public else None
+
+        if TRACK_CONTRIB_CHANGES:
+            contrib_curr = get_daily_contributions_count(user, today_local(), token=GITHUB_TOKEN)
+            contrib_state = {
+                "day": today_local(),
+                "count": contrib_curr,
+                "prev_count": contrib_curr
+            }
 
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
             events = list(islice(g_user.get_events(), EVENTS_NUMBER))
@@ -2124,6 +2256,8 @@ def github_monitor_user(user, csv_file_name):
     print(f"Followings:\t\t\t{followings_count}")
     print(f"Repositories:\t\t\t{repos_count}")
     print(f"Starred repos:\t\t\t{starred_count}")
+    if TRACK_CONTRIB_CHANGES:
+        print(f"Today's contributions:\t\t{contrib_curr}")
 
     if not DO_NOT_MONITOR_GITHUB_EVENTS:
         print(f"Available events:\t\t{available_events}{'+' if available_events == EVENTS_NUMBER else ''}")
@@ -2241,6 +2375,36 @@ def github_monitor_user(user, csv_file_name):
             starred_list = list(starred_raw)
             starred_count = starred_raw.totalCount
             starred_old, starred_old_count = handle_profile_change("Starred Repos", starred_old_count, starred_count, starred_old, starred_list, user, csv_file_name, field="full_name")
+
+        # Changed contributions in a day
+        if TRACK_CONTRIB_CHANGES:
+            contrib_notify, contrib_curr, contrib_error_notify = check_daily_contribs(user, GITHUB_TOKEN, contrib_state, min_delta=1, fail_threshold=3)
+            if contrib_error_notify and ERROR_NOTIFICATION:
+                failures = contrib_state.get("consecutive_failures", 0)
+                last_err = contrib_state.get("last_error", "Unknown error")
+                err_msg = f"Error: GitHub daily contributions check failed {failures} times. Last error: {last_err}\n"
+                print(err_msg)
+                send_email(f"GitHub monitor errors for {user}", err_msg + get_cur_ts(nl_ch + "Timestamp: "), "", SMTP_SSL)
+
+            if contrib_notify:
+                contrib_old = contrib_state.get("prev_count")
+                print(f"* Daily contributions changed for user {user} on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}!\n")
+
+                try:
+                    if csv_file_name:
+                        write_csv_entry(csv_file_name, now_local_naive(), "Daily Contribs", user, contrib_old, contrib_curr)
+                except Exception as e:
+                    print(f"* Error: {e}")
+
+                m_subject = f"GitHub user {user} daily contributions changed from {contrib_old} to {contrib_curr}!"
+                m_body = (f"GitHub user {user} daily contributions changed on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+
+                if CONTRIB_NOTIFICATION:
+                    print(f"Sending email notification to {RECEIVER_EMAIL}")
+                    send_email(m_subject, m_body, "", SMTP_SSL)
+
+                print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+                print_cur_ts("Timestamp:\t\t\t")
 
         # Changed bio
         bio = gh_call(lambda: g_user.bio)()
@@ -2652,7 +2816,7 @@ def github_monitor_user(user, csv_file_name):
 
 
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, GET_ALL_REPOS
+    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES
 
     if "--generate-config" in sys.argv:
         print(CONFIG_BLOCK.strip("\n"))
@@ -2760,6 +2924,13 @@ def main():
         help="Email when user's repositories update date changes"
     )
     notify.add_argument(
+        "-y", "--notify-daily-contribs",
+        dest="notify_daily_contribs",
+        action="store_true",
+        default=None,
+        help="Email when user's daily contributions count changes"
+    )
+    notify.add_argument(
         "-e", "--no-error-notify",
         dest="notify_errors",
         action="store_false",
@@ -2857,6 +3028,13 @@ def main():
         action="store_true",
         default=None,
         help="Disable logging to github_monitor_<username>.log"
+    )
+    opts.add_argument(
+        "-m", "--track-contribs-changes",
+        dest="track_contribs_changes",
+        action="store_true",
+        default=None,
+        help="Track user's daily contributions count and log changes"
     )
 
     args = parser.parse_args()
@@ -3047,11 +3225,17 @@ def main():
     if args.notify_repo_update_date is True:
         REPO_UPDATE_DATE_NOTIFICATION = True
 
+    if args.notify_daily_contribs is True:
+        CONTRIB_NOTIFICATION = True
+
     if args.notify_errors is False:
         ERROR_NOTIFICATION = False
 
     if args.track_repos_changes is True:
         TRACK_REPOS_CHANGES = True
+
+    if args.track_contribs_changes is True:
+        TRACK_CONTRIB_CHANGES = True
 
     if args.no_monitor_events is True:
         DO_NOT_MONITOR_GITHUB_EVENTS = True
@@ -3059,6 +3243,9 @@ def main():
     if not TRACK_REPOS_CHANGES:
         REPO_NOTIFICATION = False
         REPO_UPDATE_DATE_NOTIFICATION = False
+
+    if not TRACK_CONTRIB_CHANGES:
+        CONTRIB_NOTIFICATION = False
 
     if DO_NOT_MONITOR_GITHUB_EVENTS:
         EVENT_NOTIFICATION = False
@@ -3068,12 +3255,14 @@ def main():
         PROFILE_NOTIFICATION = False
         REPO_NOTIFICATION = False
         REPO_UPDATE_DATE_NOTIFICATION = False
+        CONTRIB_NOTIFICATION = False
         ERROR_NOTIFICATION = False
 
     print(f"* GitHub polling interval:\t[ {display_time(GITHUB_CHECK_INTERVAL)} ]")
-    print(f"* Email notifications:\t\t[profile changes = {PROFILE_NOTIFICATION}] [new events = {EVENT_NOTIFICATION}]\n*\t\t\t\t[repos changes = {REPO_NOTIFICATION}] [repos update date = {REPO_UPDATE_DATE_NOTIFICATION}]\n*\t\t\t\t[errors = {ERROR_NOTIFICATION}]")
+    print(f"* Email notifications:\t\t[profile changes = {PROFILE_NOTIFICATION}] [new events = {EVENT_NOTIFICATION}]\n*\t\t\t\t[repos changes = {REPO_NOTIFICATION}] [repos update date = {REPO_UPDATE_DATE_NOTIFICATION}]\n*\t\t\t\t[contrib changes = {CONTRIB_NOTIFICATION}] [errors = {ERROR_NOTIFICATION}]")
     print(f"* GitHub API URL:\t\t{GITHUB_API_URL}")
     print(f"* Track repos changes:\t\t{TRACK_REPOS_CHANGES}")
+    print(f"* Track contrib changes:\t{TRACK_CONTRIB_CHANGES}")
     print(f"* Monitor GitHub events:\t{not DO_NOT_MONITOR_GITHUB_EVENTS}")
     print(f"* Get owned repos only:\t\t{not GET_ALL_REPOS}")
     print(f"* Liveness check:\t\t{bool(LIVENESS_CHECK_INTERVAL)}" + (f" ({display_time(LIVENESS_CHECK_INTERVAL)})" if LIVENESS_CHECK_INTERVAL else ""))
