@@ -1189,19 +1189,31 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     st += print_v(f"Event type:\t\t\t{event.type}")
 
     if event.repo.id:
-        repo_name = event.repo.name
-        repo_url = event.repo.url.replace("https://api.github.com/repos/", "https://github.com/")
-        st += print_v(f"\nRepo name:\t\t\t{repo_name}")
-        st += print_v(f"Repo URL:\t\t\t{repo_url}")
-
         try:
             desc_len = 80
             repo = g.get_repo(event.repo.name)
-            desc = repo.description or ''
+
+            # For ForkEvent, prefer the source repo if available
+            if event.type == "ForkEvent" and repo is not None:
+                try:
+                    parent = gh_call(lambda: getattr(repo, "parent", None))()
+                    if parent:
+                        repo = parent
+                except Exception:
+                    pass
+
+            repo_name = getattr(repo, "full_name", event.repo.name)
+            repo_url = getattr(repo, "html_url", event.repo.url.replace("https://api.github.com/repos/", "https://github.com/"))
+
+            st += print_v(f"\nRepo name:\t\t\t{repo_name}")
+            st += print_v(f"Repo URL:\t\t\t{repo_url}")
+
+            desc = (repo.description or "") if repo else ""
             cleaned = desc.replace('\n', ' ')
             short_desc = cleaned[:desc_len] + '...' if len(cleaned) > desc_len else cleaned
             if short_desc:
                 st += print_v(f"Repo description:\t\t{short_desc}")
+
         except UnknownObjectException:
             repo = None
             st += print_v("\nRepository not found or has been removed")
