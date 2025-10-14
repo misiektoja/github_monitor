@@ -1198,6 +1198,12 @@ def format_body_block(content, indent="    "):
     return f"\n{indented}"
 
 
+def github_web_base() -> str:
+    if "api.github.com" in GITHUB_API_URL:
+        return "https://github.com"
+    return GITHUB_API_URL.replace("/api/v3", "").rstrip("/")
+
+
 # Prints details about passed GitHub event
 def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
@@ -1341,7 +1347,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                 commits = list(compare.commits)
                 commits_total = len(commits)
                 short_repo = getattr(repo, "full_name", repo_name)
-                compare_url = f"https://github.com/{short_repo}/compare/{before_sha[:12]}...{head_sha[:12]}"
+                compare_url = f"{github_web_base()}/{short_repo}/compare/{before_sha[:12]}...{head_sha[:12]}"
                 st += print_v(f"\nNumber of commits:\t\t{commits_total}")
                 st += print_v(f"Compare URL:\t\t\t{compare_url}")
 
