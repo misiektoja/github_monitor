@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.2.2
+v2.3
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "2.2.2"
+VERSION = "2.3"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -800,6 +800,16 @@ def toggle_repo_update_date_changes_notifications_signal_handler(sig, frame):
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
     print(f"* Email notifications:\t\t[repos update date = {REPO_UPDATE_DATE_NOTIFICATION}]")
+    print_cur_ts("Timestamp:\t\t\t")
+
+
+# Signal handler for SIGURG allowing to switch email notifications for user's daily contributions changes
+def toggle_contrib_changes_notifications_signal_handler(sig, frame):
+    global CONTRIB_NOTIFICATION
+    CONTRIB_NOTIFICATION = not CONTRIB_NOTIFICATION
+    sig_name = signal.Signals(sig).name
+    print(f"* Signal {sig_name} received")
+    print(f"* Email notifications:\t\t[contrib changes = {CONTRIB_NOTIFICATION}]")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -3408,7 +3418,8 @@ def main():
 
     out = f"\nMonitoring GitHub user {args.username}"
     print(out)
-    print("-" * len(out))
+    # print("-" * len(out))
+    print("─" * HORIZONTAL_LINE1)
 
     # We define signal handlers only for Linux, Unix & MacOS since Windows has limited number of signals supported
     if platform.system() != 'Windows':
@@ -3416,6 +3427,7 @@ def main():
         signal.signal(signal.SIGUSR2, toggle_new_events_notifications_signal_handler)
         signal.signal(signal.SIGCONT, toggle_repo_changes_notifications_signal_handler)
         signal.signal(signal.SIGPIPE, toggle_repo_update_date_changes_notifications_signal_handler)
+        signal.signal(signal.SIGURG, toggle_contrib_changes_notifications_signal_handler)
         signal.signal(signal.SIGTRAP, increase_check_signal_handler)
         signal.signal(signal.SIGABRT, decrease_check_signal_handler)
         signal.signal(signal.SIGHUP, reload_secrets_signal_handler)
