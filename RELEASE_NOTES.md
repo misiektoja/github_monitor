@@ -2,6 +2,12 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 2.2.1 (14 Oct 2025)
+
+**Bug fixes**:
+
+- **BUGFIX:** Replaced hard coded github.com links with dynamic base URL for GHE compatibility (thanks [@commitSpectral](https://github.com/commitSpectral))
+
 # Changes in 2.2 (13 Oct 2025)
 
 **Features and Improvements**:
