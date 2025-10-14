@@ -21,6 +21,7 @@ OSINT tool for real-time monitoring of GitHub users' activities, including profi
 - Clickable GitHub URLs printed in the console & included in email notifications (repos, PRs, commits, issues, releases etc.)
 - Possibility to control the running copy of the script via signals
 - Support for Public Web GitHub and GitHub Enterprise
+- Functional, procedural Python (minimal OOP)
 
 <p align="center">
    <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
@@ -436,6 +437,7 @@ List of supported signals:
 | USR2 | Toggle email notifications for new GitHub events (-s) |
 | CONT | Toggle email notifications for user's repositories changes (except for update date) (-q) |
 | PIPE | Toggle email notifications for user's repositories update date changes (-u) |
+| URG | Toggle email notifications for user's daily contributions changes (-y) |
 | TRAP | Increase the user check interval (by 1 min) |
 | ABRT | Decrease the user check interval (by 1 min) |
 | HUP | Reload secrets from .env file |
