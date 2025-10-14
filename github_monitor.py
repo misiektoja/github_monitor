@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.2.1
+v2.2.2
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "2.2.1"
+VERSION = "2.2.2"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -2156,11 +2156,16 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
         end = today
 
     url = GITHUB_API_URL.rstrip("/") + "/graphql"
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Time-Zone": LOCAL_TIMEZONE,
+    }
 
-    start_iso = dt.datetime.combine(start, dt.time.min).isoformat()
-    to_exclusive = end + dt.timedelta(days=1)
-    end_iso = dt.datetime.combine(to_exclusive, dt.time.min).isoformat()
+    tz = pytz.timezone(LOCAL_TIMEZONE)
+    start_w = start - dt.timedelta(days=1)
+    end_w_exclusive = end + dt.timedelta(days=2)
+    start_iso = tz.localize(dt.datetime.combine(start_w, dt.time.min)).isoformat()
+    end_iso = tz.localize(dt.datetime.combine(end_w_exclusive, dt.time.min)).isoformat()
 
     query = """
     query($login: String!, $from: DateTime!, $to: DateTime!) {
