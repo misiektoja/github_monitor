@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.2
+v2.2.1
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "2.2"
+VERSION = "2.2.1"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -1198,6 +1198,7 @@ def format_body_block(content, indent="    "):
     return f"\n{indented}"
 
 
+# Returns the base web URL for GitHub or GHE (e.g. https://github.com or https://ghe.example.com)
 def github_web_base() -> str:
     if "api.github.com" in GITHUB_API_URL:
         return "https://github.com"
@@ -1238,7 +1239,9 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     pass
 
             repo_name = getattr(repo, "full_name", event.repo.name)
-            repo_url = getattr(repo, "html_url", event.repo.url.replace("https://api.github.com/repos/", "https://github.com/"))
+
+            api_prefix = GITHUB_API_URL.rstrip("/") + "/repos/"
+            repo_url = getattr(repo, "html_url", event.repo.url.replace(api_prefix, github_web_base() + "/"))
 
             st += print_v(f"\nRepo name:\t\t\t{repo_name}")
             st += print_v(f"Repo URL:\t\t\t{repo_url}")
@@ -1333,8 +1336,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         # st += print_v("\n[debug] PushEvent payload has no 'commits' array; using compare API")
         # st += print_v(f"[debug] before:\t\t\t{before_sha}")
         # st += print_v(f"[debug] head/after:\t\t{head_sha}")
-        if size_hint is not None:
-            st += print_v(f"[debug] size (hint):\t\t{size_hint}")
+        # if size_hint is not None:
+        #     st += print_v(f"[debug] size (hint):\t\t{size_hint}")
 
         if before_sha and head_sha and before_sha != head_sha:
             try:
@@ -1854,9 +1857,11 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
     if removed_items:
         print(f"Removed {label.lower()}:\n")
         removed_mbody = f"\nRemoved {label.lower()}:\n\n"
+        web_base = github_web_base()
         for item in removed_items:
-            item_url = (f"https://github.com/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
-                        else f"https://github.com/{user}/{item}/")
+            item_url = (f"{web_base}/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
+                        else f"{web_base}/{user}/{item}/")
+
             print(f"- {item} [ {item_url} ]")
             removed_list_str += f"- {item} [ {item_url} ]\n"
             try:
@@ -1869,9 +1874,10 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
     if added_items:
         print(f"Added {label.lower()}:\n")
         added_mbody = f"\nAdded {label.lower()}:\n\n"
+        web_base = github_web_base()
         for item in added_items:
-            item_url = (f"https://github.com/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
-                        else f"https://github.com/{user}/{item}/")
+            item_url = (f"{web_base}/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
+                        else f"{web_base}/{user}/{item}/")
             print(f"- {item} [ {item_url} ]")
             added_list_str += f"- {item} [ {item_url} ]\n"
             try:
@@ -1943,7 +1949,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             print(f"{removal_text} {label.lower()}:\n")
             removed_mbody = f"\n{removal_text} {label.lower()}:\n\n"
             for item in removed_items:
-                item_line = f"- {item} [ https://github.com/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
+                item_line = f"- {item} [ {github_web_base()}/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
                 print(item_line)
                 removed_list_str += item_line + "\n"
                 try:
@@ -1958,7 +1964,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             print(f"Added {label.lower()}:\n")
             added_mbody = f"\nAdded {label.lower()}:\n\n"
             for item in added_items:
-                item_line = f"- {item} [ https://github.com/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
+                item_line = f"- {item} [ {github_web_base()}/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
                 print(item_line)
                 added_list_str += item_line + "\n"
                 try:
