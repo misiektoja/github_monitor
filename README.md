@@ -40,6 +40,7 @@ OSINT tool for real-time monitoring of GitHub users' activities, including profi
    * [GitHub Personal Access Token](#github-personal-access-token)
    * [GitHub API URL](#github-api-url)
    * [Events to Monitor](#events-to-monitor)
+   * [Repositories to Monitor](#repositories-to-monitor)
    * [Time Zone](#time-zone)
    * [SMTP Settings](#smtp-settings)
    * [Storing Secrets](#storing-secrets)
@@ -168,6 +169,21 @@ By default all events are monitored, but if you want to limit it, then remove th
 EVENTS_TO_MONITOR=['PushEvent','PullRequestEvent', 'IssuesEvent', 'ForkEvent', 'ReleaseEvent']
 ```
 
+<a id="repositories-to-monitor"></a>
+### Repositories to Monitor
+
+When tracking repository changes (`-j` flag), you can limit which repositories will be monitored for detailed changes (stargazers, watchers, forks, issues, PRs, etc.). You can do it by changing the `REPOS_TO_MONITOR` configuration option or via the `--repos` command-line argument (see [Monitoring Mode](#monitoring-mode)).
+
+By default all repositories are monitored (`REPOS_TO_MONITOR = ['ALL']`), but if you want to monitor only specific repositories, you can use the `'user/repo_name'` format:
+
+```
+REPOS_TO_MONITOR = ['user1/repo1', 'user2/repo2', 'user1/repo3']
+```
+
+This allows you to have different repository lists for different users. When the tool runs for a specific user, it will only monitor repositories where the user matches the user in the list.
+
+Note: When using a specific list (not `'ALL'`), newly created repositories will NOT be automatically monitored - only repositories explicitly listed will be monitored.
+
 <a id="time-zone"></a>
 ### Time Zone
 
@@ -273,6 +289,16 @@ By default, only user-owned repos are tracked. To include forks and collaboratio
 ```sh
 github_monitor github_username -j -a
 ```
+
+If you want to monitor only specific repositories instead of all user-owned repositories, you can do it via the `--repos` command-line flag or the `REPOS_TO_MONITOR` configuration option (see [Repositories to Monitor](#repositories-to-monitor)). Use the `--repos` flag with a comma-separated list of repository names:
+
+```sh
+github_monitor github_username -j --repos "repo1,repo2,repo3"
+```
+
+This will only monitor detailed changes (stargazers, watchers, forks, issues, PRs, etc.) for the specified repositories. The `--repos` flag requires the `-j` flag to be enabled and overrides the `REPOS_TO_MONITOR` configuration option.
+
+Note: When using a specific list, newly created repositories will NOT be automatically monitored - only repositories explicitly listed will be monitored.
 
 If you want to track user's daily contributions then use the `-m` flag:
 
