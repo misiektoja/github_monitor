@@ -136,6 +136,17 @@ EVENTS_NUMBER = 30  # 1 page
 # Can also be enabled using the -j flag
 TRACK_REPOS_CHANGES = False
 
+# Repositories to monitor when TRACK_REPOS_CHANGES is enabled
+# Use 'ALL' to monitor all repositories (default behavior)
+# Use 'user/repo_name' format to monitor specific repositories for specific users
+# If the current user matches the user in the list, that repository will be monitored
+# Example: ['user1/repo1', 'user2/repo2', 'user1/repo3']
+# Can also be set using the --repos flag (comma-separated repo names only, without user prefix)
+# Example: --repos "repo1,repo2,repo3"
+# Note: When using a specific list (not 'ALL'), newly created repositories will NOT be
+# automatically monitored - only repositories explicitly listed here will be monitored.
+REPOS_TO_MONITOR = ['ALL']
+
 # If True, disable event monitoring
 # Can also be disabled using the -k flag
 DO_NOT_MONITOR_GITHUB_EVENTS = False
@@ -225,6 +236,7 @@ LOCAL_TIMEZONE = ""
 EVENTS_TO_MONITOR = []
 EVENTS_NUMBER = 0
 TRACK_REPOS_CHANGES = False
+REPOS_TO_MONITOR = []
 DO_NOT_MONITOR_GITHUB_EVENTS = False
 GET_ALL_REPOS = False
 BLOCKED_REPOS = False
@@ -2413,9 +2425,31 @@ def github_monitor_user(user, csv_file_name):
 
     list_of_repos = []
     if repos_list and TRACK_REPOS_CHANGES:
+        # Filter repos for detailed monitoring only (keep full repos_list for profile change detection)
+        repos_list_filtered = repos_list
+        if 'ALL' not in REPOS_TO_MONITOR:
+            repos_list_filtered = []
+            for repo in repos_list:
+                # Check if repo matches any entry in REPOS_TO_MONITOR
+                should_monitor = False
+                for monitor_entry in REPOS_TO_MONITOR:
+                    if '/' in monitor_entry:
+                        # Format: 'user/repo_name' - check if user matches and repo matches
+                        monitor_user, monitor_repo = monitor_entry.split('/', 1)
+                        if monitor_user == user_login and monitor_repo == repo.name:
+                            should_monitor = True
+                            break
+                    else:
+                        # Format: just 'repo_name' (from CLI) - check if repo name matches for current user
+                        if monitor_entry == repo.name and repo.owner.login == user_login:
+                            should_monitor = True
+                            break
+                if should_monitor:
+                    repos_list_filtered.append(repo)
+
         print("Processing list of public repositories (be patient, it might take a while) ...")
         try:
-            list_of_repos = github_process_repos(repos_list)
+            list_of_repos = github_process_repos(repos_list_filtered)
         except Exception as e:
             print(f"* Cannot process list of public repositories: {e}")
         print_cur_ts("\nTimestamp:\t\t\t")
@@ -2784,9 +2818,31 @@ def github_monitor_user(user, csv_file_name):
             else:
                 repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])()
 
-            if repos_list is not None:
+            # Filter repos for detailed monitoring only (keep full repos_list for profile change detection)
+            repos_list_filtered = repos_list
+            if repos_list is not None and 'ALL' not in REPOS_TO_MONITOR:
+                repos_list_filtered = []
+                for repo in repos_list:
+                    # Check if repo matches any entry in REPOS_TO_MONITOR
+                    should_monitor = False
+                    for monitor_entry in REPOS_TO_MONITOR:
+                        if '/' in monitor_entry:
+                            # Format: 'user/repo_name' - check if user matches and repo matches
+                            monitor_user, monitor_repo = monitor_entry.split('/', 1)
+                            if monitor_user == user_login and monitor_repo == repo.name:
+                                should_monitor = True
+                                break
+                        else:
+                            # Format: just 'repo_name' (from CLI) - check if repo name matches for current user
+                            if monitor_entry == repo.name and repo.owner.login == user_login:
+                                should_monitor = True
+                                break
+                    if should_monitor:
+                        repos_list_filtered.append(repo)
+
+            if repos_list_filtered is not None:
                 try:
-                    list_of_repos = github_process_repos(repos_list)
+                    list_of_repos = github_process_repos(repos_list_filtered)
                     list_of_repos_ok = True
                 except Exception as e:
                     list_of_repos = list_of_repos_old
@@ -2960,7 +3016,7 @@ def github_monitor_user(user, csv_file_name):
 
 
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES
+    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES
 
     if "--generate-config" in sys.argv:
         print(CONFIG_BLOCK.strip("\n"))
@@ -3180,6 +3236,13 @@ def main():
         default=None,
         help="Track user's daily contributions count and log changes"
     )
+    opts.add_argument(
+        "--repos",
+        dest="repos",
+        metavar="REPO_LIST",
+        type=str,
+        help="Comma-separated list of repository names to monitor (only when -j/--track-repos-changes is enabled). Overrides REPOS_TO_MONITOR config. Example: --repos \"repo1,repo2,repo3\""
+    )
 
     args = parser.parse_args()
 
@@ -3377,6 +3440,13 @@ def main():
 
     if args.track_repos_changes is True:
         TRACK_REPOS_CHANGES = True
+
+    if args.repos is not None:
+        if not TRACK_REPOS_CHANGES:
+            print("* Error: --repos requires -j/--track-repos-changes to be enabled")
+            sys.exit(1)
+        # Split comma-separated repo names and strip whitespace
+        REPOS_TO_MONITOR = [repo.strip() for repo in args.repos.split(',') if repo.strip()]
 
     if args.track_contribs_changes is True:
         TRACK_CONTRIB_CHANGES = True
