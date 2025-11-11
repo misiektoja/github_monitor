@@ -6,8 +6,8 @@ This is a high-level summary of the most important changes.
 
 **Features and Improvements**:
 
-- **NEW:** Implemented support for selected repository monitoring
-- **NEW:** Added signal handler for daily contributions notifications (SIGURG)
+- **NEW:** Implemented support for selected repository monitoring (see `--repos` flag and `REPOS_TO_MONITOR` config option)
+- **NEW:** Added signal handler for daily contributions notifications (`SIGURG`)
 
 **Bug fixes**:
 
