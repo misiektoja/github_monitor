@@ -1,6 +1,6 @@
 # github_monitor
 
-OSINT tool for real-time monitoring of GitHub users' activities, including profile and repository changes.
+OSINT tool for real-time monitoring of **GitHub users' activities, including profile and repository changes**.
 
 <a id="features"></a>
 ## Features
