@@ -2,6 +2,17 @@
 
 This is a high-level summary of the most important changes. 
 
+# Changes in 2.3 (11 Nov 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Implemented support for selected repository monitoring
+- **NEW:** Added signal handler for daily contributions notifications (SIGURG)
+
+**Bug fixes**:
+
+- **BUGFIX:** Corrected daily contributions count by widening GraphQL query window to avoid timezone boundary errors
+
 # Changes in 2.2.1 (14 Oct 2025)
 
 **Bug fixes**:
