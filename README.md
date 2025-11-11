@@ -5,23 +5,23 @@ OSINT tool for real-time monitoring of **GitHub users' activities, including pro
 <a id="features"></a>
 ## Features
 
-- Real-time tracking of GitHub users' activities, including profile and repository changes:
-   - new GitHub events for the user like new pushes, PRs, issues, forks, releases, reviews etc.
-   - repository changes such as updated stargazers, watchers, forks, issues, PRs, description and repo update dates
-   - added/removed followings and followers
-   - added/removed starred repositories
-   - added/removed public repositories
-   - changes in user name, email, location, company, bio and blog URL
-   - changes in profile visibility (public to private and vice versa)
-   - changes in user's daily contributions
-   - detection when a user blocks or unblocks you
-   - detection of account metadata changes (such as account update date)
-- Email notifications for different events (new GitHub events, changed followings, followers, repositories, user name, email, location, company, bio, blog URL etc.)
-- Saving all user activities with timestamps to the CSV file
-- Clickable GitHub URLs printed in the console & included in email notifications (repos, PRs, commits, issues, releases etc.)
-- Possibility to control the running copy of the script via signals
-- Support for Public Web GitHub and GitHub Enterprise
-- Functional, procedural Python (minimal OOP)
+- **Real-time tracking** of GitHub users' activities, including profile and repository changes:
+   - **new GitHub events** for the user like new pushes, PRs, issues, forks, releases, reviews etc.
+   - **repository changes** such as updated stargazers, watchers, forks, issues, PRs, description and repo update dates
+   - added/removed **followings and followers**
+   - added/removed **starred repositories**
+   - added/removed **public repositories**
+   - changes in **user name, email, location, company, bio and blog URL**
+   - changes in **profile visibility** (public to private and vice versa)
+   - changes in **user's daily contributions**
+   - detection when a **user blocks or unblocks you**
+   - detection of **account metadata** changes (such as account update date)
+- **Email notifications** for different events (new GitHub events, changed followings, followers, repositories, user name, email, location, company, bio, blog URL etc.)
+- **Saving all user activities** with timestamps to the **CSV file**
+- **Clickable GitHub URLs** printed in the console & included in email notifications (repos, PRs, commits, issues, releases etc.)
+- Possibility to **control the running copy** of the script via signals
+- Support for **Public Web GitHub** and **GitHub Enterprise**
+- **Functional, procedural Python** (minimal OOP)
 
 <p align="center">
    <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
