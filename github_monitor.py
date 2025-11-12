@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.3.1
+v2.4
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "2.3.1"
+VERSION = "2.4"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -999,16 +999,105 @@ def github_print_followers_and_followings(user):
     g.close()
 
 
+# Displays a progress bar with percentage and current repo name
+def _display_progress(current, total, repo_name: str = "", bar_length: int = 40) -> None:
+    if total == 0:
+        return
+
+    # Defensive fallback for environments without a real TTY
+    try:
+        term_width = shutil.get_terminal_size(fallback=(80, 20)).columns
+    except Exception:
+        term_width = 80
+
+    # Keep a sane minimum – very tiny terminals may still wrap, but that's acceptable
+    term_width = max(40, term_width)
+
+    percent = float(current) / total
+    percent_str = f"{percent * 100:.1f}%"
+    counter_str = f"({current}/{total})"
+
+    # Prepare (possibly truncated) repo name
+    display_name = repo_name or ""
+    max_name_length = 30
+    if display_name and len(display_name) > max_name_length:
+        display_name = display_name[:max_name_length] + "..."
+
+    prefix = "Repos"
+    name_part = f" - {display_name}" if display_name else ""
+
+    # First, assume we can show prefix + name; compute max bar length that fits
+    def compute_bar_len(include_prefix: bool, include_name: bool) -> int:
+        base = ""
+        if include_prefix:
+            base += prefix + " "
+        base += "[]"  # placeholder for bar
+        base += f" {percent_str} {counter_str}"
+        if include_name and name_part:
+            base += name_part
+        # Leave 1 char margin
+        available = term_width - len(base) - 1
+        return available
+
+    max_bar_len = compute_bar_len(include_prefix=True, include_name=True)
+    show_prefix = True
+    show_name = True
+
+    if max_bar_len < 10:
+        # Try without repo name
+        show_name = False
+        max_bar_len = compute_bar_len(include_prefix=True, include_name=False)
+
+    if max_bar_len < 5:
+        # Try without prefix as well
+        show_prefix = False
+        max_bar_len = compute_bar_len(include_prefix=False, include_name=False)
+
+    # Final bar length: at least 3 chars, at most requested bar_length
+    bar_len = max(3, min(bar_length, max_bar_len if max_bar_len > 0 else bar_length))
+
+    filled_length = int(bar_len * percent)
+    bar = "█" * filled_length + "░" * (bar_len - filled_length)
+
+    parts = []
+    if show_prefix:
+        parts.append(prefix)
+    parts.append(f"[{bar}]")
+    parts.append(percent_str)
+    parts.append(counter_str)
+    if show_name and name_part:
+        parts.append(name_part.lstrip())
+
+    progress_str = " ".join(parts)
+
+    # Use ANSI escape code to clear to end of line, then write the progress
+    # \r moves to start of line, \033[K clears from cursor to end of line
+    sys.stdout.write("\r\033[K" + progress_str)
+    sys.stdout.flush()
+
+
 # Processes items from all passed repositories and returns a list of dictionaries
 def github_process_repos(repos_list):
     import logging
+    import warnings
+
+    # Suppress urllib3 warnings that might interfere with progress bar
+    urllib3.disable_warnings()
+    warnings.filterwarnings('ignore')
+
     list_of_repos = []
     stargazers_list = []
     subscribers_list = []
     forked_repos = []
 
     if repos_list:
-        for repo in repos_list:
+        # Convert to list if it's a generator/iterator to get total count
+        repos_list = list(repos_list)
+        total_repos = len(repos_list)
+
+        for idx, repo in enumerate(repos_list, 1):
+            # Update progress bar at start
+            _display_progress(idx, total_repos, repo.name)
             try:
                 repo_created_date = repo.created_at
                 repo_updated_date = repo.updated_at
@@ -1019,20 +1108,26 @@ def github_process_repos(repos_list):
 
                 try:
                     stargazers_list = [star.login for star in repo.get_stargazers()]
+                    _display_progress(idx, total_repos, repo.name)  # Refresh after stargazers
                     subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
+                    _display_progress(idx, total_repos, repo.name)  # Refresh after subscribers
                     forked_repos = [fork.full_name for fork in repo.get_forks()]
+                    _display_progress(idx, total_repos, repo.name)  # Refresh after forks
                 except GithubException as e:
                     if e.status in [403, 451]:
                         if BLOCKED_REPOS:
-                            print(f"* Repo '{repo.name}' is blocked, skipping for now: {e}")
+                            print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {e}")
                             print_cur_ts("Timestamp:\t\t\t")
+                        _display_progress(idx, total_repos, repo.name)
                         continue
                     raise
                 finally:
                     github_logger.setLevel(original_level)
 
                 issues = list(repo.get_issues(state='open'))
+                _display_progress(idx, total_repos, repo.name)  # Refresh after issues
                 pulls = list(repo.get_pulls(state='open'))
+                _display_progress(idx, total_repos, repo.name)  # Refresh after pulls
 
                 real_issues = [i for i in issues if not i.pull_request]
                 issue_count = len(real_issues)
@@ -1042,22 +1137,31 @@ def github_process_repos(repos_list):
                 pr_list = [f"#{pr.number} {pr.title} ({pr.user.login}) [ {pr.html_url} ]" for pr in pulls]
 
                 list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "issues_list": issues_list, "pulls_list": pr_list})
+                _display_progress(idx, total_repos, repo.name)  # Final refresh after successful processing
 
             except GithubException as e:
                 # Skip TOS-blocked (403) and legally blocked (451) repositories
                 if e.status in [403, 451]:
                     if BLOCKED_REPOS:
-                        print(f"* Repo '{repo.name}' is blocked, skipping for now: {e}")
+                        print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {e}")
                         print_cur_ts("Timestamp:\t\t\t")
+                    _display_progress(idx, total_repos, repo.name)
                     continue
                 else:
-                    print(f"* Cannot process repo '{repo.name}', skipping for now: {e}")
+                    print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
                     print_cur_ts("Timestamp:\t\t\t")
+                    _display_progress(idx, total_repos, repo.name)
                     continue
             except Exception as e:
-                print(f"* Cannot process repo '{repo.name}', skipping for now: {e}")
+                print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
                 print_cur_ts("Timestamp:\t\t\t")
+                _display_progress(idx, total_repos, repo.name)
                 continue
+
+        # Clear progress bar and move to next line
+        if total_repos > 0:
+            sys.stdout.write("\r" + " " * 100 + "\r")  # Clear the line
+            sys.stdout.flush()
 
     return list_of_repos
 
@@ -2507,7 +2611,6 @@ def github_monitor_user(user, csv_file_name):
                 if should_monitor:
                     repos_list_filtered.append(repo)
 
-        print("Processing list of public repositories (be patient, it might take a while) ...")
         try:
             list_of_repos = github_process_repos(repos_list_filtered)
         except Exception as e:
