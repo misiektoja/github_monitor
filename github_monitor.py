@@ -307,6 +307,7 @@ except ImportError:
 import platform
 import re
 import ipaddress
+import html
 try:
     from github import Github, Auth, GithubException, UnknownObjectException
     from github.GithubException import RateLimitExceededException
@@ -488,6 +489,395 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
         return ', '.join(result[:granularity])
     else:
         return '0 seconds'
+
+
+# Converts markdown text to HTML
+def markdown_to_html(text, convert_line_breaks=True):
+    if not text:
+        return ""
+
+    html_text = html.escape(text)
+
+    link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
+    html_text = re.sub(link_pattern, r'<a href="\2">\1</a>', html_text)
+
+    html_text = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', html_text)
+    html_text = re.sub(r'__([^_]+)__', r'<b>\1</b>', html_text)
+
+    html_text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<i>\1</i>', html_text)
+    html_text = re.sub(r'(?<!_)_([^_]+)_(?!_)', r'<i>\1</i>', html_text)
+
+    html_text = re.sub(r'`([^`]+)`', r'<code>\1</code>', html_text)
+
+    if convert_line_breaks:
+        html_text = html_text.replace('\n', '<br>')
+
+    return html_text
+
+
+# Converts URLs in HTML-escaped text to clickable links
+def convert_urls_to_links(text):
+    if not text:
+        return text
+
+    bracket_pattern = r'\[\s*(https?://[^\s\]]+)\s*\]'
+    text = re.sub(bracket_pattern, r'<a href="\1">\1</a>', text)
+
+    url_pattern = r'(?<!href=")(?<!">)(?<!<a href=")(https?://[^\s<>"]+)'
+    text = re.sub(url_pattern, r'<a href="\1">\1</a>', text)
+
+    return text
+
+
+# Converts issue/PR list items to HTML with clickable titles
+def convert_issue_pr_items_to_html(text):
+    if not text:
+        return text
+
+    pattern = r'(- )?#(\d+)\s+([^(]+?)\s+\(([^)]+)\)\s+(?:\[\s*)?(https?://[^\s\]]+)(?:\s*\])?'
+
+    def replace_item(match):
+        prefix = match.group(1) or ""
+        number = match.group(2)
+        title = match.group(3).strip()
+        user = match.group(4)
+        url = match.group(5)
+
+        escaped_title = html.escape(title)
+        escaped_user = html.escape(user)
+        escaped_url = html.escape(url)
+
+        return f'{prefix}<a href="{escaped_url}"><b>#{number} {escaped_title}</b></a> ({escaped_user})'
+
+    return re.sub(pattern, replace_item, text)
+
+
+# Converts plain text to HTML, preserving line breaks and formatting
+def text_to_html(text, preserve_newlines=True, convert_urls=True, convert_issue_pr=True):
+    if not text:
+        return ""
+
+    if convert_issue_pr:
+        text = convert_issue_pr_items_to_html(text)
+
+    html_text = html.escape(text)
+
+    if convert_urls:
+        html_text = convert_urls_to_links(html_text)
+
+    if preserve_newlines:
+        html_text = html_text.replace('\n', '<br>')
+
+    return html_text
+
+
+# Formats email body text to HTML
+def format_email_body_html(body_text, bold_keys=None):
+    if not body_text:
+        return ""
+
+    html_text = text_to_html(body_text, preserve_newlines=True)
+
+    if bold_keys:
+        for key in bold_keys:
+            if key:
+                escaped_key = html.escape(key)
+                html_text = re.sub(
+                    re.escape(escaped_key),
+                    lambda m: f'<b>{m.group(0)}</b>',
+                    html_text,
+                    flags=re.IGNORECASE
+                )
+
+    return html_text
+
+
+# Converts event text to HTML, handling markdown in specific fields
+def event_text_to_html(event_text, event_type=None, event_payload=None):
+    if not event_text:
+        return ""
+
+    lines = event_text.split('\n')
+    html_lines = []
+
+    commit_message_style = (
+        "background-color: #f8f8f8; padding: 3px 6px; border-radius: 4px; font-size: 1.00em;"
+    )
+
+    def style_commit_html(message_html):
+        if not message_html:
+            return ""
+        return f'<span style="{commit_message_style}">{message_html}</span>'
+
+    def remove_closing_quote(text):
+        idx = text.rfind("'")
+        if idx == -1:
+            return text
+        return text[:idx] + text[idx + 1:]
+
+    def extract_quoted_message(start_index, initial_fragment):
+        fragments = []
+
+        fragment = initial_fragment
+        if fragment:
+            fragment_stripped = fragment.rstrip()
+            if fragment_stripped.endswith("'"):
+                fragments.append(remove_closing_quote(fragment))
+                return '\n'.join(fragments), start_index + 1
+            fragments.append(fragment)
+        idx = start_index + 1
+
+        while idx < len(lines):
+            current_line = lines[idx]
+            stripped = current_line.strip()
+            if stripped.endswith("'") and (stripped == "'" or not stripped.startswith("'")):
+                fragments.append(remove_closing_quote(current_line))
+                idx += 1
+                break
+            else:
+                fragments.append(current_line)
+                idx += 1
+
+        return '\n'.join(fragments), idx
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        if "Release notes:" in line:
+            if event_payload and event_payload.get("release"):
+                release_body = event_payload["release"].get("body", "")
+                if release_body:
+                    release_html = markdown_to_html(release_body, convert_line_breaks=True)
+                    prefix = line.split("Release notes:")[0].replace('\t', ' ')
+                    html_lines.append(f"{html.escape(prefix)}<b>Release notes:</b><br><br>'{release_html}'")
+                    i += 1
+                    # Skip all lines until we find the closing quote (end of release notes in plaintext)
+                    while i < len(lines):
+                        if lines[i].strip().endswith("'") and not lines[i].strip().startswith("'"):
+                            i += 1
+                            break
+                        i += 1
+                    continue
+
+        if "Commit message:" in line or "- Commit message:" in line or "Commit full message:" in line or "- Commit full message:" in line:
+            if ("Commit full message:" in line or "- Commit full message:" in line) and "'" not in line:
+                prefix = line.replace('\t', ' ').strip()
+                is_dash_variant = "- Commit full message:" in prefix
+                if is_dash_variant:
+                    prefix_clean = prefix.split("- Commit full message:")[0]
+                    label_html = "<b>- Commit full message:</b>"
+                else:
+                    prefix_clean = prefix.split("Commit full message:")[0]
+                    label_html = "<b>Commit full message:</b>"
+                i += 1
+
+                while i < len(lines) and not lines[i].strip():
+                    i += 1
+
+                if i < len(lines) and "'" in lines[i]:
+                    message_line = lines[i]
+                    parts = message_line.split("'", 1)
+                    if len(parts) > 1:
+                        message_text, next_index = extract_quoted_message(i, parts[1])
+                        message_html = markdown_to_html(message_text, convert_line_breaks=True)
+                        styled_message = style_commit_html(message_html)
+                        html_lines.append(f"{html.escape(prefix_clean)}{label_html}<br><br>'{styled_message}'")
+                        i = next_index
+                        continue
+            elif "'" in line:
+                parts = line.split("'", 1)
+                if len(parts) > 1:
+                    prefix = parts[0].replace('\t', ' ')
+                    message_text, next_index = extract_quoted_message(i, parts[1])
+                    message_html = markdown_to_html(message_text, convert_line_breaks=True)
+                    styled_message = style_commit_html(message_html)
+
+                    if "- Commit full message:" in prefix:
+                        prefix_clean = prefix.split("- Commit full message:")[0]
+                        html_lines.append(f"{html.escape(prefix_clean)}<b>- Commit full message:</b><br><br>'{styled_message}'")
+                    elif "Commit full message:" in prefix:
+                        prefix_clean = prefix.split("Commit full message:")[0]
+                        html_lines.append(f"{html.escape(prefix_clean)}<b>Commit full message:</b><br><br>'{styled_message}'")
+                    elif "- Commit message:" in prefix:
+                        prefix_clean = prefix.split("- Commit message:")[0]
+                        html_lines.append(f"{html.escape(prefix_clean)}<b>- Commit message:</b> {styled_message}")
+                    else:
+                        prefix_clean = prefix.split("Commit message:")[0]
+                        html_lines.append(f"{html.escape(prefix_clean)}<b>Commit message:</b> {styled_message}")
+                    i = next_index
+                    continue
+        if "PR description:" in line:
+            if "'" in line:
+                parts = line.split("'", 1)
+                if len(parts) > 1:
+                    prefix = parts[0].replace('\t', ' ')
+                    description = parts[1]
+                    if description.endswith("'"):
+                        description = description.rstrip("'")
+                        description_html = markdown_to_html(description, convert_line_breaks=True)
+                        html_lines.append(f"{html.escape(prefix)}<b>PR description:</b> '{description_html}'")
+                    else:
+                        description_lines = [description]
+                        i += 1
+                        while i < len(lines) and not lines[i].strip().endswith("'"):
+                            description_lines.append(lines[i])
+                            i += 1
+                        if i < len(lines):
+                            description_lines.append(lines[i].rstrip("'"))
+                        description = '\n'.join(description_lines)
+                        description_html = markdown_to_html(description, convert_line_breaks=True)
+                        html_lines.append(f"{html.escape(prefix)}<b>PR description:</b> '{description_html}'")
+                    i += 1
+                    continue
+
+        for keyword in ["Issue body:", "Comment body:", "Review body:"]:
+            if keyword in line:
+                if "'" in line:
+                    parts = line.split("'", 1)
+                    if len(parts) > 1:
+                        prefix = parts[0].replace('\t', ' ')
+                        body_content = parts[1]
+                        if body_content.endswith("'"):
+                            body_content = body_content.rstrip("'")
+                            body_html = markdown_to_html(body_content, convert_line_breaks=True)
+                            html_lines.append(f"{html.escape(prefix)}<b>{html.escape(keyword)}</b> '{body_html}'")
+                        else:
+                            body_lines = [body_content]
+                            i += 1
+                            while i < len(lines) and not lines[i].strip().endswith("'"):
+                                body_lines.append(lines[i])
+                                i += 1
+                            if i < len(lines):
+                                body_lines.append(lines[i].rstrip("'"))
+                            body_content = '\n'.join(body_lines)
+                            body_html = markdown_to_html(body_content, convert_line_breaks=True)
+                            html_lines.append(f"{html.escape(prefix)}<b>{html.escape(keyword)}</b> '{body_html}'")
+                        i += 1
+                        continue
+
+        line_no_tabs = line.replace('\t', ' ').strip()
+
+        if not line_no_tabs:
+            html_lines.append('')
+            i += 1
+            continue
+
+        key_value_pattern = r'^(.+?):\s+(.+)$'
+        match = re.match(key_value_pattern, line_no_tabs)
+
+        if match:
+            label = match.group(1)
+            value = match.group(2)
+            label_html = f"<b>{html.escape(label)}:</b>"
+
+            # Check if this is a date field that should be highlighted
+            date_labels = ['Event date', '- Commit date', 'Created at', 'Closed at', 'Merged at', 'Published at',
+                           'Issue date', 'Comment date', 'Review submitted at']
+            is_date_label = any(label.strip() == date_label or label.strip().endswith(date_label) for date_label in date_labels)
+
+            if value.startswith('http://') or value.startswith('https://'):
+                escaped_url = html.escape(value)
+                html_lines.append(f"{label_html} <a href=\"{escaped_url}\">{escaped_url}</a>")
+            else:
+                # Apply date styling if applicable
+                if is_date_label:
+                    # Check if value contains " by " (e.g., "Merged at: ... by username")
+                    if ' by ' in value:
+                        date_part, by_part = value.split(' by ', 1)
+                        value_to_style = html.escape(date_part)
+                        suffix = html.escape(' by ' + by_part)
+                    else:
+                        value_to_style = html.escape(value)
+                        suffix = ''
+
+                    # Bold only the time duration part (e.g., "2 hours, 27 minutes"), not "after"
+                    value_html = re.sub(
+                        r'\(after\s+([^:]+):\s+([^)]+)\)',
+                        r'(after <b>\1</b>: \2)',
+                        value_to_style
+                    )
+
+                    date_message_style = (
+                        "background-color: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 1.00em;"
+                    )
+
+                    value_html = f'<span style="{date_message_style}">{value_html}</span>{suffix}'
+                else:
+                    # Non-date values still get markdown + URL conversion
+                    value_html = markdown_to_html(value, convert_line_breaks=False)
+                    value_html = convert_urls_to_links(value_html)
+
+                html_lines.append(f"{label_html} {value_html}")
+        else:
+            section_headers = [
+                'Changed files list:', 'Removed files:', 'Added files:', 'Modified files:',
+                'Closed issues:', 'Opened issues:', 'Reopened issues:',
+                'Closed pull requests:', 'Opened pull requests:',
+                'Created tags:', 'Deleted tags:', 'Created branches:', 'Deleted branches:',
+                'Assets:',
+            ]
+
+            # Check if this is a separator line (dots)
+            if line_no_tabs and all(c == '.' for c in line_no_tabs):
+                html_lines.append('<hr style="border: none; border-top: 1px dotted #ccc; margin: 5px 0;">')
+                i += 1
+                # Skip next line if it's empty (to avoid double line break)
+                if i < len(lines) and not lines[i].strip():
+                    i += 1
+                continue
+            # Check if this line starts with === (commit separator or PR header)
+            elif line_no_tabs.startswith('===') and line_no_tabs.endswith('==='):
+                # Match PR header: "=== PR #X: Title ==="
+                pr_match = re.match(r'^=== PR #(\d+): (.+?) ===$', line_no_tabs)
+                if pr_match:
+                    pr_number = pr_match.group(1)
+                    pr_title = pr_match.group(2)
+                    html_lines.append(f'=== PR #{pr_number}: <b>{html.escape(pr_title)}</b> ===')
+                else:
+                    # Commit separator - bold entire line
+                    html_lines.append(f'<b>{html.escape(line_no_tabs)}</b>')
+                i += 1
+                continue
+            else:
+                # Protect quoted text (file names, strings) from markdown conversion
+                quoted_strings = []
+                temp_line = line_no_tabs
+
+                import re as re_module
+                quote_pattern = r"'([^']+)'"
+                for match in re_module.finditer(quote_pattern, temp_line):
+                    quoted_strings.append(match.group(1))
+
+                for idx, quoted_str in enumerate(quoted_strings):
+                    temp_line = temp_line.replace(f"'{quoted_str}'", f"__QUOTED_{idx}__", 1)
+
+                line_html = markdown_to_html(temp_line, convert_line_breaks=False)
+                line_html = convert_urls_to_links(line_html)
+
+                for idx, quoted_str in enumerate(quoted_strings):
+                    escaped_quoted = html.escape(quoted_str)
+                    line_html = line_html.replace(f"__QUOTED_{idx}__", f"'<i>{escaped_quoted}</i>'")
+
+                for header in section_headers:
+                    if header in line_no_tabs:
+                        escaped_header = html.escape(header)
+                        line_html = line_html.replace(escaped_header, f'<b>{escaped_header}</b>')
+                        break
+
+                html_lines.append(line_html)
+
+        i += 1
+
+    # Join with <br>, then remove <br> between special elements (commit headers, <hr>)
+    result = '<br>'.join(html_lines)
+    # Remove <br> between commit header and <hr>
+    result = re.sub(r'</b><br><hr', r'</b><hr', result)
+    # Remove <br> between <hr> and commit header (for multiple commits)
+    result = re.sub(r'(<hr[^>]*>)<br><b>===', r'\1<b>===', result)
+    # Remove <br> between <hr> and next element (including commit message label)
+    result = re.sub(r'(<hr[^>]*>)<br>\s*(<b>|</b>|<span)', r'\1\2', result)
+    return result
 
 
 # Sends email notification
@@ -1439,6 +1829,14 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             st += print_v(f"\n=== Commit {commit_count}/{commits_total} ===")
             st += print_v("." * HORIZONTAL_LINE1)
 
+            commit_message = commit['message']
+            is_multiline = '\n' in commit_message
+            if is_multiline:
+                first_line = commit_message.split('\n', 1)[0]
+                st += print_v(f" - Commit message:\t\t'{first_line}...'")
+            else:
+                st += print_v(f" - Commit message:\t\t'{commit_message}'")
+
             commit_details = None
             if repo:
                 commit_details = gh_call(lambda: repo.get_commit(commit["sha"]))()
@@ -1474,7 +1872,11 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     for f in commit_details.files:
                         st += print_v(f"     • '{f.filename}' - {f.status} (+{f.additions} / -{f.deletions})")
 
-            st += print_v(f"\n - Commit message:\t\t'{commit['message']}'")
+            if is_multiline:
+                st += print_v(f"\n - Commit full message:")
+                st += print_v(f"\n'{commit_message}'")
+            else:
+                pass
             st += print_v("." * HORIZONTAL_LINE1)
 
     # Fallback for new Events API where PushEvent no longer includes commit summaries
@@ -1512,6 +1914,15 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     commit_sha = getattr(c, "sha", None) or getattr(c, "id", None)
                     commit_details = gh_call(lambda: repo.get_commit(commit_sha))() if (repo and commit_sha) else None
 
+                    commit_message = commit_details.commit.message if commit_details and commit_details.commit else ""
+                    is_multiline = '\n' in commit_message if commit_message else False
+                    if commit_message:
+                        if is_multiline:
+                            first_line = commit_message.split('\n', 1)[0]
+                            st += print_v(f" - Commit message:\t\t'{first_line}...'")
+                        else:
+                            st += print_v(f" - Commit message:\t\t'{commit_message}'")
+
                     if commit_details:
                         commit_date = commit_details.commit.author.date
                         st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date)}")
@@ -1547,7 +1958,10 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                             for f in commit_details.files:
                                 st += print_v(f"     • '{f.filename}' - {f.status} (+{f.additions} / -{f.deletions})")
 
-                        st += print_v(f"\n - Commit message:\t\t'{commit_details.commit.message}'")
+                        if is_multiline and commit_message:
+                            st += print_v(f"\n - Commit full message:")
+                            st += print_v(f"\n'{commit_message}'")
+
                         st += print_v("." * HORIZONTAL_LINE1)
         else:
             st += print_v("\nNo compare range available (forced push, tag push, or identical before/after)")
@@ -1572,6 +1986,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
         if event.payload["release"].get("assets"):
             print()
+            st += print_v("\nAssets:\n")
             assets = event.payload['release'].get('assets', [])
             for asset in assets:
                 size_bytes = asset.get("size", 0)
@@ -2005,9 +2420,15 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
     removed_items = list(set(list_old) - set(list_new))
     added_items = list(set(list_new) - set(list_old))
 
+    removed_mbody_html = ""
+    removed_list_str_html = ""
+    added_mbody_html = ""
+    added_list_str_html = ""
+
     if removed_items:
         print(f"Removed {label.lower()}:\n")
         removed_mbody = f"\nRemoved {label.lower()}:\n\n"
+        removed_mbody_html = f"<br><b>Removed {html.escape(label.lower())}:</b><br><br>"
         web_base = github_web_base()
         for item in removed_items:
             item_url = (f"{web_base}/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
@@ -2015,6 +2436,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
 
             print(f"- {item} [ {item_url} ]")
             removed_list_str += f"- {item} [ {item_url} ]\n"
+            removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a><br>"
             try:
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Removed {label[:-1]}", user, item, "")
@@ -2025,12 +2447,14 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
     if added_items:
         print(f"Added {label.lower()}:\n")
         added_mbody = f"\nAdded {label.lower()}:\n\n"
+        added_mbody_html = f"<br><b>Added {html.escape(label.lower())}:</b><br><br>"
         web_base = github_web_base()
         for item in added_items:
             item_url = (f"{web_base}/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
                         else f"{web_base}/{user}/{item}/")
             print(f"- {item} [ {item_url} ]")
             added_list_str += f"- {item} [ {item_url} ]\n"
+            added_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a><br>"
             try:
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", user, "", item)
@@ -2043,15 +2467,31 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
         m_body = (f"{label} list changed {label_context} user {user}\n"
                   f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+        m_body_html = (
+            f"<html><head></head><body>"
+            f"{label} list changed {label_context} user <b>{html.escape(user)}</b><br>"
+            f"{removed_mbody_html if removed_items else ''}{removed_list_str_html if removed_items else ''}"
+            f"{added_mbody_html if added_items else ''}{added_list_str_html if added_items else ''}<br>"
+            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"</body></html>"
+        )
     else:
         m_subject = f"GitHub user {user} {label.lower()} number has changed! ({diff_str}, {old_count} -> {new_count})"
         m_body = (f"{label} number changed {label_context} user {user} from {old_count} to {new_count} ({diff_str})\n"
                   f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+        m_body_html = (
+            f"<html><head></head><body>"
+            f"{label} number changed {label_context} user <b>{html.escape(user)}</b> from <b>{old_count}</b> to <b>{new_count}</b> (<b>{html.escape(diff_str)}</b>)<br>"
+            f"{removed_mbody_html if removed_items else ''}{removed_list_str_html if removed_items else ''}"
+            f"{added_mbody_html if added_items else ''}{added_list_str_html if added_items else ''}<br>"
+            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"</body></html>"
+        )
 
     if PROFILE_NOTIFICATION:
         print(f"Sending email notification to {RECEIVER_EMAIL}")
-        send_email(m_subject, m_body, "", SMTP_SSL)
+        send_email(m_subject, m_body, m_body_html, SMTP_SSL)
 
     print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
     print_cur_ts("Timestamp:\t\t\t")
@@ -2106,13 +2546,33 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     if list_old != list_new:
         print()
 
+        removed_mbody_html = ""
+        removed_list_str_html = ""
+        added_mbody_html = ""
+        added_list_str_html = ""
+
         if removed_items:
             print(f"{removal_text} {label.lower()}:\n")
             removed_mbody = f"\n{removal_text} {label.lower()}:\n\n"
+            removed_mbody_html = f"<br><b>{html.escape(removal_text)} {html.escape(label.lower())}:</b><br><br>"
             for item in removed_items:
                 item_line = f"- {item} [ {github_web_base()}/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
                 print(item_line)
                 removed_list_str += item_line + "\n"
+
+                if label.lower() in ["stargazers", "watchers", "forks"]:
+                    item_url = f"{github_web_base()}/{item}/"
+                    removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a><br>"
+                elif label in ["Issues", "Pull Requests"]:
+                    match = re.match(r'#(\d+)\s+(.+?)\s+\(([^)]+)\)\s+\[\s*([^\]]+)\s*\]', item)
+                    if match:
+                        num, title, user_item, url = match.groups()
+                        removed_list_str_html += f"- <a href=\"{html.escape(url)}\"><b>#{num} {html.escape(title)}</b></a> ({html.escape(user_item)})<br>"
+                    else:
+                        removed_list_str_html += f"- {html.escape(item)}<br>"
+                else:
+                    removed_list_str_html += f"- {html.escape(item)}<br>"
+
                 try:
                     if csv_file_name:
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests"] else item
@@ -2124,10 +2584,25 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
         if added_items:
             print(f"Added {label.lower()}:\n")
             added_mbody = f"\nAdded {label.lower()}:\n\n"
+            added_mbody_html = f"<br><b>Added {html.escape(label.lower())}:</b><br><br>"
             for item in added_items:
                 item_line = f"- {item} [ {github_web_base()}/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
                 print(item_line)
                 added_list_str += item_line + "\n"
+
+                if label.lower() in ["stargazers", "watchers", "forks"]:
+                    item_url = f"{github_web_base()}/{item}/"
+                    added_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a><br>"
+                elif label in ["Issues", "Pull Requests"]:
+                    match = re.match(r'#(\d+)\s+(.+?)\s+\(([^)]+)\)\s+\[\s*([^\]]+)\s*\]', item)
+                    if match:
+                        num, title, user_item, url = match.groups()
+                        added_list_str_html += f"- <a href=\"{html.escape(url)}\"><b>#{num} {html.escape(title)}</b></a> ({html.escape(user_item)})<br>"
+                    else:
+                        added_list_str_html += f"- {html.escape(item)}<br>"
+                else:
+                    added_list_str_html += f"- {html.escape(item)}<br>"
+
                 try:
                     if csv_file_name:
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests"] else item
@@ -2141,15 +2616,33 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
         m_body = (f"* Repo '{repo_name}': {label.lower()} list changed\n"
                   f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+        m_body_html = (
+            f"<html><head></head><body>"
+            f"* Repo '<b>{html.escape(repo_name)}</b>': {html.escape(label.lower())} list changed<br>"
+            f"* Repo URL: <a href=\"{html.escape(repo_url)}\">{html.escape(repo_url)}</a><br>"
+            f"{removed_mbody_html}{removed_list_str_html}"
+            f"{added_mbody_html}{added_list_str_html}<br>"
+            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"</body></html>"
+        )
     else:
         m_subject = f"GitHub user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {old_count} -> {new_count})"
         m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {old_count} to {new_count} ({diff_str})\n"
                   f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+        m_body_html = (
+            f"<html><head></head><body>"
+            f"* Repo '<b>{html.escape(repo_name)}</b>': number of {html.escape(label.lower())} changed from <b>{old_count}</b> to <b>{new_count}</b> (<b>{html.escape(diff_str)}</b>)<br>"
+            f"* Repo URL: <a href=\"{html.escape(repo_url)}\">{html.escape(repo_url)}</a><br>"
+            f"{removed_mbody_html}{removed_list_str_html}"
+            f"{added_mbody_html}{added_list_str_html}<br>"
+            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"</body></html>"
+        )
 
     if REPO_NOTIFICATION:
         print(f"Sending email notification to {RECEIVER_EMAIL}")
-        send_email(m_subject, m_body, "", SMTP_SSL)
+        send_email(m_subject, m_body, m_body_html, SMTP_SSL)
     print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
     print_cur_ts("Timestamp:\t\t\t")
 
@@ -2702,8 +3195,14 @@ def github_monitor_user(user, csv_file_name):
             if should_notify and ERROR_NOTIFICATION and not email_sent:
                 m_subject = f"github_monitor: session error! (user: {user})"
                 m_body = f"{reason_msg}\n{e}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
+                m_body_html = (
+                    f"<html><head></head><body>"
+                    f"<b>{html.escape(reason_msg)}</b><br>"
+                    f"{html.escape(str(e))}{get_cur_ts('<br><br>Timestamp: ')}"
+                    f"</body></html>"
+                )
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
+                send_email(m_subject, m_body, m_body_html, SMTP_SSL)
                 email_sent = True
 
             print_cur_ts("Timestamp:\t\t\t")
@@ -2779,7 +3278,13 @@ def github_monitor_user(user, csv_file_name):
                 last_err = contrib_state.get("last_error", "Unknown error")
                 err_msg = f"Error: GitHub daily contributions check failed {failures} times. Last error: {last_err}\n"
                 print(err_msg)
-                send_email(f"GitHub monitor errors for {user}", err_msg + get_cur_ts(nl_ch + "Timestamp: "), "", SMTP_SSL)
+                err_msg_html = (
+                    f"<html><head></head><body>"
+                    f"Error: GitHub daily contributions check failed <b>{failures}</b> times. Last error: <b>{html.escape(str(last_err))}</b><br>"
+                    f"{get_cur_ts('<br>Timestamp: ')}"
+                    f"</body></html>"
+                )
+                send_email(f"GitHub monitor errors for {user}", err_msg + get_cur_ts(nl_ch + "Timestamp: "), err_msg_html, SMTP_SSL)
 
             if contrib_notify:
                 contrib_old = contrib_state.get("prev_count")
@@ -2793,10 +3298,16 @@ def github_monitor_user(user, csv_file_name):
 
                 m_subject = f"GitHub user {user} daily contributions changed from {contrib_old} to {contrib_curr}!"
                 m_body = (f"GitHub user {user} daily contributions changed on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+                m_body_html = (
+                    f"<html><head></head><body>"
+                    f"GitHub user <b>{html.escape(user)}</b> daily contributions changed on <b>{html.escape(get_short_date_from_ts(contrib_state['day'], show_hour=False))}</b> from <b>{contrib_old}</b> to <b>{contrib_curr}</b><br><br>"
+                    f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                    f"</body></html>"
+                )
 
                 if CONTRIB_NOTIFICATION:
                     print(f"Sending email notification to {RECEIVER_EMAIL}")
-                    send_email(m_subject, m_body, "", SMTP_SSL)
+                    send_email(m_subject, m_body, m_body_html, SMTP_SSL)
 
                 print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
                 print_cur_ts("Timestamp:\t\t\t")
@@ -2816,10 +3327,20 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} bio has changed!"
             m_body = f"GitHub user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            bio_old_html = markdown_to_html(bio_old, convert_line_breaks=True) if bio_old else ""
+            bio_html = markdown_to_html(bio, convert_line_breaks=True) if bio else ""
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> bio has changed<br><br>"
+                f"Old bio:<br><br>{bio_old_html}<br><br>"
+                f"New bio:<br><br>{bio_html}<br><br>"
+                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
+                send_email(m_subject, m_body, m_body_html, SMTP_SSL)
 
             bio_old = bio
             print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
@@ -2840,10 +3361,18 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} location has changed!"
             m_body = f"GitHub user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> location has changed<br><br>"
+                f"Old location: <b>{html.escape(location_old)}</b><br><br>"
+                f"New location: <b>{html.escape(location)}</b><br><br>"
+                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
+                send_email(m_subject, m_body, m_body_html, SMTP_SSL)
 
             location_old = location
             print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
@@ -2864,10 +3393,18 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} name has changed!"
             m_body = f"GitHub user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> name has changed<br><br>"
+                f"Old user name: <b>{html.escape(user_name_old)}</b><br><br>"
+                f"New user name: <b>{html.escape(user_name)}</b><br><br>"
+                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
+                send_email(m_subject, m_body, m_body_html, SMTP_SSL)
 
             user_name_old = user_name
             print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
@@ -2888,10 +3425,18 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} company has changed!"
             m_body = f"GitHub user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> company has changed<br><br>"
+                f"Old company: <b>{html.escape(company_old)}</b><br><br>"
+                f"New company: <b>{html.escape(company)}</b><br><br>"
+                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
+                send_email(m_subject, m_body, m_body_html, SMTP_SSL)
 
             company_old = company
             print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
@@ -2912,10 +3457,18 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} email has changed!"
             m_body = f"GitHub user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> email has changed<br><br>"
+                f"Old email: <b>{html.escape(email_old)}</b><br><br>"
+                f"New email: <b>{html.escape(email)}</b><br><br>"
+                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
             if PROFILE_NOTIFICATION:
                 print(f"Sending email notification to {RECEIVER_EMAIL}")
-                send_email(m_subject, m_body, "", SMTP_SSL)
+                send_email(m_subject, m_body, m_body_html, SMTP_SSL)
 
             email_old = email
             print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
@@ -3112,9 +3665,19 @@ def github_monitor_user(user, csv_file_name):
                                         print(f"* Error: {e}")
                                     m_subject = f"GitHub user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                    timespan_str = calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)
+                                    m_body_html = (
+                                        f"<html><head></head><body>"
+                                        f"* Repo '<b>{html.escape(r_name)}</b>' update date changed (after <b>{html.escape(timespan_str)}</b>)<br>"
+                                        f"* Repo URL: <a href=\"{html.escape(r_url)}\">{html.escape(r_url)}</a><br><br>"
+                                        f"Old repo update date: <b>{html.escape(get_date_from_ts(r_update_old))}</b><br><br>"
+                                        f"New repo update date: <b>{html.escape(get_date_from_ts(r_update))}</b><br><br>"
+                                        f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                                        f"</body></html>"
+                                    )
                                     if REPO_UPDATE_DATE_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
-                                        send_email(m_subject, m_body, "", SMTP_SSL)
+                                        send_email(m_subject, m_body, m_body_html, SMTP_SSL)
                                     print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
@@ -3144,9 +3707,21 @@ def github_monitor_user(user, csv_file_name):
                                         print(f"* Error: {e}")
                                     m_subject = f"GitHub user {user} repo '{r_name}' description has changed !"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                    r_descr_old_html = markdown_to_html(r_descr_old, convert_line_breaks=True) if r_descr_old else ""
+                                    r_descr_html = markdown_to_html(r_descr, convert_line_breaks=True) if r_descr else ""
+                                    m_body_html = (
+                                        f"<html><head></head><body>"
+                                        f"* Repo '<b>{html.escape(r_name)}</b>' description changed from:<br><br>"
+                                        f"'{r_descr_old_html}'<br><br>"
+                                        f"to:<br><br>"
+                                        f"'{r_descr_html}'<br><br>"
+                                        f"* Repo URL: <a href=\"{html.escape(r_url)}\">{html.escape(r_url)}</a><br><br>"
+                                        f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                                        f"</body></html>"
+                                    )
                                     if REPO_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
-                                        send_email(m_subject, m_body, "", SMTP_SSL)
+                                        send_email(m_subject, m_body, m_body_html, SMTP_SSL)
                                     print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
@@ -3209,10 +3784,24 @@ def github_monitor_user(user, csv_file_name):
 
                                 m_subject = f"GitHub user {user} has new {event.type} (repo: {repo_name})"
                                 m_body = f"GitHub user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                event_payload = None
+                                try:
+                                    if hasattr(event, 'payload'):
+                                        event_payload = event.payload
+                                except Exception:
+                                    pass
+                                event_text_html = event_text_to_html(event_text, event.type, event_payload)
+                                m_body_html = (
+                                    f"<html><head></head><body>"
+                                    f"GitHub user <b>{html.escape(user)}</b> has new <b>{html.escape(event.type)}</b> event<br><br>"
+                                    f"{event_text_html}<br>"
+                                    f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                                    f"</body></html>"
+                                )
 
                                 if EVENT_NOTIFICATION:
                                     print(f"\nSending email notification to {RECEIVER_EMAIL}")
-                                    send_email(m_subject, m_body, "", SMTP_SSL)
+                                    send_email(m_subject, m_body, m_body_html, SMTP_SSL)
 
                             print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
                             print_cur_ts("Timestamp:\t\t\t")
