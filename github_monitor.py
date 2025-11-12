@@ -2646,8 +2646,6 @@ def github_monitor_user(user, csv_file_name):
         print(f"* Error: {e}")
         sys.exit(1)
 
-    g.close()
-
     time.sleep(GITHUB_CHECK_INTERVAL)
     alive_counter = 0
     email_sent = False
@@ -2688,33 +2686,64 @@ def github_monitor_user(user, csv_file_name):
             continue
 
         # Changed followings
-        followings_raw = list(gh_call(g_user.get_following)())
-        followings_count = gh_call(lambda: g_user.following)()
+        try:
+            followings_raw = list(gh_call(g_user.get_following)())
+            followings_count = gh_call(lambda: g_user.following)()
+        except NET_ERRORS as e:
+            print(f"* Error while fetching followings: {e}")
+            print_cur_ts("Timestamp:\t\t\t")
+            followings_raw = None
+            followings_count = None
+
         if followings_raw is not None and followings_count is not None:
             followings_old, followings_old_count = handle_profile_change("Followings", followings_old_count, followings_count, followings_old, followings_raw, user, csv_file_name, field="login")
 
         # Changed followers
-        followers_raw = list(gh_call(g_user.get_followers)())
-        followers_count = gh_call(lambda: g_user.followers)()
+        try:
+            followers_raw = list(gh_call(g_user.get_followers)())
+            followers_count = gh_call(lambda: g_user.followers)()
+        except NET_ERRORS as e:
+            print(f"* Error while fetching followers: {e}")
+            print_cur_ts("Timestamp:\t\t\t")
+            followers_raw = None
+            followers_count = None
+
         if followers_raw is not None and followers_count is not None:
             followers_old, followers_old_count = handle_profile_change("Followers", followers_old_count, followers_count, followers_old, followers_raw, user, csv_file_name, field="login")
 
         # Changed public repositories
-        if GET_ALL_REPOS:
-            repos_raw = list(gh_call(g_user.get_repos)())
-            repos_count = gh_call(lambda: g_user.public_repos)()
-        else:
-            repos_raw = list(gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])())
-            repos_count = len(repos_raw)
+        try:
+            if GET_ALL_REPOS:
+                repos_raw = list(gh_call(g_user.get_repos)())
+                repos_count = gh_call(lambda: g_user.public_repos)()
+            else:
+                repos_raw = list(gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])())
+                repos_count = len(repos_raw)
+        except NET_ERRORS as e:
+            print(f"* Error while fetching repositories: {e}")
+            print_cur_ts("Timestamp:\t\t\t")
+            repos_raw = None
+            repos_count = None
 
         if repos_raw is not None and repos_count is not None:
             repos_old, repos_old_count = handle_profile_change("Repos", repos_old_count, repos_count, repos_old, repos_raw, user, csv_file_name, field="name")
 
         # Changed starred repositories
-        starred_raw = gh_call(g_user.get_starred)()
-        if starred_raw is not None:
-            starred_list = list(starred_raw)
-            starred_count = starred_raw.totalCount
+        try:
+            starred_raw = gh_call(g_user.get_starred)()
+            if starred_raw is not None:
+                starred_list = list(starred_raw)
+                starred_count = starred_raw.totalCount
+            else:
+                starred_list = None
+                starred_count = None
+        except NET_ERRORS as e:
+            print(f"* Error while fetching starred repositories: {e}")
+            print_cur_ts("Timestamp:\t\t\t")
+            starred_list = None
+            starred_count = None
+
+        if starred_list is not None and starred_count is not None:
             starred_old, starred_old_count = handle_profile_change("Starred Repos", starred_old_count, starred_count, starred_old, starred_list, user, csv_file_name, field="full_name")
 
         # Changed contributions in a day
@@ -3172,8 +3201,6 @@ def github_monitor_user(user, csv_file_name):
         if LIVENESS_CHECK_COUNTER and alive_counter >= LIVENESS_CHECK_COUNTER:
             print_cur_ts("Liveness check, timestamp:\t")
             alive_counter = 0
-
-        g.close()
 
         time.sleep(GITHUB_CHECK_INTERVAL)
 
