@@ -601,7 +601,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
     html_lines = []
 
     commit_message_style = (
-        "background-color: #f8f8f8; padding: 3px 6px; border-radius: 4px; font-size: 1.00em;"
+        "background-color: #f8f8f8; padding: 3px 3px; border-radius: 4px; font-size: 1.00em;"
     )
 
     def style_commit_html(message_html):
@@ -650,7 +650,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                 if release_body:
                     release_html = markdown_to_html(release_body, convert_line_breaks=True)
                     prefix = line.split("Release notes:")[0].replace('\t', ' ')
-                    html_lines.append(f"{html.escape(prefix)}<b>Release notes:</b><br><br>'{release_html}'")
+                    html_lines.append(f"{html.escape(prefix)}<b>Release notes:</b><br><br>'{release_html}'<br>")
                     i += 1
                     # Skip all lines until we find the closing quote (end of release notes in plaintext)
                     while i < len(lines):
@@ -708,6 +708,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                     i = next_index
                     continue
         if "PR description:" in line:
+            # Case 1: label and description on the same line
             if "'" in line:
                 parts = line.split("'", 1)
                 if len(parts) > 1:
@@ -730,31 +731,105 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                         html_lines.append(f"{html.escape(prefix)}<b>PR description:</b> '{description_html}'")
                     i += 1
                     continue
-
-        for keyword in ["Issue body:", "Comment body:", "Review body:"]:
-            if keyword in line:
-                if "'" in line:
-                    parts = line.split("'", 1)
+            else:
+                # Case 2: label on its own line, description in following quoted block
+                prefix = line.split("PR description:")[0].replace('\t', ' ')
+                i += 1
+                # Skip empty lines
+                while i < len(lines) and not lines[i].strip():
+                    i += 1
+                if i < len(lines) and "'" in lines[i]:
+                    first = lines[i]
+                    parts = first.split("'", 1)
                     if len(parts) > 1:
-                        prefix = parts[0].replace('\t', ' ')
-                        body_content = parts[1]
-                        if body_content.endswith("'"):
-                            body_content = body_content.rstrip("'")
-                            body_html = markdown_to_html(body_content, convert_line_breaks=True)
-                            html_lines.append(f"{html.escape(prefix)}<b>{html.escape(keyword)}</b> '{body_html}'")
-                        else:
-                            body_lines = [body_content]
-                            i += 1
-                            while i < len(lines) and not lines[i].strip().endswith("'"):
-                                body_lines.append(lines[i])
-                                i += 1
-                            if i < len(lines):
-                                body_lines.append(lines[i].rstrip("'"))
-                            body_content = '\n'.join(body_lines)
-                            body_html = markdown_to_html(body_content, convert_line_breaks=True)
-                            html_lines.append(f"{html.escape(prefix)}<b>{html.escape(keyword)}</b> '{body_html}'")
-                        i += 1
+                        description_text, next_index = extract_quoted_message(i, parts[1])
+                        description_html = markdown_to_html(description_text, convert_line_breaks=True)
+                        html_lines.append(f"{html.escape(prefix)}<b>PR description:</b><br><br>'{description_html}'")
+                        i = next_index
                         continue
+
+        # Handle body-like blocks, bolding the label and interpreting markdown inside the quoted body
+        body_keyword_matched = False
+
+        # Special handling for "Previous comment:" which has an intermediate "↳ In reply to..." line
+        if "Previous comment:" in line:
+            line_stripped = line.strip()
+            if line_stripped == "Previous comment:" or line_stripped.startswith("Previous comment:"):
+                prefix = line.split("Previous comment:")[0].replace('\t', ' ')
+                i += 1
+
+                # Skip blank lines
+                while i < len(lines) and not lines[i].strip():
+                    i += 1
+
+                # Collect all non-empty lines until we hit the quoted body
+                reply_lines = []
+                while i < len(lines) and not (lines[i].strip().startswith("'") or (lines[i] and lines[i][0] in [' ', '\t'] and "'" in lines[i])):
+                    if lines[i].strip():  # Only collect non-empty lines
+                        reply_lines.append(lines[i].strip())
+                    i += 1
+
+                # Skip blank lines before body
+                while i < len(lines) and not lines[i].strip():
+                    i += 1
+
+                # Now look for the quoted body
+                if i < len(lines) and "'" in lines[i]:
+                    first = lines[i]
+                    parts = first.split("'", 1)
+                    if len(parts) > 1:
+                        body_text, next_index = extract_quoted_message(i, parts[1])
+                        body_html = markdown_to_html(body_text, convert_line_breaks=True)
+                        # Build the output with reply lines if present
+                        if reply_lines:
+                            reply_html = "<br>".join(html.escape(rl) for rl in reply_lines)
+                            html_lines.append(f"{html.escape(prefix)}<b>Previous comment:</b><br><br>{reply_html}<br><br>'{body_html}'")
+                        else:
+                            html_lines.append(f"{html.escape(prefix)}<b>Previous comment:</b><br><br>'{body_html}'")
+                        i = next_index
+                        body_keyword_matched = True
+
+        # Handle other body keywords (Issue body, Comment body, Review body)
+        if not body_keyword_matched:
+            for keyword in ["Issue body:", "Comment body:", "Review body:"]:
+                if keyword in line:
+                    # Case 1: label and body on the same line
+                    if "'" in line and line.strip().startswith(keyword):
+                        parts = line.split("'", 1)
+                        if len(parts) > 1:
+                            prefix = parts[0].replace('\t', ' ')
+                            body_content = parts[1]
+                            if body_content.endswith("'"):
+                                body_content = body_content.rstrip("'")
+                                body_html = markdown_to_html(body_content, convert_line_breaks=True)
+                                html_lines.append(f"{html.escape(prefix)}<b>{html.escape(keyword)}</b> '{body_html}'")
+                                i += 1
+                                body_keyword_matched = True
+                                break
+
+                    # Case 2: label on its own line, body in a following quoted block
+                    if line.strip().startswith(keyword):
+                        prefix = line.split(keyword)[0].replace('\t', ' ')
+                        i += 1
+
+                        # Skip blank lines
+                        while i < len(lines) and not lines[i].strip():
+                            i += 1
+
+                        # Look for the first line that starts the quoted body
+                        if i < len(lines) and "'" in lines[i]:
+                            first = lines[i]
+                            parts = first.split("'", 1)
+                            if len(parts) > 1:
+                                body_text, next_index = extract_quoted_message(i, parts[1])
+                                body_html = markdown_to_html(body_text, convert_line_breaks=True)
+                                html_lines.append(f"{html.escape(prefix)}<b>{html.escape(keyword)}</b><br><br>'{body_html}'")
+                                i = next_index
+                                body_keyword_matched = True
+                                break
+
+        if body_keyword_matched:
+            continue
 
         line_no_tabs = line.replace('\t', ' ').strip()
 
@@ -763,6 +838,16 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
             i += 1
             continue
 
+        # Check for PR header BEFORE key-value pattern (PR headers match key-value pattern)
+        if line_no_tabs.startswith('===') and line_no_tabs.endswith('==='):
+            pr_match = re.match(r'^=== PR #(\d+): (.+?) ===$', line_no_tabs)
+            if pr_match:
+                pr_number = pr_match.group(1)
+                pr_title = pr_match.group(2)
+                html_lines.append(f'=== PR #{pr_number}: <b>{html.escape(pr_title)}</b> ===')
+                i += 1
+                continue
+
         key_value_pattern = r'^(.+?):\s+(.+)$'
         match = re.match(key_value_pattern, line_no_tabs)
 
@@ -770,6 +855,10 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
             label = match.group(1)
             value = match.group(2)
             label_html = f"<b>{html.escape(label)}:</b>"
+
+            # Remove apostrophes from Description field
+            if label.strip() == "Description" and value.startswith("'") and value.endswith("'"):
+                value = value[1:-1]  # Remove first and last character (apostrophes)
 
             # Check if this is a date field that should be highlighted
             date_labels = ['Event date', '- Commit date', 'Created at', 'Closed at', 'Merged at', 'Published at',
@@ -799,7 +888,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                     )
 
                     date_message_style = (
-                        "background-color: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 1.00em;"
+                        "background-color: #f0f0f0; padding: 2px 4px; border-radius: 3px; font-family: monospace; font-size: 1.00em;"
                     )
 
                     value_html = f'<span style="{date_message_style}">{value_html}</span>{suffix}'
@@ -826,17 +915,10 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                 if i < len(lines) and not lines[i].strip():
                     i += 1
                 continue
-            # Check if this line starts with === (commit separator or PR header)
+            # Check if this line starts with === (commit separator - PR headers already handled above)
             elif line_no_tabs.startswith('===') and line_no_tabs.endswith('==='):
-                # Match PR header: "=== PR #X: Title ==="
-                pr_match = re.match(r'^=== PR #(\d+): (.+?) ===$', line_no_tabs)
-                if pr_match:
-                    pr_number = pr_match.group(1)
-                    pr_title = pr_match.group(2)
-                    html_lines.append(f'=== PR #{pr_number}: <b>{html.escape(pr_title)}</b> ===')
-                else:
-                    # Commit separator - bold entire line
-                    html_lines.append(f'<b>{html.escape(line_no_tabs)}</b>')
+                # Commit separator - bold entire line
+                html_lines.append(f'<b>{html.escape(line_no_tabs)}</b>')
                 i += 1
                 continue
             else:
@@ -1815,7 +1897,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     if event.payload.get("ref_type"):
         st += print_v(f"Object type:\t\t\t{event.payload.get('ref_type')}")
     if event.payload.get("description"):
-        st += print_v(f"Description:\t\t\t'{event.payload.get('description')}'")
+        st += print_v(f"Description:\t\t\t{event.payload.get('description')}")
 
     if event.payload.get("action"):
         st += print_v(f"\nAction:\t\t\t\t{event.payload.get('action')}")
