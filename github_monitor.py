@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.3
+v2.3.1
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "2.3"
+VERSION = "2.3.1"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -607,7 +607,7 @@ def today_local() -> dt.date:
 
 # Returns the current date/time in human readable format; eg. Sun 21 Apr 2024, 15:08:45
 def get_cur_ts(ts_str=""):
-    return (f'{ts_str}{calendar.day_abbr[(now_local_naive()).weekday()]}, {now_local_naive().strftime("%d %b %Y, %H:%M:%S")}')
+    return (f'{ts_str}{calendar.day_abbr[(now_local_naive()).weekday()]} {now_local_naive().strftime("%d %b %Y, %H:%M:%S")}')
 
 
 # Prints the current date/time in human readable format with separator; eg. Sun 21 Apr 2024, 15:08:45
@@ -1934,6 +1934,12 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     if not list_new and count_new > 0:
         return
 
+    # Handle None values by converting to empty lists
+    if list_old is None:
+        list_old = []
+    if list_new is None:
+        list_new = []
+
     old_count = len(list_old)
     new_count = len(list_new)
 
@@ -1961,6 +1967,10 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
 
     removed_items = list(set(list_old) - set(list_new))
     added_items = list(set(list_new) - set(list_old))
+
+    # If lists are different but sets are the same (just reordered or duplicates), no actual change
+    if not removed_items and not added_items:
+        return
 
     removal_text = "Closed" if label in ["Issues", "Pull Requests"] else "Removed"
 
