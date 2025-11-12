@@ -1000,7 +1000,7 @@ def github_print_followers_and_followings(user):
 
 
 # Displays a progress bar with percentage and current repo name
-def _display_progress(current, total, repo_name: str = "", bar_length: int = 40) -> None:
+def _display_progress(current, total, repo_name: str = "", bar_length: int = 40, is_final: bool = False) -> None:
     if total == 0:
         return
 
@@ -1070,10 +1070,18 @@ def _display_progress(current, total, repo_name: str = "", bar_length: int = 40)
 
     progress_str = " ".join(parts)
 
-    # Use ANSI escape code to clear to end of line, then write the progress
-    # \r moves to start of line, \033[K clears from cursor to end of line
-    sys.stdout.write("\r\033[K" + progress_str)
-    sys.stdout.flush()
+    terminal_out = stdout_bck if stdout_bck is not None else sys.stdout
+
+    if is_final:
+        terminal_out.write("\r\033[K" + progress_str)
+        terminal_out.flush()
+
+        if stdout_bck is not None and isinstance(sys.stdout, Logger):
+            sys.stdout.logfile.write(progress_str + "\n")
+            sys.stdout.logfile.flush()
+    else:
+        terminal_out.write("\r\033[K" + progress_str)
+        terminal_out.flush()
 
 
 # Processes items from all passed repositories and returns a list of dictionaries
@@ -1137,7 +1145,7 @@ def github_process_repos(repos_list):
                 pr_list = [f"#{pr.number} {pr.title} ({pr.user.login}) [ {pr.html_url} ]" for pr in pulls]
 
                 list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "issues_list": issues_list, "pulls_list": pr_list})
-                _display_progress(idx, total_repos, repo.name)  # Final refresh after successful processing
+                _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))  # Final refresh after successful processing
 
             except GithubException as e:
                 # Skip TOS-blocked (403) and legally blocked (451) repositories
@@ -1145,23 +1153,29 @@ def github_process_repos(repos_list):
                     if BLOCKED_REPOS:
                         print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {e}")
                         print_cur_ts("Timestamp:\t\t\t")
-                    _display_progress(idx, total_repos, repo.name)
+                    _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
                 else:
                     print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
                     print_cur_ts("Timestamp:\t\t\t")
-                    _display_progress(idx, total_repos, repo.name)
+                    _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
             except Exception as e:
                 print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
                 print_cur_ts("Timestamp:\t\t\t")
-                _display_progress(idx, total_repos, repo.name)
+                _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                 continue
 
         # Clear progress bar and move to next line
         if total_repos > 0:
-            sys.stdout.write("\r" + " " * 100 + "\r")  # Clear the line
-            sys.stdout.flush()
+            # Write newline to terminal
+            terminal_out = stdout_bck if stdout_bck is not None else sys.stdout
+            terminal_out.write("\n")
+            terminal_out.flush()
+            # Also write to log file if logging is enabled
+            if stdout_bck is not None and isinstance(sys.stdout, Logger):
+                sys.stdout.logfile.write("\n")
+                sys.stdout.logfile.flush()
 
     return list_of_repos
 
