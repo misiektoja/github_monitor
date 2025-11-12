@@ -1085,7 +1085,7 @@ def _display_progress(current, total, repo_name: str = "", bar_length: int = 40,
 
 
 # Processes items from all passed repositories and returns a list of dictionaries
-def github_process_repos(repos_list):
+def github_process_repos(repos_list, show_progress=True):
     import logging
     import warnings
 
@@ -1105,7 +1105,8 @@ def github_process_repos(repos_list):
 
         for idx, repo in enumerate(repos_list, 1):
             # Update progress bar at start
-            _display_progress(idx, total_repos, repo.name)
+            if show_progress:
+                _display_progress(idx, total_repos, repo.name)
             try:
                 repo_created_date = repo.created_at
                 repo_updated_date = repo.updated_at
@@ -1116,26 +1117,32 @@ def github_process_repos(repos_list):
 
                 try:
                     stargazers_list = [star.login for star in repo.get_stargazers()]
-                    _display_progress(idx, total_repos, repo.name)  # Refresh after stargazers
+                    if show_progress:
+                        _display_progress(idx, total_repos, repo.name)  # Refresh after stargazers
                     subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
-                    _display_progress(idx, total_repos, repo.name)  # Refresh after subscribers
+                    if show_progress:
+                        _display_progress(idx, total_repos, repo.name)  # Refresh after subscribers
                     forked_repos = [fork.full_name for fork in repo.get_forks()]
-                    _display_progress(idx, total_repos, repo.name)  # Refresh after forks
+                    if show_progress:
+                        _display_progress(idx, total_repos, repo.name)  # Refresh after forks
                 except GithubException as e:
                     if e.status in [403, 451]:
                         if BLOCKED_REPOS:
                             print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {e}")
                             print_cur_ts("Timestamp:\t\t\t")
-                        _display_progress(idx, total_repos, repo.name)
+                        if show_progress:
+                            _display_progress(idx, total_repos, repo.name)
                         continue
                     raise
                 finally:
                     github_logger.setLevel(original_level)
 
                 issues = list(repo.get_issues(state='open'))
-                _display_progress(idx, total_repos, repo.name)  # Refresh after issues
+                if show_progress:
+                    _display_progress(idx, total_repos, repo.name)  # Refresh after issues
                 pulls = list(repo.get_pulls(state='open'))
-                _display_progress(idx, total_repos, repo.name)  # Refresh after pulls
+                if show_progress:
+                    _display_progress(idx, total_repos, repo.name)  # Refresh after pulls
 
                 real_issues = [i for i in issues if not i.pull_request]
                 issue_count = len(real_issues)
@@ -1145,7 +1152,8 @@ def github_process_repos(repos_list):
                 pr_list = [f"#{pr.number} {pr.title} ({pr.user.login}) [ {pr.html_url} ]" for pr in pulls]
 
                 list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "issues_list": issues_list, "pulls_list": pr_list})
-                _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))  # Final refresh after successful processing
+                if show_progress:
+                    _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))  # Final refresh after successful processing
 
             except GithubException as e:
                 # Skip TOS-blocked (403) and legally blocked (451) repositories
@@ -1153,21 +1161,24 @@ def github_process_repos(repos_list):
                     if BLOCKED_REPOS:
                         print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {e}")
                         print_cur_ts("Timestamp:\t\t\t")
-                    _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
+                    if show_progress:
+                        _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
                 else:
                     print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
                     print_cur_ts("Timestamp:\t\t\t")
-                    _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
+                    if show_progress:
+                        _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
             except Exception as e:
                 print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
                 print_cur_ts("Timestamp:\t\t\t")
-                _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
+                if show_progress:
+                    _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                 continue
 
-        # Clear progress bar and move to next line
-        if total_repos > 0:
+        # Clear progress bar and move to next line (only if progress was shown)
+        if show_progress and total_repos > 0:
             # Write newline to terminal
             terminal_out = stdout_bck if stdout_bck is not None else sys.stdout
             terminal_out.write("\n")
@@ -3048,7 +3059,7 @@ def github_monitor_user(user, csv_file_name):
 
             if repos_list_filtered is not None:
                 try:
-                    list_of_repos = github_process_repos(repos_list_filtered)
+                    list_of_repos = github_process_repos(repos_list_filtered, show_progress=False)
                     list_of_repos_ok = True
                 except Exception as e:
                     list_of_repos = list_of_repos_old
