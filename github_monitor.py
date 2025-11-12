@@ -496,18 +496,168 @@ def markdown_to_html(text, convert_line_breaks=True):
     if not text:
         return ""
 
+    # First, protect code blocks from HTML escaping and other processing
+    code_blocks = []
+    code_block_pattern = r'```([\s\S]*?)```'
+    code_block_counter = 0
+
+    def replace_code_block(match):
+        nonlocal code_block_counter
+        code_content = match.group(1)
+        placeholder = f"__CODE_BLOCK_{code_block_counter}__"
+        code_blocks.append(('<pre><code>' + html.escape(code_content) + '</code></pre>', placeholder))
+        code_block_counter += 1
+        return placeholder
+
+    # Protect code blocks first
+    text = re.sub(code_block_pattern, replace_code_block, text)
+
+    # Escape HTML (but code blocks are already protected)
     html_text = html.escape(text)
 
+    # Restore code blocks
+    for code_html, placeholder in code_blocks:
+        html_text = html_text.replace(placeholder, code_html)
+
+    # Process block-level elements line by line
+    lines = html_text.split('\n')
+    processed_lines = []
+    in_list = False
+    list_type = None  # 'ul' or 'ol'
+    list_items = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Skip empty lines for now (we'll add them back later)
+        if not stripped:
+            if in_list:
+                # Close current list
+                if list_type == 'ul':
+                    processed_lines.append('<ul>' + ''.join(list_items) + '</ul>')
+                else:
+                    processed_lines.append('<ol>' + ''.join(list_items) + '</ol>')
+                in_list = False
+                list_type = None
+                list_items = []
+            processed_lines.append('')
+            i += 1
+            continue
+
+        # Horizontal rules (must be at least 3 dashes/asterisks)
+        if re.match(r'^[-*_]{3,}$', stripped):
+            processed_lines.append('<hr>')
+            i += 1
+            continue
+
+        # Headers (# ## ### etc.)
+        header_match = re.match(r'^(#{1,6})\s+(.+)$', stripped)
+        if header_match:
+            level = len(header_match.group(1))
+            header_text = header_match.group(2)
+            processed_lines.append(f'<h{level}>{header_text}</h{level}>')
+            i += 1
+            continue
+
+        # Blockquotes (>)
+        if stripped.startswith('>'):
+            quote_text = stripped[1:].strip()
+            processed_lines.append(f'<blockquote>{quote_text}</blockquote>')
+            i += 1
+            continue
+
+        # Lists - be careful not to match "- label:" patterns
+        # Check for unordered list (- or *)
+        list_match = re.match(r'^(\s*)([-*])\s+(.+)$', line)
+        if list_match:
+            list_content = list_match.group(3)
+            # Don't treat as list if it looks like a label pattern:
+            # - Ends with just a colon (with optional whitespace), OR
+            # - Matches pattern like "Word:" or "Words:" followed by tabs/spaces (typical label format)
+            is_label = (re.search(r':\s*$', list_content) or
+                       re.match(r'^[A-Z][a-zA-Z\s]+:\s+\S', list_content))
+            if not is_label:
+                if not in_list or list_type != 'ul':
+                    if in_list:
+                        # Close previous list
+                        if list_type == 'ol':
+                            processed_lines.append('<ol>' + ''.join(list_items) + '</ol>')
+                        list_items = []
+                    in_list = True
+                    list_type = 'ul'
+
+                list_items.append(f'<li>{list_content}</li>')
+                i += 1
+                continue
+
+        # Check for ordered list (1. 2. etc.)
+        ordered_match = re.match(r'^(\s*)(\d+)\.\s+(.+)$', line)
+        if ordered_match:
+            list_content = ordered_match.group(3)
+
+            if not in_list or list_type != 'ol':
+                if in_list:
+                    # Close previous list
+                    if list_type == 'ul':
+                        processed_lines.append('<ul>' + ''.join(list_items) + '</ul>')
+                    list_items = []
+                in_list = True
+                list_type = 'ol'
+
+            list_items.append(f'<li>{list_content}</li>')
+            i += 1
+            continue
+
+        # Not a list item, so close any open list
+        if in_list:
+            if list_type == 'ul':
+                processed_lines.append('<ul>' + ''.join(list_items) + '</ul>')
+            else:
+                processed_lines.append('<ol>' + ''.join(list_items) + '</ol>')
+            in_list = False
+            list_type = None
+            list_items = []
+
+        # Regular line
+        processed_lines.append(line)
+        i += 1
+
+    # Close any remaining open list
+    if in_list:
+        if list_type == 'ul':
+            processed_lines.append('<ul>' + ''.join(list_items) + '</ul>')
+        else:
+            processed_lines.append('<ol>' + ''.join(list_items) + '</ol>')
+
+    html_text = '\n'.join(processed_lines)
+
+    # Process inline elements (but skip code blocks)
+    # Images
+    image_pattern = r'!\[([^\]]*)\]\(([^\)]+)\)'
+    html_text = re.sub(image_pattern, r'<img src="\2" alt="\1">', html_text)
+
+    # Links
     link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
     html_text = re.sub(link_pattern, r'<a href="\2">\1</a>', html_text)
 
+    # Strikethrough
+    html_text = re.sub(r'~~([^~]+)~~', r'<s>\1</s>', html_text)
+
+    # Bold
     html_text = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', html_text)
     html_text = re.sub(r'__([^_]+)__', r'<b>\1</b>', html_text)
 
+    # Italic (must not be part of bold)
     html_text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<i>\1</i>', html_text)
     html_text = re.sub(r'(?<!_)_([^_]+)_(?!_)', r'<i>\1</i>', html_text)
 
+    # Inline code (but not inside code blocks)
     html_text = re.sub(r'`([^`]+)`', r'<code>\1</code>', html_text)
+
+    # Convert plain URLs to links (avoid double-converting URLs already in <a> tags)
+    html_text = convert_urls_to_links(html_text)
 
     if convert_line_breaks:
         html_text = html_text.replace('\n', '<br>')
