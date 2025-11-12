@@ -492,7 +492,7 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
 
 
 # Converts markdown text to HTML
-def markdown_to_html(text, convert_line_breaks=True):
+def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
     if not text:
         return ""
 
@@ -636,11 +636,35 @@ def markdown_to_html(text, convert_line_breaks=True):
     # Process inline elements (but skip code blocks)
     # Images
     image_pattern = r'!\[([^\]]*)\]\(([^\)]+)\)'
-    html_text = re.sub(image_pattern, r'<img src="\2" alt="\1">', html_text)
+    def convert_image(match):
+        alt_text = match.group(1)
+        image_url = match.group(2)
+        # Convert relative image URLs to absolute if repo_url is provided
+        if repo_url and image_url and not image_url.startswith(('http://', 'https://', 'data:', '#')):
+            # Use blob/HEAD/ for relative image URLs (GitHub requires branch in path)
+            if image_url.startswith('/'):
+                absolute_url = repo_url.rstrip('/') + '/blob/HEAD' + image_url
+            else:
+                absolute_url = repo_url.rstrip('/') + '/blob/HEAD/' + image_url
+            return f'<img src="{absolute_url}" alt="{alt_text}">'
+        return f'<img src="{image_url}" alt="{alt_text}">'
+    html_text = re.sub(image_pattern, convert_image, html_text)
 
     # Links
     link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
-    html_text = re.sub(link_pattern, r'<a href="\2">\1</a>', html_text)
+    def convert_link(match):
+        link_text = match.group(1)
+        link_url = match.group(2)
+        # Convert relative links to absolute if repo_url is provided
+        if repo_url and link_url and not link_url.startswith(('http://', 'https://', 'mailto:', '#')):
+            # Use blob/HEAD/ for relative links (GitHub requires branch in path)
+            if link_url.startswith('/'):
+                absolute_url = repo_url.rstrip('/') + '/blob/HEAD' + link_url
+            else:
+                absolute_url = repo_url.rstrip('/') + '/blob/HEAD/' + link_url
+            return f'<a href="{absolute_url}">{link_text}</a>'
+        return f'<a href="{link_url}">{link_text}</a>'
+    html_text = re.sub(link_pattern, convert_link, html_text)
 
     # Strikethrough
     html_text = re.sub(r'~~([^~]+)~~', r'<s>\1</s>', html_text)
@@ -660,7 +684,40 @@ def markdown_to_html(text, convert_line_breaks=True):
     html_text = convert_urls_to_links(html_text)
 
     if convert_line_breaks:
-        html_text = html_text.replace('\n', '<br>')
+        # Don't add <br> after block elements - they already provide spacing
+        # Collapse multiple consecutive empty lines
+        lines = html_text.split('\n')
+        result_lines = []
+        prev_was_block = False
+        prev_was_empty = False
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            # Check if this line is a block element (complete or opening/closing tag)
+            is_block = (re.match(r'^<h[1-6]>', stripped) or stripped.startswith('<ul>') or stripped.startswith('</ul>') or stripped.startswith('<ol>') or stripped.startswith('</ol>') or stripped.startswith('<li>') or stripped.startswith('</li>') or stripped.startswith('<blockquote>') or stripped.startswith('</blockquote>') or stripped == '<hr>' or stripped.startswith('<pre>') or stripped.startswith('</pre>'))
+
+            if not stripped:
+                # Empty line - only add <br> if previous wasn't empty and wasn't a block
+                if not prev_was_empty and not prev_was_block:
+                    result_lines.append('<br>')
+                prev_was_empty = True
+                prev_was_block = False
+            else:
+                if is_block:
+                    # Block element - don't add <br> before or after it
+                    result_lines.append(line)
+                    prev_was_block = True
+                    prev_was_empty = False
+                else:
+                    # Regular line - add <br> before if previous wasn't a block
+                    # (empty lines are already handled above)
+                    if not prev_was_block and result_lines and not prev_was_empty:
+                        result_lines.append('<br>')
+                    result_lines.append(line)
+                    prev_was_block = False
+                    prev_was_empty = False
+
+        html_text = ''.join(result_lines)
 
     return html_text
 
@@ -747,6 +804,16 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
     if not event_text:
         return ""
 
+    # Extract repo URL from event text if available
+    repo_url = None
+    for line in event_text.split('\n'):
+        if 'Repo URL:' in line:
+            # Extract URL from line like "Repo URL: https://github.com/user/repo"
+            match = re.search(r'Repo URL:\s*(https?://[^\s]+)', line)
+            if match:
+                repo_url = match.group(1)
+                break
+
     lines = event_text.split('\n')
     html_lines = []
 
@@ -798,7 +865,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
             if event_payload and event_payload.get("release"):
                 release_body = event_payload["release"].get("body", "")
                 if release_body:
-                    release_html = markdown_to_html(release_body, convert_line_breaks=True)
+                    release_html = markdown_to_html(release_body, convert_line_breaks=True, repo_url=repo_url)
                     prefix = line.split("Release notes:")[0].replace('\t', ' ')
                     html_lines.append(f"{html.escape(prefix)}<b>Release notes:</b><br><br>'{release_html}'<br>")
                     i += 1
@@ -830,7 +897,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                     parts = message_line.split("'", 1)
                     if len(parts) > 1:
                         message_text, next_index = extract_quoted_message(i, parts[1])
-                        message_html = markdown_to_html(message_text, convert_line_breaks=True)
+                        message_html = markdown_to_html(message_text, convert_line_breaks=True, repo_url=repo_url)
                         styled_message = style_commit_html(message_html)
                         html_lines.append(f"{html.escape(prefix_clean)}{label_html}<br><br>'{styled_message}'")
                         i = next_index
@@ -840,7 +907,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                 if len(parts) > 1:
                     prefix = parts[0].replace('\t', ' ')
                     message_text, next_index = extract_quoted_message(i, parts[1])
-                    message_html = markdown_to_html(message_text, convert_line_breaks=True)
+                    message_html = markdown_to_html(message_text, convert_line_breaks=True, repo_url=repo_url)
                     styled_message = style_commit_html(message_html)
 
                     if "- Commit full message:" in prefix:
@@ -866,7 +933,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                     description = parts[1]
                     if description.endswith("'"):
                         description = description.rstrip("'")
-                        description_html = markdown_to_html(description, convert_line_breaks=True)
+                        description_html = markdown_to_html(description, convert_line_breaks=True, repo_url=repo_url)
                         html_lines.append(f"{html.escape(prefix)}<b>PR description:</b> '{description_html}'")
                     else:
                         description_lines = [description]
@@ -877,7 +944,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                         if i < len(lines):
                             description_lines.append(lines[i].rstrip("'"))
                         description = '\n'.join(description_lines)
-                        description_html = markdown_to_html(description, convert_line_breaks=True)
+                        description_html = markdown_to_html(description, convert_line_breaks=True, repo_url=repo_url)
                         html_lines.append(f"{html.escape(prefix)}<b>PR description:</b> '{description_html}'")
                     i += 1
                     continue
@@ -893,7 +960,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                     parts = first.split("'", 1)
                     if len(parts) > 1:
                         description_text, next_index = extract_quoted_message(i, parts[1])
-                        description_html = markdown_to_html(description_text, convert_line_breaks=True)
+                        description_html = markdown_to_html(description_text, convert_line_breaks=True, repo_url=repo_url)
                         html_lines.append(f"{html.escape(prefix)}<b>PR description:</b><br><br>'{description_html}'")
                         i = next_index
                         continue
@@ -929,7 +996,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                     parts = first.split("'", 1)
                     if len(parts) > 1:
                         body_text, next_index = extract_quoted_message(i, parts[1])
-                        body_html = markdown_to_html(body_text, convert_line_breaks=True)
+                        body_html = markdown_to_html(body_text, convert_line_breaks=True, repo_url=repo_url)
                         # Build the output with reply lines if present
                         if reply_lines:
                             reply_html = "<br>".join(html.escape(rl) for rl in reply_lines)
@@ -951,7 +1018,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                             body_content = parts[1]
                             if body_content.endswith("'"):
                                 body_content = body_content.rstrip("'")
-                                body_html = markdown_to_html(body_content, convert_line_breaks=True)
+                                body_html = markdown_to_html(body_content, convert_line_breaks=True, repo_url=repo_url)
                                 html_lines.append(f"{html.escape(prefix)}<b>{html.escape(keyword)}</b> '{body_html}'")
                                 i += 1
                                 body_keyword_matched = True
@@ -972,7 +1039,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                             parts = first.split("'", 1)
                             if len(parts) > 1:
                                 body_text, next_index = extract_quoted_message(i, parts[1])
-                                body_html = markdown_to_html(body_text, convert_line_breaks=True)
+                                body_html = markdown_to_html(body_text, convert_line_breaks=True, repo_url=repo_url)
                                 html_lines.append(f"{html.escape(prefix)}<b>{html.escape(keyword)}</b><br><br>'{body_html}'")
                                 i = next_index
                                 body_keyword_matched = True
@@ -994,7 +1061,9 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
             if pr_match:
                 pr_number = pr_match.group(1)
                 pr_title = pr_match.group(2)
-                html_lines.append(f'=== PR #{pr_number}: <b>{html.escape(pr_title)}</b> ===')
+                # Convert markdown in PR title (e.g., **bold**, *italic*)
+                pr_title_html = markdown_to_html(pr_title, convert_line_breaks=False, repo_url=repo_url)
+                html_lines.append(f'=== PR #{pr_number}: <b>{pr_title_html}</b> ===')
                 i += 1
                 continue
 
@@ -1044,7 +1113,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                     value_html = f'<span style="{date_message_style}">{value_html}</span>{suffix}'
                 else:
                     # Non-date values still get markdown + URL conversion
-                    value_html = markdown_to_html(value, convert_line_breaks=False)
+                    value_html = markdown_to_html(value, convert_line_breaks=False, repo_url=repo_url)
                     value_html = convert_urls_to_links(value_html)
 
                 html_lines.append(f"{label_html} {value_html}")
@@ -1084,7 +1153,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                 for idx, quoted_str in enumerate(quoted_strings):
                     temp_line = temp_line.replace(f"'{quoted_str}'", f"__QUOTED_{idx}__", 1)
 
-                line_html = markdown_to_html(temp_line, convert_line_breaks=False)
+                line_html = markdown_to_html(temp_line, convert_line_breaks=False, repo_url=repo_url)
                 line_html = convert_urls_to_links(line_html)
 
                 for idx, quoted_str in enumerate(quoted_strings):
