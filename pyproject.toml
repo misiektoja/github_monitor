@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "github_monitor"
-version = "2.3"
+version = "2.4"
 description = "Tool implementing real-time tracking of Github users activities including profile and repositories changes"
 readme = "README.md"
 license = "GPL-3.0-or-later"
