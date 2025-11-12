@@ -2177,6 +2177,7 @@ def is_profile_public(g: Github, user, new_account_days=30):
 
 
 # Returns a dict mapping 'YYYY-MM-DD' -> int contribution count for the range
+# Handles long date ranges by splitting into year-long chunks
 def get_daily_contributions(username: str, start: Optional[dt.date] = None, end: Optional[dt.date] = None, token: Optional[str] = None) -> dict:
     if token is None:
         raise ValueError("GitHub token is required")
@@ -2187,46 +2188,95 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
     if end is None:
         end = today
 
-    url = GITHUB_API_URL.rstrip("/") + "/graphql"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Time-Zone": LOCAL_TIMEZONE,
-    }
+    # GitHub's contribution calendar API has limitations - typically only returns last year
+    # For longer periods, we need to split into year-long chunks
+    out = {}
 
-    tz = pytz.timezone(LOCAL_TIMEZONE)
-    start_w = start - dt.timedelta(days=1)
-    end_w_exclusive = end + dt.timedelta(days=2)
-    start_iso = tz.localize(dt.datetime.combine(start_w, dt.time.min)).isoformat()
-    end_iso = tz.localize(dt.datetime.combine(end_w_exclusive, dt.time.min)).isoformat()
+    # Split into year-long chunks (max 1 year per request)
+    current_start = start
+    while current_start <= end:
+        # Calculate end date for this chunk (1 year from start, or the requested end date, whichever is earlier)
+        chunk_end = min(
+            dt.date(current_start.year + 1, current_start.month, current_start.day) - dt.timedelta(days=1),
+            end
+        )
 
-    query = """
-    query($login: String!, $from: DateTime!, $to: DateTime!) {
-      user(login: $login) {
-        contributionsCollection(from: $from, to: $to) {
-          contributionCalendar {
-            weeks {
-              contributionDays {
-                date
-                contributionCount
+        url = GITHUB_API_URL.rstrip("/") + "/graphql"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Time-Zone": LOCAL_TIMEZONE,
+        }
+
+        tz = pytz.timezone(LOCAL_TIMEZONE)
+        start_w = current_start - dt.timedelta(days=1)
+        end_w_exclusive = chunk_end + dt.timedelta(days=2)
+        start_iso = tz.localize(dt.datetime.combine(start_w, dt.time.min)).isoformat()
+        end_iso = tz.localize(dt.datetime.combine(end_w_exclusive, dt.time.min)).isoformat()
+
+        query = """
+        query($login: String!, $from: DateTime!, $to: DateTime!) {
+          user(login: $login) {
+            contributionsCollection(from: $from, to: $to) {
+              contributionCalendar {
+                weeks {
+                  contributionDays {
+                    date
+                    contributionCount
+                  }
+                }
               }
             }
           }
-        }
-      }
-    }"""
+        }"""
 
-    variables = {"login": username, "from": start_iso, "to": end_iso}
-    r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30)
-    r.raise_for_status()
-    data = r.json()
+        variables = {"login": username, "from": start_iso, "to": end_iso}
+        r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30)
+        r.raise_for_status()
+        data = r.json()
 
-    days = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]["weeks"]
-    out = {}
-    for w in days:
-        for d in w["contributionDays"]:
-            date = d["date"]
-            if start <= dt.date.fromisoformat(date) <= end:
-                out[date] = d["contributionCount"]
+        # Check for errors in the response
+        if "errors" in data:
+            raise RuntimeError(f"GraphQL API errors: {data['errors']}")
+
+        # Check if user exists
+        if data.get("data", {}).get("user") is None:
+            raise ValueError(f"User '{username}' not found")
+
+        # Safely access nested data
+        contrib_collection = data.get("data", {}).get("user", {}).get("contributionsCollection")
+        if contrib_collection is None:
+            raise RuntimeError(f"No contributions data returned for user '{username}'")
+
+        contrib_calendar = contrib_collection.get("contributionCalendar")
+        if contrib_calendar is None:
+            # For very old dates, GitHub may not have data - skip this chunk
+            print(f"Warning: No contribution calendar data available for {current_start} to {chunk_end}, skipping...")
+            current_start = chunk_end + dt.timedelta(days=1)
+            continue
+
+        weeks = contrib_calendar.get("weeks")
+        if weeks is None:
+            print(f"Warning: No weeks data available for {current_start} to {chunk_end}, skipping...")
+            current_start = chunk_end + dt.timedelta(days=1)
+            continue
+
+        # Process the weeks data
+        for w in weeks:
+            contribution_days = w.get("contributionDays", [])
+            for d in contribution_days:
+                date_str = d.get("date")
+                if not date_str:
+                    continue
+                try:
+                    date_obj = dt.date.fromisoformat(date_str)
+                    if start <= date_obj <= end:
+                        out[date_str] = d.get("contributionCount", 0)
+                except ValueError:
+                    continue
+
+        # Move to next chunk
+        current_start = chunk_end + dt.timedelta(days=1)
+
     return out
 
 
