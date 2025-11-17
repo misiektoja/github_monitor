@@ -2061,7 +2061,11 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     if time_passed and not ts:
         tp = f" ({calculate_timespan(int(time.time()), event_date, show_seconds=False, granularity=2)} ago)"
     elif time_passed and ts:
-        tp = f" (after {calculate_timespan(event_date, ts, show_seconds=False, granularity=2)}: {get_short_date_from_ts(ts)})"
+        # Only show "after" if current event is newer than previous event
+        if event_date > ts:
+            tp = f" (after {calculate_timespan(event_date, ts, show_seconds=False, granularity=2)}: {get_short_date_from_ts(ts)})"
+        else:
+            tp = ""
     st += print_v(f"Event date:\t\t\t{get_date_from_ts(event_date)}{tp}")
     st += print_v(f"Event ID:\t\t\t{event.id}")
     st += print_v(f"Event type:\t\t\t{event.type}")
