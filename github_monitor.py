@@ -491,12 +491,34 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
         return '0 seconds'
 
 
-# Converts markdown text to HTML
-def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
+# Sanitizes HTML content, preserving safe tags while removing dangerous ones
+def sanitize_and_preserve_html(text, convert_line_breaks=True, repo_url=None):
     if not text:
         return ""
 
-    # First, protect code blocks from HTML escaping and other processing
+    safe_tags = {
+        'details': ['open'],
+        'summary': [],
+        'ul': [],
+        'ol': [],
+        'li': [],
+        'a': ['href', 'title'],
+        'code': [],
+        'pre': [],
+        'p': [],
+        'br': [],
+        'strong': [],
+        'b': [],
+        'em': [],
+        'i': [],
+        's': [],
+        'strike': [],
+        'del': [],
+        'img': ['src', 'alt', 'title'],
+        'blockquote': [],
+        'hr': [],
+    }
+
     code_blocks = []
     code_block_pattern = r'```([\s\S]*?)```'
     code_block_counter = 0
@@ -509,10 +531,211 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
         code_block_counter += 1
         return placeholder
 
-    # Protect code blocks first
     text = re.sub(code_block_pattern, replace_code_block, text)
 
-    # Escape HTML (but code blocks are already protected)
+    # Pattern to match HTML tags including multiline (use [\s\S]*? to match any char including newlines)
+    tag_pattern = r'<(/)?([a-z][a-z0-9]*)([\s\S]*?)>'
+
+    def sanitize_tag(match):
+        closing = match.group(1) == '/'
+        tag_name = match.group(2).lower()
+        attrs_str = match.group(3) if match.group(3) else ''
+
+        if closing:
+            return f'</{tag_name}>' if tag_name in safe_tags else ''
+
+        if tag_name not in safe_tags:
+            return ''
+
+        allowed_attrs = safe_tags[tag_name]
+        if not allowed_attrs and attrs_str:
+            return f'<{tag_name}>'
+
+        attr_pattern = r'(\w+)=["\']([^"\']*)["\']'
+        safe_attrs = []
+        for attr_match in re.finditer(attr_pattern, attrs_str):
+            attr_name = attr_match.group(1).lower()
+            attr_value = attr_match.group(2)
+
+            if attr_name in allowed_attrs:
+                if attr_name == 'href' or attr_name == 'src':
+                    if attr_value.startswith(('http://', 'https://', 'mailto:', '#')):
+                        safe_attrs.append(f'{attr_name}="{html.escape(attr_value)}"')
+                else:
+                    safe_attrs.append(f'{attr_name}="{html.escape(attr_value)}"')
+
+        if safe_attrs:
+            return f'<{tag_name} {" ".join(safe_attrs)}>'
+        else:
+            return f'<{tag_name}>'
+
+    sanitized = re.sub(tag_pattern, sanitize_tag, text, flags=re.IGNORECASE)
+
+    temp_markers = []
+    for idx, (code_html, placeholder) in enumerate(code_blocks):
+        temp_marker = f"__TEMP_CODE_{idx}__"
+        temp_markers.append((temp_marker, code_html))
+        sanitized = sanitized.replace(placeholder, temp_marker)
+
+    protected_tags = []
+    tag_counter = 0
+
+    valid_tag_pattern = r'</?[a-z][a-z0-9]*(?:\s+[^>]*)?>'
+    def protect_tag(match):
+        nonlocal tag_counter
+        protected_tags.append(match.group(0))
+        result = f"__PROTECTED_TAG_{tag_counter}__"
+        tag_counter += 1
+        return result
+
+    sanitized = re.sub(valid_tag_pattern, protect_tag, sanitized, flags=re.IGNORECASE)
+
+    sanitized = sanitized.replace('<', '&lt;').replace('>', '&gt;')
+
+    for idx, tag in enumerate(protected_tags):
+        sanitized = sanitized.replace(f"__PROTECTED_TAG_{idx}__", tag)
+
+    for temp_marker, code_html in temp_markers:
+        sanitized = sanitized.replace(temp_marker, code_html)
+
+    if convert_line_breaks:
+        lines = sanitized.split('\n')
+        result_lines = []
+        prev_was_block = False
+        prev_was_empty = False
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            is_block = bool(re.search(r'<(details|summary|ul|ol|li|pre|blockquote|hr|p)[\s>]', stripped, re.IGNORECASE))
+
+            if not stripped:
+                if not prev_was_empty and not prev_was_block:
+                    result_lines.append('<br>')
+                prev_was_empty = True
+                prev_was_block = False
+            else:
+                if is_block:
+                    result_lines.append(line)
+                    prev_was_block = True
+                    prev_was_empty = False
+                else:
+                    if not prev_was_block and result_lines and not prev_was_empty:
+                        result_lines.append('<br>')
+                    result_lines.append(line)
+                    prev_was_block = False
+                    prev_was_empty = False
+
+        sanitized = ''.join(result_lines)
+
+    return sanitized
+
+
+# Sanitizes a single HTML tag
+def sanitize_single_html_tag(html_tag):
+    safe_tags = {
+        'details': ['open'],
+        'summary': [],
+        'ul': [],
+        'ol': [],
+        'li': [],
+        'a': ['href', 'title'],
+        'code': [],
+        'pre': [],
+        'p': [],
+        'br': [],
+        'strong': [],
+        'b': [],
+        'em': [],
+        'i': [],
+        's': [],
+        'strike': [],
+        'del': [],
+        'img': ['src', 'alt', 'title'],
+        'blockquote': [],
+        'hr': [],
+    }
+
+    # Pattern to match HTML tags including multiline (use [\s\S]*? to match any char including newlines)
+    tag_pattern = r'<(/)?([a-z][a-z0-9]*)([\s\S]*?)>'
+    match = re.match(tag_pattern, html_tag, re.IGNORECASE)
+    if not match:
+        return html.escape(html_tag)
+
+    closing = match.group(1) == '/'
+    tag_name = match.group(2).lower()
+    attrs_str = match.group(3) if match.group(3) else ''
+
+    if closing:
+        return f'</{tag_name}>' if tag_name in safe_tags else ''
+
+    if tag_name not in safe_tags:
+        return ''
+
+    allowed_attrs = safe_tags[tag_name]
+    if not allowed_attrs and attrs_str:
+        return f'<{tag_name}>'
+
+    # Extract attributes, handling whitespace/newlines before attribute names
+    attr_pattern = r'\s*(\w+)=["\']([^"\']*)["\']'
+    safe_attrs = []
+    for attr_match in re.finditer(attr_pattern, attrs_str):
+        attr_name = attr_match.group(1).lower()
+        attr_value = attr_match.group(2)
+
+        if attr_name in allowed_attrs:
+            if attr_name == 'href' or attr_name == 'src':
+                if attr_value.startswith(('http://', 'https://', 'mailto:', '#')):
+                    safe_attrs.append(f'{attr_name}="{html.escape(attr_value)}"')
+            else:
+                safe_attrs.append(f'{attr_name}="{html.escape(attr_value)}"')
+
+    if safe_attrs:
+        return f'<{tag_name} {" ".join(safe_attrs)}>'
+    else:
+        return f'<{tag_name}>'
+
+
+# Converts markdown text to HTML
+def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
+    if not text:
+        return ""
+
+    # Pattern to match HTML tags (both opening and closing), including those that span multiple lines
+    # Matches: <tagname...> or </tagname> with attributes that may span lines
+    html_tag_pattern = r'</?[a-z][a-z0-9]*(?:[\s\S]*?)>'
+    has_html = bool(re.search(html_tag_pattern, text, re.IGNORECASE))
+
+    # Protect code blocks first
+    code_blocks = []
+    code_block_pattern = r'```([\s\S]*?)```'
+    code_block_counter = 0
+
+    def replace_code_block(match):
+        nonlocal code_block_counter
+        code_content = match.group(1)
+        placeholder = f"__CODE_BLOCK_{code_block_counter}__"
+        code_blocks.append(('<pre><code>' + html.escape(code_content) + '</code></pre>', placeholder))
+        code_block_counter += 1
+        return placeholder
+
+    text = re.sub(code_block_pattern, replace_code_block, text)
+
+    # If HTML is present, protect HTML tags during markdown processing, then sanitize them
+    html_tags = []
+    if has_html:
+        html_tag_counter = 0
+
+        def protect_html_tag(match):
+            nonlocal html_tag_counter
+            html_tags.append(match.group(0))
+            # Use a placeholder that won't be processed by markdown (no underscores, asterisks, etc.)
+            result = f"PROTECTEDHTMLTAG{html_tag_counter}PROTECTED"
+            html_tag_counter += 1
+            return result
+
+        text = re.sub(html_tag_pattern, protect_html_tag, text, flags=re.IGNORECASE)
+
+    # Escape HTML (but code blocks and protected HTML tags are already protected)
     html_text = html.escape(text)
 
     # Restore code blocks
@@ -634,6 +857,25 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
     html_text = '\n'.join(processed_lines)
 
     # Process inline elements (but skip code blocks)
+    image_link_pattern = r'\[!\[([^\]]*)\]\(([^\)]+)\)\]\(([^\)]+)\)'
+    def convert_image_link(match):
+        alt_text = match.group(1)
+        image_url = match.group(2)
+        link_url = match.group(3)
+        if repo_url:
+            if image_url and not image_url.startswith(('http://', 'https://', 'data:', '#')):
+                if image_url.startswith('/'):
+                    image_url = repo_url.rstrip('/') + '/blob/HEAD' + image_url
+                else:
+                    image_url = repo_url.rstrip('/') + '/blob/HEAD/' + image_url
+            if link_url and not link_url.startswith(('http://', 'https://', 'mailto:', '#')):
+                if link_url.startswith('/'):
+                    link_url = repo_url.rstrip('/') + '/blob/HEAD' + link_url
+                else:
+                    link_url = repo_url.rstrip('/') + '/blob/HEAD/' + link_url
+        return f'<a href="{html.escape(link_url)}"><img src="{html.escape(image_url)}" alt="{html.escape(alt_text)}"></a>'
+    html_text = re.sub(image_link_pattern, convert_image_link, html_text)
+
     # Images
     image_pattern = r'!\[([^\]]*)\]\(([^\)]+)\)'
     def convert_image(match):
@@ -680,42 +922,111 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
     # Inline code (but not inside code blocks)
     html_text = re.sub(r'`([^`]+)`', r'<code>\1</code>', html_text)
 
+    # Protect URLs inside HTML attributes before converting plain URLs to links
+    # This prevents convert_urls_to_links from converting URLs that are already in href/src/alt attributes
+    attr_url_placeholders = []
+    attr_url_counter = 0
+
+    def protect_attr_url(match):
+        nonlocal attr_url_counter
+        full_match = match.group(0)
+        attr_url_placeholders.append(full_match)
+        result = f"__ATTR_URL_{attr_url_counter}__"
+        attr_url_counter += 1
+        return result
+
+    # Match URLs inside HTML attributes (href="...", src="...", alt="...", title="...")
+    attr_url_pattern = r'(href|src|alt|title)=["\'](https?://[^"\']+)["\']'
+    html_text = re.sub(attr_url_pattern, protect_attr_url, html_text, flags=re.IGNORECASE)
+
     # Convert plain URLs to links (avoid double-converting URLs already in <a> tags)
     html_text = convert_urls_to_links(html_text)
 
+    # Restore protected attribute URLs
+    for idx, attr_url in enumerate(attr_url_placeholders):
+        html_text = html_text.replace(f"__ATTR_URL_{idx}__", attr_url)
+
+    # If HTML was detected, restore and sanitize the protected HTML tags BEFORE line break conversion
+    # This allows the line break logic to properly detect HTML block elements
+    if has_html and html_tags:
+        for idx, original_html_tag in enumerate(html_tags):
+            # Use the same placeholder format that was used during protection
+            placeholder = f"PROTECTEDHTMLTAG{idx}PROTECTED"
+            if placeholder in html_text:
+                sanitized_tag = sanitize_single_html_tag(original_html_tag)
+                # Only replace if sanitization returned a valid tag (not empty string)
+                if sanitized_tag:
+                    html_text = html_text.replace(placeholder, sanitized_tag)
+                else:
+                    # If tag was filtered out, escape the original tag instead
+                    html_text = html_text.replace(placeholder, html.escape(original_html_tag))
+
     if convert_line_breaks:
-        # Don't add <br> after block elements - they already provide spacing
-        # Collapse multiple consecutive empty lines
+        # Line-break handling that respects both text paragraphs and HTML blocks.
+        # Rules:
+        # - text -> blank -> text        => one <br>
+        # - text -> blank -> HTML block  => <br><br> (extra space before big block like <details>)
+        # - HTML -> blank -> text        => one <br>
+        # - HTML -> blank -> HTML block  => no extra <br>
         lines = html_text.split('\n')
         result_lines = []
-        prev_was_block = False
-        prev_was_empty = False
+        prev_type = None  # 'text' or 'html'
+        prev_html_tag = None  # last HTML tag name (e.g., 'ul', 'details', 'a')
+        prev_html_had_image = False  # whether previous HTML line contained an <img>
+        prev_text_line = None  # stripped previous text line
+        pending_blank = False
 
-        for i, line in enumerate(lines):
+        for line in lines:
             stripped = line.strip()
-            # Check if this line is a block element (complete or opening/closing tag)
-            is_block = (re.match(r'^<h[1-6]>', stripped) or stripped.startswith('<ul>') or stripped.startswith('</ul>') or stripped.startswith('<ol>') or stripped.startswith('</ol>') or stripped.startswith('<li>') or stripped.startswith('</li>') or stripped.startswith('<blockquote>') or stripped.startswith('</blockquote>') or stripped == '<hr>' or stripped.startswith('<pre>') or stripped.startswith('</pre>'))
 
             if not stripped:
-                # Empty line - only add <br> if previous wasn't empty and wasn't a block
-                if not prev_was_empty and not prev_was_block:
-                    result_lines.append('<br>')
-                prev_was_empty = True
-                prev_was_block = False
-            else:
-                if is_block:
-                    # Block element - don't add <br> before or after it
-                    result_lines.append(line)
-                    prev_was_block = True
-                    prev_was_empty = False
-                else:
-                    # Regular line - add <br> before if previous wasn't a block
-                    # (empty lines are already handled above)
-                    if not prev_was_block and result_lines and not prev_was_empty:
+                # Defer decision until we see what comes after the blank(s)
+                pending_blank = True
+                continue
+
+            is_html = stripped.startswith('<')
+
+            if is_html:
+                # Detect tag name for smarter spacing rules
+                tag_match = re.match(r'<\s*/?\s*([a-zA-Z0-9]+)', stripped)
+                tag_name = tag_match.group(1).lower() if tag_match else None
+
+                if prev_type == 'text' and pending_blank:
+                    # Text paragraph followed by blank line then HTML block
+                    # Only use double break before certain heavy blocks like <details>
+                    if tag_name == 'details':
+                        result_lines.append('<br><br>')
+                    else:
                         result_lines.append('<br>')
-                    result_lines.append(line)
-                    prev_was_block = False
-                    prev_was_empty = False
+
+                # Always keep HTML lines as-is
+                result_lines.append(line)
+                prev_type = 'html'
+                prev_html_tag = tag_name
+                prev_html_had_image = ('<img' in stripped.lower())
+                pending_blank = False
+            else:
+                # Text line (may contain inline HTML like <b>, <a>, etc.)
+                if prev_type == 'text':
+                    # Consecutive text paragraphs
+                    if pending_blank:
+                        # Blank line between text paragraphs -> full empty line
+                        result_lines.append('<br><br>')
+                    else:
+                        result_lines.append('<br>')
+                elif prev_type == 'html' and pending_blank:
+                    # HTML block followed by blank line then text
+                    # Avoid extra break after lists (<ul>/<ol>) which already have spacing
+                    if prev_html_tag not in ('ul', 'ol'):
+                        # If previous HTML line contained an image (e.g., badge), use double break
+                        if prev_html_had_image:
+                            result_lines.append('<br><br>')
+                        else:
+                            result_lines.append('<br>')
+                result_lines.append(line)
+                prev_type = 'text'
+                prev_text_line = stripped
+                pending_blank = False
 
         html_text = ''.join(result_lines)
 
@@ -730,7 +1041,9 @@ def convert_urls_to_links(text):
     bracket_pattern = r'\[\s*(https?://[^\s\]]+)\s*\]'
     text = re.sub(bracket_pattern, r'<a href="\1">\1</a>', text)
 
-    url_pattern = r'(?<!href=")(?<!">)(?<!<a href=")(https?://[^\s<>"]+)'
+    # Match URLs but not those inside HTML attributes (href="...", src="...", etc.)
+    # This pattern avoids matching URLs that are already inside quotes after = (attribute values)
+    url_pattern = r'(?<!href=")(?<!src=")(?<!alt=")(?<!title=")(?<!">)(?<!<a href=")(?<!<img src=")(https?://[^\s<>"]+)'
     text = re.sub(url_pattern, r'<a href="\1">\1</a>', text)
 
     return text
