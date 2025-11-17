@@ -739,7 +739,23 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
 
         text = re.sub(html_tag_pattern, protect_html_tag, text, flags=re.IGNORECASE)
 
-    # Escape HTML (but code blocks and protected HTML tags are already protected)
+    # Protect markdown link/image patterns from HTML escaping and italic processing
+    markdown_pattern_placeholders = []
+    markdown_pattern_counter = 0
+
+    def protect_markdown_pattern(match):
+        nonlocal markdown_pattern_counter
+        markdown_pattern_placeholders.append(match.group(0))
+        result = f"__MARKDOWN_PATTERN_{markdown_pattern_counter}__"
+        markdown_pattern_counter += 1
+        return result
+
+    # Protect image links, images, and links before HTML escaping
+    text = re.sub(r'\[!\[([^\]]*)\]\(([^\)]+)\)\]\(([^\)]+)\)', protect_markdown_pattern, text)
+    text = re.sub(r'!\[([^\]]*)\]\(([^\)]+)\)', protect_markdown_pattern, text)
+    text = re.sub(r'\[([^\]]+)\]\(([^\)]+)\)', protect_markdown_pattern, text)
+
+    # Escape HTML (but code blocks, protected HTML tags, and markdown patterns are already protected)
     html_text = html.escape(text)
 
     # Restore code blocks
@@ -861,11 +877,75 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
     html_text = '\n'.join(processed_lines)
 
     # Process inline elements (but skip code blocks)
+    # First, restore and process protected markdown patterns
+    for idx, original_pattern in enumerate(markdown_pattern_placeholders):
+        placeholder = f"__MARKDOWN_PATTERN_{idx}__"
+        escaped_placeholder = html.escape(placeholder)
+        # Check both escaped and unescaped placeholders
+        if placeholder in html_text or escaped_placeholder in html_text:
+            # Process the original pattern (unescaped)
+            # Image links
+            image_link_match = re.match(r'\[!\[([^\]]*)\]\(([^\)]+)\)\]\(([^\)]+)\)', original_pattern)
+            if image_link_match:
+                alt_text = image_link_match.group(1)
+                image_url = image_link_match.group(2)
+                link_url = image_link_match.group(3)
+                if repo_url:
+                    if image_url and not image_url.startswith(('http://', 'https://', 'data:', '#')):
+                        if image_url.startswith('/'):
+                            image_url = repo_url.rstrip('/') + '/blob/HEAD' + image_url
+                        else:
+                            image_url = repo_url.rstrip('/') + '/blob/HEAD/' + image_url
+                    if link_url and not link_url.startswith(('http://', 'https://', 'mailto:', '#')):
+                        if link_url.startswith('/'):
+                            link_url = repo_url.rstrip('/') + '/blob/HEAD' + link_url
+                        else:
+                            link_url = repo_url.rstrip('/') + '/blob/HEAD/' + link_url
+                replacement = f'<a href="{html.escape(link_url)}"><img src="{html.escape(image_url)}" alt="{html.escape(alt_text)}"></a>'
+                html_text = html_text.replace(placeholder, replacement)
+                html_text = html_text.replace(escaped_placeholder, replacement)
+                continue
+
+            # Images
+            image_match = re.match(r'!\[([^\]]*)\]\(([^\)]+)\)', original_pattern)
+            if image_match:
+                alt_text = image_match.group(1)
+                image_url = image_match.group(2)
+                if repo_url and image_url and not image_url.startswith(('http://', 'https://', 'data:', '#')):
+                    if image_url.startswith('/'):
+                        absolute_url = repo_url.rstrip('/') + '/blob/HEAD' + image_url
+                    else:
+                        absolute_url = repo_url.rstrip('/') + '/blob/HEAD/' + image_url
+                    replacement = f'<img src="{html.escape(absolute_url)}" alt="{html.escape(alt_text)}">'
+                else:
+                    replacement = f'<img src="{html.escape(image_url)}" alt="{html.escape(alt_text)}">'
+                html_text = html_text.replace(placeholder, replacement)
+                html_text = html_text.replace(escaped_placeholder, replacement)
+                continue
+
+            # Links
+            link_match = re.match(r'\[([^\]]+)\]\(([^\)]+)\)', original_pattern)
+            if link_match:
+                link_text = link_match.group(1)
+                link_url = link_match.group(2)
+                if repo_url and link_url and not link_url.startswith(('http://', 'https://', 'mailto:', '#')):
+                    if link_url.startswith('/'):
+                        absolute_url = repo_url.rstrip('/') + '/blob/HEAD' + link_url
+                    else:
+                        absolute_url = repo_url.rstrip('/') + '/blob/HEAD/' + link_url
+                    replacement = f'<a href="{html.escape(absolute_url)}">{html.escape(link_text)}</a>'
+                else:
+                    replacement = f'<a href="{html.escape(link_url)}">{html.escape(link_text)}</a>'
+                html_text = html_text.replace(placeholder, replacement)
+                html_text = html_text.replace(escaped_placeholder, replacement)
+                continue
+
+    # Process remaining markdown patterns that weren't protected (shouldn't happen, but for safety)
     image_link_pattern = r'\[!\[([^\]]*)\]\(([^\)]+)\)\]\(([^\)]+)\)'
     def convert_image_link(match):
-        alt_text = match.group(1)
-        image_url = match.group(2)
-        link_url = match.group(3)
+        alt_text = html.unescape(match.group(1))
+        image_url = html.unescape(match.group(2))
+        link_url = html.unescape(match.group(3))
         if repo_url:
             if image_url and not image_url.startswith(('http://', 'https://', 'data:', '#')):
                 if image_url.startswith('/'):
@@ -883,8 +963,8 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
     # Images
     image_pattern = r'!\[([^\]]*)\]\(([^\)]+)\)'
     def convert_image(match):
-        alt_text = match.group(1)
-        image_url = match.group(2)
+        alt_text = html.unescape(match.group(1))
+        image_url = html.unescape(match.group(2))
         # Convert relative image URLs to absolute if repo_url is provided
         if repo_url and image_url and not image_url.startswith(('http://', 'https://', 'data:', '#')):
             # Use blob/HEAD/ for relative image URLs (GitHub requires branch in path)
@@ -892,15 +972,15 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
                 absolute_url = repo_url.rstrip('/') + '/blob/HEAD' + image_url
             else:
                 absolute_url = repo_url.rstrip('/') + '/blob/HEAD/' + image_url
-            return f'<img src="{absolute_url}" alt="{alt_text}">'
-        return f'<img src="{image_url}" alt="{alt_text}">'
+            return f'<img src="{html.escape(absolute_url)}" alt="{html.escape(alt_text)}">'
+        return f'<img src="{html.escape(image_url)}" alt="{html.escape(alt_text)}">'
     html_text = re.sub(image_pattern, convert_image, html_text)
 
     # Links
     link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
     def convert_link(match):
-        link_text = match.group(1)
-        link_url = match.group(2)
+        link_text = html.unescape(match.group(1))
+        link_url = html.unescape(match.group(2))
         # Convert relative links to absolute if repo_url is provided
         if repo_url and link_url and not link_url.startswith(('http://', 'https://', 'mailto:', '#')):
             # Use blob/HEAD/ for relative links (GitHub requires branch in path)
@@ -908,8 +988,8 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
                 absolute_url = repo_url.rstrip('/') + '/blob/HEAD' + link_url
             else:
                 absolute_url = repo_url.rstrip('/') + '/blob/HEAD/' + link_url
-            return f'<a href="{absolute_url}">{link_text}</a>'
-        return f'<a href="{link_url}">{link_text}</a>'
+            return f'<a href="{html.escape(absolute_url)}">{link_text}</a>'
+        return f'<a href="{html.escape(link_url)}">{link_text}</a>'
     html_text = re.sub(link_pattern, convert_link, html_text)
 
     # Strikethrough
@@ -919,9 +999,29 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
     html_text = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', html_text)
     html_text = re.sub(r'__([^_]+)__', r'<b>\1</b>', html_text)
 
-    # Italic (must not be part of bold)
+    # Italic (must not be part of bold, and not inside HTML attributes)
+    # Protect HTML attributes from italic processing
+    attr_pattern_placeholders = []
+    attr_pattern_counter = 0
+
+    def protect_attr_pattern(match):
+        nonlocal attr_pattern_counter
+        attr_pattern_placeholders.append(match.group(0))
+        # Use placeholder without underscores to avoid italic processing
+        result = f"ATTRPATTERN{attr_pattern_counter}ATTR"
+        attr_pattern_counter += 1
+        return result
+
+    # Protect URLs in HTML attributes (href="...", src="...", alt="...", title="...")
+    # This prevents italic processing from affecting URLs inside HTML attributes
+    html_text = re.sub(r'(href|src|alt|title)=["\']([^"\']+)["\']', protect_attr_pattern, html_text, flags=re.IGNORECASE)
+
     html_text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<i>\1</i>', html_text)
     html_text = re.sub(r'(?<!_)_([^_]+)_(?!_)', r'<i>\1</i>', html_text)
+
+    # Restore protected patterns
+    for idx, pattern in enumerate(attr_pattern_placeholders):
+        html_text = html_text.replace(f"ATTRPATTERN{idx}ATTR", pattern)
 
     # Inline code (but not inside code blocks)
     html_text = re.sub(r'`([^`]+)`', r'<code>\1</code>', html_text)
