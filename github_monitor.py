@@ -3123,8 +3123,10 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
     current_start = start
     while current_start <= end:
         # Calculate end date for this chunk (1 year from start, or the requested end date, whichever is earlier)
+        # Use relativedelta to handle leap years correctly (e.g., Feb 29, 2024 -> Feb 28, 2025)
+        next_year_date = current_start + relativedelta.relativedelta(years=1)
         chunk_end = min(
-            dt.date(current_start.year + 1, current_start.month, current_start.day) - dt.timedelta(days=1),
+            next_year_date - dt.timedelta(days=1),
             end
         )
 
