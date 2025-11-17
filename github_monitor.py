@@ -872,7 +872,7 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                 if release_body:
                     release_html = markdown_to_html(release_body, convert_line_breaks=True, repo_url=repo_url)
                     prefix = line.split("Release notes:")[0].replace('\t', ' ')
-                    html_lines.append(f"{html.escape(prefix)}<b>Release notes:</b><br><br>'{release_html}'<br>")
+                    html_lines.append(f"{html.escape(prefix)}<b>Release notes:</b><br><br>'{release_html}'")
                     i += 1
                     # Skip all lines until we find the closing quote (end of release notes in plaintext)
                     while i < len(lines):
