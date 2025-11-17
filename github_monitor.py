@@ -270,6 +270,10 @@ csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
 
 CLI_CONFIG_PATH = None
 
+# Maximum length for event body text (issue bodies, comment bodies, etc.) before truncation
+# Text longer than this will be truncated with safe HTML tag closing
+MAX_EVENT_BODY_LENGTH = 3500
+
 # to solve the issue: 'SyntaxError: f-string expression part cannot include a backslash'
 nl_ch = "\n"
 
@@ -2365,6 +2369,61 @@ def github_web_base() -> str:
     return GITHUB_API_URL.replace("/api/v3", "").rstrip("/")
 
 
+# Safely truncates text without breaking HTML tags
+def safe_truncate_text(text, max_length=MAX_EVENT_BODY_LENGTH):
+    if len(text) <= max_length:
+        return text
+
+    # Find a safe truncation point - look backwards from max_length
+    truncate_at = max_length
+
+    # Check if we're in the middle of an HTML tag by looking backwards
+    for i in range(max_length - 1, max(0, max_length - 200), -1):
+        if text[i] == '<':
+            # Found start of a tag - check if it completes before max_length
+            tag_end = text.find('>', i)
+            if tag_end != -1 and tag_end < max_length:
+                # Tag completes before truncation point, safe to truncate after it
+                truncate_at = tag_end + 1
+                break
+            else:
+                # Tag doesn't complete, truncate before it to avoid breaking the tag
+                truncate_at = i
+                break
+        elif text[i] == '>':
+            # Found end of a tag, safe to truncate after it
+            truncate_at = i + 1
+            break
+
+    # Truncate at the safe point
+    truncated = text[:truncate_at]
+
+    # Find and close any open HTML tags
+    open_tags = []
+    tag_pattern = r'<(/)?([a-zA-Z][a-zA-Z0-9]*)[^>]*>'
+
+    for match in re.finditer(tag_pattern, truncated):
+        is_closing = match.group(1) == '/'
+        tag_name = match.group(2).lower()
+
+        if is_closing:
+            # Remove matching opening tag
+            if open_tags and open_tags[-1] == tag_name:
+                open_tags.pop()
+        else:
+            # Self-closing tags don't need closing
+            if tag_name not in ('img', 'br', 'hr', 'input', 'meta', 'link', 'area', 'base', 'col', 'embed', 'source', 'track', 'wbr'):
+                open_tags.append(tag_name)
+
+    # Close any remaining open tags in reverse order
+    result = truncated
+    for tag in reversed(open_tags):
+        result += f'</{tag}>'
+
+    result += " ... <cut>"
+    return result
+
+
 # Prints details about passed GitHub event
 def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
@@ -2685,8 +2744,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             st += print_v(f"Review state:\t\t\t{event.payload['review'].get('state')}")
         if event.payload["review"].get("body"):
             review_body = event.payload['review'].get('body')
-            if len(review_body) > 750:
-                review_body = review_body[:750] + " ... <cut>"
+            if len(review_body) > MAX_EVENT_BODY_LENGTH:
+                review_body = safe_truncate_text(review_body)
             st += print_v(f"Review body:")
             st += print_v(format_body_block(review_body))
 
@@ -2757,7 +2816,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
         if event.payload["issue"].get("body"):
             issue_body = event.payload['issue'].get('body')
-            issue_snippet = issue_body if len(issue_body) <= 750 else issue_body[:750] + " ... <cut>"
+            issue_snippet = issue_body if len(issue_body) <= MAX_EVENT_BODY_LENGTH else safe_truncate_text(issue_body)
             st += print_v(f"\nIssue body:")
             st += print_v(format_body_block(issue_snippet))
 
@@ -2781,8 +2840,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
         comment_body = comment.get("body")
         if comment_body:
-            if len(comment_body) > 750:
-                comment_body = comment_body[:750] + " ... <cut>"
+            if len(comment_body) > MAX_EVENT_BODY_LENGTH:
+                comment_body = safe_truncate_text(comment_body)
             st += print_v(f"\nComment body:")
             st += print_v(format_body_block(comment_body))
 
@@ -2799,8 +2858,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     st += print_v(f"\nPrevious comment:\n\n↳ In reply to {parent.user.login} (@ {parent_date}):")
 
                     parent_body = parent.body
-                    if len(parent_body) > 750:
-                        parent_body = parent_body[:750] + " ... <cut>"
+                    if len(parent_body) > MAX_EVENT_BODY_LENGTH:
+                        parent_body = safe_truncate_text(parent_body)
                     st += print_v(format_body_block(parent_body))
 
                     st += print_v(f"\nPrevious comment URL:\t\t{parent.html_url}")
@@ -2853,8 +2912,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                         st += print_v(f"\nPrevious comment:\n\n↳ In reply to {previous['user'].login} (@ {prev_date}):")
 
                         parent_body = previous["body"]
-                        if len(parent_body) > 750:
-                            parent_body = parent_body[:750] + " ... <cut>"
+                        if len(parent_body) > MAX_EVENT_BODY_LENGTH:
+                            parent_body = safe_truncate_text(parent_body)
                         st += print_v(format_body_block(parent_body))
 
                         st += print_v(f"\nPrevious comment URL:\t\t{previous['html_url']}")
@@ -2878,8 +2937,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                         st += print_v(f"\nPrevious comment:\n\n↳ In reply to {previous.user.login} (@ {prev_date}):")
 
                         parent_body = previous.body
-                        if len(parent_body) > 750:
-                            parent_body = parent_body[:750] + " ... <cut>"
+                        if len(parent_body) > MAX_EVENT_BODY_LENGTH:
+                            parent_body = safe_truncate_text(parent_body)
                         st += print_v(format_body_block(parent_body))
 
                         st += print_v(f"\nPrevious comment URL:\t\t{previous.html_url}")
@@ -2921,8 +2980,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         if comment_author:
             st += print_v(f"\nDiscussion comment by:\t\t{comment_author}")
         if comment_body:
-            if len(comment_body) > 750:
-                comment_body = comment_body[:750] + " ... <cut>"
+            if len(comment_body) > MAX_EVENT_BODY_LENGTH:
+                comment_body = safe_truncate_text(comment_body)
             st += print_v(f"\nComment body:")
             st += print_v(format_body_block(comment_body))
 
