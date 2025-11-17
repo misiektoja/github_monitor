@@ -737,7 +737,7 @@ def convert_urls_to_links(text):
 
 
 # Converts issue/PR list items to HTML with clickable titles
-def convert_issue_pr_items_to_html(text):
+def convert_issue_pr_items_to_html(text, already_escaped=False):
     if not text:
         return text
 
@@ -750,9 +750,14 @@ def convert_issue_pr_items_to_html(text):
         user = match.group(4)
         url = match.group(5)
 
-        escaped_title = html.escape(title)
-        escaped_user = html.escape(user)
-        escaped_url = html.escape(url)
+        if already_escaped:
+            escaped_title = title
+            escaped_user = user
+            escaped_url = url
+        else:
+            escaped_title = html.escape(title)
+            escaped_user = html.escape(user)
+            escaped_url = html.escape(url)
 
         return f'{prefix}<a href="{escaped_url}"><b>#{number} {escaped_title}</b></a> ({escaped_user})'
 
@@ -764,10 +769,10 @@ def text_to_html(text, preserve_newlines=True, convert_urls=True, convert_issue_
     if not text:
         return ""
 
-    if convert_issue_pr:
-        text = convert_issue_pr_items_to_html(text)
-
     html_text = html.escape(text)
+
+    if convert_issue_pr:
+        html_text = convert_issue_pr_items_to_html(html_text, already_escaped=True)
 
     if convert_urls:
         html_text = convert_urls_to_links(html_text)
