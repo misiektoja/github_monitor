@@ -1017,7 +1017,8 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
     html_text = re.sub(r'(href|src|alt|title)=["\']([^"\']+)["\']', protect_attr_pattern, html_text, flags=re.IGNORECASE)
 
     html_text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<i>\1</i>', html_text)
-    html_text = re.sub(r'(?<!_)_([^_]+)_(?!_)', r'<i>\1</i>', html_text)
+    # Only match italic underscores when they're clearly markdown (word boundaries or spaces/punctuation)
+    html_text = re.sub(r'(?<![a-zA-Z0-9])_([^_]+)_(?![a-zA-Z0-9])', r'<i>\1</i>', html_text)
 
     # Restore protected patterns
     for idx, pattern in enumerate(attr_pattern_placeholders):
@@ -1506,6 +1507,11 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                            'Issue date', 'Comment date', 'Review submitted at']
             is_date_label = any(label.strip() == date_label or label.strip().endswith(date_label) for date_label in date_labels)
 
+            # Check if this is an identifier field that should not get markdown conversion
+            # These fields contain identifiers (repo names, file names, etc.) that should be escaped, not markdown-processed
+            identifier_labels = ['Repo name', 'Asset name', 'Branch name', 'Tag name', 'File name', 'Release tag name']
+            is_identifier_label = any(label.strip() == identifier_label or label.strip().endswith(identifier_label) for identifier_label in identifier_labels)
+
             if value.startswith('http://') or value.startswith('https://'):
                 escaped_url = html.escape(value)
                 html_lines.append(f"{label_html} <a href=\"{escaped_url}\">{escaped_url}</a>")
@@ -1533,8 +1539,10 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
                     )
 
                     value_html = f'<span style="{date_message_style}">{value_html}</span>{suffix}'
+                elif is_identifier_label:
+                    value_html = html.escape(value)
                 else:
-                    # Non-date values still get markdown + URL conversion
+                    # Non-date, non-identifier values get markdown + URL conversion
                     value_html = markdown_to_html(value, convert_line_breaks=False, repo_url=repo_url)
                     value_html = convert_urls_to_links(value_html)
 
