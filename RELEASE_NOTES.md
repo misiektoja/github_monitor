@@ -1,6 +1,21 @@
 # github_monitor release notes
 
-This is a high-level summary of the most important changes. 
+This is a high-level summary of the most important changes.
+
+# Changes in 2.4 (13 Dec 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Implemented HTML formatting (with markdown to HTML conversion) for email notifications, enhancing readability and visual presentation
+- **NEW:** Added progress bar functionality for repository processing
+- **IMPROVE:** Enhanced contribution data retrieval by handling long date ranges more effectively
+
+**Bug fixes**:
+
+- **BUGFIX:** Corrected date calculation for yearly contribution chunks to handle leap years accurately
+- **BUGFIX:** Prevented displaying "after" timestamp for older events in GitHub print output
+- **BUGFIX:** Added handling for network errors when fetching user data
+- **BUGFIX:** Prevented false positives for repository list changes in notifications
 
 # Changes in 2.3 (11 Nov 2025)
 
