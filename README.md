@@ -1,6 +1,6 @@
 # github_monitor
 
-OSINT tool for real-time monitoring of **GitHub users' activities, including profile and repository changes**.
+A powerful real-time GitHub OSINT tool that tracks everything from profile updates and contribution streaks to repository engagement and follower changes — even detecting when you've been blocked — all with instant email notifications.
 
 <a id="features"></a>
 ## Features
@@ -213,7 +213,7 @@ python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
 <a id="smtp-settings"></a>
 ### SMTP Settings
 
-If you want to use email notifications functionality, configure SMTP settings in the `github_monitor.conf` file. 
+If you want to use email notifications functionality, configure SMTP settings in the `github_monitor.conf` file.
 
 Verify your SMTP settings by using `--send-test-email` flag (the tool will try to send a test email notification):
 
@@ -242,7 +242,7 @@ GITHUB_TOKEN="your_github_classic_personal_access_token"
 SMTP_PASSWORD="your_smtp_password"
 ```
 
-By default the tool will auto-search for dotenv file named `.env` in current directory and then upward from it. 
+By default the tool will auto-search for dotenv file named `.env` in current directory and then upward from it.
 
 You can specify a custom file with `DOTENV_FILE` or `--env-file` flag:
 
@@ -279,9 +279,9 @@ github_monitor github_username -t "your_github_classic_personal_access_token"
 ```
 
 By default, the tool looks for a configuration file named `github_monitor.conf` in:
- - current directory 
+ - current directory
  - home directory (`~`)
- - script directory 
+ - script directory
 
  If you generated a configuration file as described in [Configuration](#configuration), but saved it under a different name or in a different directory, you can specify its location using the `--config-file` flag:
 
