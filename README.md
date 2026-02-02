@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/maintenance-active-brightgreen?style=flat-square" alt="Maintenance" />
 </p>
 
-A powerful real-time GitHub OSINT tool that tracks everything from profile updates and contribution streaks to repository engagement and follower changes — even detecting when you've been blocked — all with instant email notifications.
+A powerful real-time GitHub OSINT tool that tracks everything from profile updates and contribution streaks to repository engagement and follower changes - even detecting when you've been blocked, all with instant email notifications.
 
 ### 🚀 Quick Install
 ```sh
