@@ -1,6 +1,25 @@
 # github_monitor
 
+<p align="left">
+  <img src="https://img.shields.io/github/v/release/misiektoja/github_monitor?style=flat-square&color=blue" alt="GitHub Release" />
+  <img src="https://img.shields.io/pypi/v/github_monitor?style=flat-square&color=orange" alt="PyPI Version" />
+  <img src="https://img.shields.io/github/stars/misiektoja/github_monitor?style=flat-square&color=yellow" alt="GitHub Stars" />
+  <img src="https://img.shields.io/github/last-commit/misiektoja/github_monitor?style=flat-square&color=green" alt="Last Commit" />
+  <img src="https://img.shields.io/github/license/misiektoja/github_monitor?style=flat-square&color=blue" alt="License" />
+  <img src="https://img.shields.io/pypi/pyversions/github_monitor?style=flat-square&color=blueviolet" alt="Python Versions" />
+  <img src="https://img.shields.io/badge/maintenance-active-brightgreen?style=flat-square" alt="Maintenance" />
+</p>
+
 A powerful real-time GitHub OSINT tool that tracks everything from profile updates and contribution streaks to repository engagement and follower changes — even detecting when you've been blocked — all with instant email notifications.
+
+### 🚀 Quick Install
+```sh
+pip install github_monitor
+```
+
+<p align="center">
+   <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
+</p>
 
 <a id="features"></a>
 ## Features
@@ -22,10 +41,6 @@ A powerful real-time GitHub OSINT tool that tracks everything from profile updat
 - Possibility to **control the running copy** of the script via signals
 - Support for **Public Web GitHub** and **GitHub Enterprise**
 - **Functional, procedural Python** (minimal OOP)
-
-<p align="center">
-   <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
-</p>
 
 <a id="table-of-contents"></a>
 ## Table of Contents
