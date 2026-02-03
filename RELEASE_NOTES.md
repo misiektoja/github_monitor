@@ -2,6 +2,12 @@
 
 This is a high-level summary of the most important changes.
 
+# Changes in 2.5 (TBD)
+
+**Features and Improvements**:
+
+- **NEW:** Added clickable commit hashes to HTML emails
+
 # Changes in 2.4 (13 Dec 2025)
 
 **Features and Improvements**:
