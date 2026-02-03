@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "github_monitor"
-version = "2.4"
+version = "2.5"
 description = "Track GitHub user and repository activity in real time with instant notifications"
 readme = "README.md"
 license = "GPL-3.0-or-later"
