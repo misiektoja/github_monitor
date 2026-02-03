@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.4
+v2.5
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "2.4"
+VERSION = "2.5"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -585,6 +585,7 @@ def sanitize_and_preserve_html(text, convert_line_breaks=True, repo_url=None):
     tag_counter = 0
 
     valid_tag_pattern = r'</?[a-z][a-z0-9]*(?:\s+[^>]*)?>'
+
     def protect_tag(match):
         nonlocal tag_counter
         protected_tags.append(match.group(0))
@@ -819,8 +820,7 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
             # Don't treat as list if it looks like a label pattern:
             # - Ends with just a colon (with optional whitespace), OR
             # - Matches pattern like "Word:" or "Words:" followed by tabs/spaces (typical label format)
-            is_label = (re.search(r':\s*$', list_content) or
-                       re.match(r'^[A-Z][a-zA-Z\s]+:\s+\S', list_content))
+            is_label = (re.search(r':\s*$', list_content) or re.match(r'^[A-Z][a-zA-Z\s]+:\s+\S', list_content))
             if not is_label:
                 if not in_list or list_type != 'ul':
                     if in_list:
@@ -942,6 +942,7 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
 
     # Process remaining markdown patterns that weren't protected (shouldn't happen, but for safety)
     image_link_pattern = r'\[!\[([^\]]*)\]\(([^\)]+)\)\]\(([^\)]+)\)'
+
     def convert_image_link(match):
         alt_text = html.unescape(match.group(1))
         image_url = html.unescape(match.group(2))
@@ -962,6 +963,7 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
 
     # Images
     image_pattern = r'!\[([^\]]*)\]\(([^\)]+)\)'
+
     def convert_image(match):
         alt_text = html.unescape(match.group(1))
         image_url = html.unescape(match.group(2))
@@ -978,6 +980,7 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
 
     # Links
     link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
+
     def convert_link(match):
         link_text = html.unescape(match.group(1))
         link_url = html.unescape(match.group(2))
@@ -1046,6 +1049,10 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
 
     # Convert plain URLs to links (avoid double-converting URLs already in <a> tags)
     html_text = convert_urls_to_links(html_text)
+
+    # Convert commit hashes to links if repo_url is provided
+    if repo_url:
+        html_text = convert_commit_hashes_to_links(html_text, repo_url)
 
     # Restore protected attribute URLs
     for idx, attr_url in enumerate(attr_url_placeholders):
@@ -1154,6 +1161,40 @@ def convert_urls_to_links(text):
     return text
 
 
+# Converts commit hashes (7-40 hex chars) to clickable GitHub links
+def convert_commit_hashes_to_links(text, repo_url=None):
+    if not text or not repo_url:
+        return text
+
+    # Regex for commit hashes: 7 to 40 hex characters
+    commit_pattern = r'(?<![a-zA-Z0-9])([a-f0-9]{7,40})(?![a-zA-Z0-9])'
+
+    def replace_hash(match):
+        commit_hash = match.group(1)
+        # Construct commit URL
+        commit_url = f"{repo_url.rstrip('/')}/commit/{commit_hash}"
+        return f'<a href="{commit_url}">{commit_hash}</a>'
+
+    # To avoid matching hashes inside tags (like <a href="...">hash</a>) or attributes, we split by tags and only process the non-tag parts
+    parts = re.split(r'(<[^>]+>)', text)
+    in_anchor = False
+    for i in range(len(parts)):
+        part = parts[i]
+        if part.startswith('<'):
+            # Check if this tag opens or closes an anchor
+            tag_content = part[1:].lower()
+            if tag_content.startswith('a'):
+                in_anchor = True
+            elif tag_content.startswith('/a'):
+                in_anchor = False
+        else:
+            # If it's not a tag and we're not inside an anchor, process it
+            if not in_anchor:
+                parts[i] = re.sub(commit_pattern, replace_hash, part)
+
+    return ''.join(parts)
+
+
 # Converts issue/PR list items to HTML with clickable titles
 def convert_issue_pr_items_to_html(text, already_escaped=False):
     if not text:
@@ -1183,7 +1224,7 @@ def convert_issue_pr_items_to_html(text, already_escaped=False):
 
 
 # Converts plain text to HTML, preserving line breaks and formatting
-def text_to_html(text, preserve_newlines=True, convert_urls=True, convert_issue_pr=True):
+def text_to_html(text, preserve_newlines=True, convert_urls=True, convert_issue_pr=True, repo_url=None):
     if not text:
         return ""
 
@@ -1195,6 +1236,9 @@ def text_to_html(text, preserve_newlines=True, convert_urls=True, convert_issue_
     if convert_urls:
         html_text = convert_urls_to_links(html_text)
 
+    if repo_url:
+        html_text = convert_commit_hashes_to_links(html_text, repo_url)
+
     if preserve_newlines:
         html_text = html_text.replace('\n', '<br>')
 
@@ -1202,11 +1246,11 @@ def text_to_html(text, preserve_newlines=True, convert_urls=True, convert_issue_
 
 
 # Formats email body text to HTML
-def format_email_body_html(body_text, bold_keys=None):
+def format_email_body_html(body_text, bold_keys=None, repo_url=None):
     if not body_text:
         return ""
 
-    html_text = text_to_html(body_text, preserve_newlines=True)
+    html_text = text_to_html(body_text, preserve_newlines=True, repo_url=repo_url)
 
     if bold_keys:
         for key in bold_keys:
@@ -2547,7 +2591,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         tp = f" ({calculate_timespan(int(time.time()), event_date, show_seconds=False, granularity=2)} ago)"
     elif time_passed and ts:
         # Only show "after" if current event is newer than previous event
-        if event_date > ts:
+        if event_date and ts and event_date > ts:
             tp = f" (after {calculate_timespan(event_date, ts, show_seconds=False, granularity=2)}: {get_short_date_from_ts(ts)})"
         else:
             tp = ""
@@ -3324,6 +3368,11 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     added_mbody = ""
     removed_mbody = ""
 
+    added_list_str_html = ""
+    removed_list_str_html = ""
+    added_mbody_html = ""
+    removed_mbody_html = ""
+
     removed_items = list(set(list_old) - set(list_new))
     added_items = list(set(list_new) - set(list_old))
 
@@ -3335,11 +3384,6 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
 
     if list_old != list_new:
         print()
-
-        removed_mbody_html = ""
-        removed_list_str_html = ""
-        added_mbody_html = ""
-        added_list_str_html = ""
 
         if removed_items:
             print(f"{removal_text} {label.lower()}:\n")
@@ -3989,7 +4033,7 @@ def github_monitor_user(user, csv_file_name):
                 m_body = f"{reason_msg}\n{e}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
                 m_body_html = (
                     f"<html><head></head><body>"
-                    f"<b>{html.escape(reason_msg)}</b><br>"
+                    f"<b>{html.escape(reason_msg or '')}</b><br>"
                     f"{html.escape(str(e))}{get_cur_ts('<br><br>Timestamp: ')}"
                     f"</body></html>"
                 )
@@ -4156,7 +4200,7 @@ def github_monitor_user(user, csv_file_name):
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> location has changed<br><br>"
-                f"Old location: <b>{html.escape(location_old)}</b><br><br>"
+                f"Old location: <b>{html.escape(location_old or '')}</b><br><br>"
                 f"New location: <b>{html.escape(location)}</b><br><br>"
                 f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
@@ -4188,7 +4232,7 @@ def github_monitor_user(user, csv_file_name):
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> name has changed<br><br>"
-                f"Old user name: <b>{html.escape(user_name_old)}</b><br><br>"
+                f"Old user name: <b>{html.escape(user_name_old or '')}</b><br><br>"
                 f"New user name: <b>{html.escape(user_name)}</b><br><br>"
                 f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
@@ -4220,7 +4264,7 @@ def github_monitor_user(user, csv_file_name):
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> company has changed<br><br>"
-                f"Old company: <b>{html.escape(company_old)}</b><br><br>"
+                f"Old company: <b>{html.escape(company_old or '')}</b><br><br>"
                 f"New company: <b>{html.escape(company)}</b><br><br>"
                 f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
@@ -4252,7 +4296,7 @@ def github_monitor_user(user, csv_file_name):
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> email has changed<br><br>"
-                f"Old email: <b>{html.escape(email_old)}</b><br><br>"
+                f"Old email: <b>{html.escape(email_old or '')}</b><br><br>"
                 f"New email: <b>{html.escape(email)}</b><br><br>"
                 f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
