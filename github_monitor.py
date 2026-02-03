@@ -1166,8 +1166,8 @@ def convert_commit_hashes_to_links(text, repo_url=None):
     if not text or not repo_url:
         return text
 
-    # Regex for commit hashes: 7 to 40 hex characters
-    commit_pattern = r'(?<![a-zA-Z0-9])([a-f0-9]{7,40})(?![a-zA-Z0-9])'
+    # Regex for commit hashes: 7 to 40 hex characters, exclude purely numeric strings of length 7-15 which are likely Event IDs
+    commit_pattern = r'(?<![a-zA-Z0-9])(?![0-9]{7,15}(?![a-zA-Z0-9]))([a-f0-9]{7,40})(?![a-zA-Z0-9])'
 
     def replace_hash(match):
         commit_hash = match.group(1)
