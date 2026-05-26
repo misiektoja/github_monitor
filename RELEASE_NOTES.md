@@ -2,11 +2,13 @@
 
 This is a high-level summary of the most important changes.
 
-# Changes in 2.5 (TBD)
+# Changes in 2.5 (26 May 2026)
 
 **Features and Improvements**:
 
-- **NEW:** Added clickable commit hashes to HTML emails
+- **NEW:** Added **clickable commit hashes** to HTML emails
+- **IMPROVE:** Enhanced `--generate-config` to support writing directly to a file to avoid UTF-16 encoding issues on Windows PowerShell
+- **IMPROVE:** Expanded tabs to spaces in output log files to ensure **consistent alignment across different viewers**
 
 # Changes in 2.4 (13 Dec 2025)
 
