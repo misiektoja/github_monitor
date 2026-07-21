@@ -2260,6 +2260,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
     warnings.filterwarnings('ignore')
 
     list_of_repos = []
+    identity_lists_fetched = 0
     if repos_list:
         # Convert to list if it's a generator/iterator to get total count
         repos_list = list(repos_list)
@@ -2287,6 +2288,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                         if show_progress:
                             _display_progress(idx, total_repos, repo.name)  # Refresh after stargazers
                         subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
+                        identity_lists_fetched += 1
                         if show_progress:
                             _display_progress(idx, total_repos, repo.name)  # Refresh after subscribers
                     forked_repos = [fork.full_name for fork in repo.get_forks()]
@@ -2354,6 +2356,12 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
             if stdout_bck is not None and isinstance(sys.stdout, Logger):
                 sys.stdout.logfile.write("\n")
                 sys.stdout.logfile.flush()
+
+            if fetch_identity_lists:
+                repo_label = "repository" if total_repos == 1 else "repositories"
+                print(f"- Stargazer/watcher user lists:\tFetched for {identity_lists_fetched}/{total_repos} {repo_label}")
+            else:
+                print("- Stargazer/watcher user lists:\tSkipped (counts only)")
 
     return list_of_repos
 
