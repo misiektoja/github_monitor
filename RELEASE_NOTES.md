@@ -2,6 +2,17 @@
 
 This is a high-level summary of the most important changes.
 
+# Changes in 2.5.1 (21 Jul 2026)
+
+**Features and Improvements**:
+
+- **IMPROVE:** Adapted repository monitoring to GitHub's 30 Jun 2026 stargazer and watcher API restrictions
+- **IMPROVE:** Continued tracking stargazer and watcher counts for other users while limiting identity-level tracking to the token owner's repositories
+
+**Bug fixes**:
+
+- **BUGFIX:** Prevented restricted stargazer and watcher list endpoints from causing otherwise accessible repositories to be skipped
+
 # Changes in 2.5 (26 May 2026)
 
 **Features and Improvements**:
