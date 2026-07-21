@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.5
+v2.5.1
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -16,7 +16,7 @@ tzlocal (optional)
 python-dotenv (optional)
 """
 
-VERSION = "2.5"
+VERSION = "2.5.1"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -2251,7 +2251,7 @@ def _display_progress(current, total, repo_name: str = "", bar_length: int = 40,
 
 
 # Processes items from all passed repositories and returns a list of dictionaries
-def github_process_repos(repos_list, show_progress=True):
+def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=True):
     import logging
     import warnings
 
@@ -2260,16 +2260,16 @@ def github_process_repos(repos_list, show_progress=True):
     warnings.filterwarnings('ignore')
 
     list_of_repos = []
-    stargazers_list = []
-    subscribers_list = []
-    forked_repos = []
-
     if repos_list:
         # Convert to list if it's a generator/iterator to get total count
         repos_list = list(repos_list)
         total_repos = len(repos_list)
 
         for idx, repo in enumerate(repos_list, 1):
+            stargazers_list = None
+            subscribers_list = None
+            forked_repos = []
+
             # Update progress bar at start
             if show_progress:
                 _display_progress(idx, total_repos, repo.name)
@@ -2282,12 +2282,13 @@ def github_process_repos(repos_list, show_progress=True):
                 github_logger.setLevel(logging.ERROR)
 
                 try:
-                    stargazers_list = [star.login for star in repo.get_stargazers()]
-                    if show_progress:
-                        _display_progress(idx, total_repos, repo.name)  # Refresh after stargazers
-                    subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
-                    if show_progress:
-                        _display_progress(idx, total_repos, repo.name)  # Refresh after subscribers
+                    if fetch_identity_lists:
+                        stargazers_list = [star.login for star in repo.get_stargazers()]
+                        if show_progress:
+                            _display_progress(idx, total_repos, repo.name)  # Refresh after stargazers
+                        subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
+                        if show_progress:
+                            _display_progress(idx, total_repos, repo.name)  # Refresh after subscribers
                     forked_repos = [fork.full_name for fork in repo.get_forks()]
                     if show_progress:
                         _display_progress(idx, total_repos, repo.name)  # Refresh after forks
@@ -3335,14 +3336,40 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
 
 # Detects and reports changes in repository-level entities (like stargazers, watchers, forks, issues, pull requests)
 def check_repo_list_changes(count_old, count_new, list_old, list_new, label, repo_name, repo_url, user, csv_file_name):
-    if not list_new and count_new > 0:
+    if list_old is None or list_new is None:
+        if count_old == count_new:
+            return
+
+        diff = count_new - count_old
+        diff_str = f"{'+' if diff > 0 else ''}{diff}"
+        print(f"* Repo '{repo_name}': number of {label.lower()} changed from {count_old} to {count_new} ({diff_str})\n* Repo URL: {repo_url}")
+        try:
+            if csv_file_name:
+                write_csv_entry(csv_file_name, now_local_naive(), f"Repo {label} Count", repo_name, count_old, count_new)
+        except Exception as e:
+            print(f"* Error: {e}")
+
+        m_subject = f"GitHub user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {count_old} -> {count_new})"
+        m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {count_old} to {count_new} ({diff_str})\n"
+                  f"* Repo URL: {repo_url}\n\n"
+                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+        m_body_html = (
+            f"<html><head></head><body>"
+            f"* Repo '<b>{html.escape(repo_name)}</b>': number of {html.escape(label.lower())} changed from <b>{count_old}</b> to <b>{count_new}</b> (<b>{html.escape(diff_str)}</b>)<br>"
+            f"* Repo URL: <a href=\"{html.escape(repo_url)}\">{html.escape(repo_url)}</a><br><br>"
+            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"</body></html>"
+        )
+
+        if REPO_NOTIFICATION:
+            print(f"Sending email notification to {RECEIVER_EMAIL}")
+            send_email(m_subject, m_body, m_body_html, SMTP_SSL)
+        print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+        print_cur_ts("Timestamp:\t\t\t")
         return
 
-    # Handle None values by converting to empty lists
-    if list_old is None:
-        list_old = []
-    if list_new is None:
-        list_new = []
+    if not list_new and count_new > 0:
+        return
 
     old_count = len(list_old)
     new_count = len(list_new)
@@ -3967,7 +3994,7 @@ def github_monitor_user(user, csv_file_name):
                     repos_list_filtered.append(repo)
 
         try:
-            list_of_repos = github_process_repos(repos_list_filtered)
+            list_of_repos = github_process_repos(repos_list_filtered, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()))
         except Exception as e:
             print(f"* Cannot process list of public repositories: {e}")
         print_cur_ts("\nTimestamp:\t\t\t")
@@ -4449,7 +4476,7 @@ def github_monitor_user(user, csv_file_name):
 
             if repos_list_filtered is not None:
                 try:
-                    list_of_repos = github_process_repos(repos_list_filtered, show_progress=False)
+                    list_of_repos = github_process_repos(repos_list_filtered, show_progress=False, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()))
                     list_of_repos_ok = True
                 except Exception as e:
                     list_of_repos = list_of_repos_old
