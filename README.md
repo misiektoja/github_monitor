@@ -216,6 +216,8 @@ This allows you to have different repository lists for different users. When the
 
 Note: When using a specific list (not `'ALL'`), newly created repositories will NOT be automatically monitored - only repositories explicitly listed will be monitored.
 
+> **GitHub API change since 30 Jun 2026:** GitHub restricts repository stargazer and watcher identity lists to repository admins and collaborators. When you monitor the account that owns the configured token, github_monitor continues tracking individual stargazers and watchers. When you monitor another account, github_monitor silently skips those identity list requests and tracks only the numeric stargazer and watcher counts. Other repository change tracking remains available. See [GitHub's announcement](https://github.blog/changelog/2026-06-30-upcoming-access-restrictions-to-public-api-endpoints-and-ui-views/).
+
 <a id="time-zone"></a>
 ### Time Zone
 
