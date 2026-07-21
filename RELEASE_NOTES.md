@@ -2,7 +2,7 @@
 
 This is a high-level summary of the most important changes.
 
-# Changes in 2.5.1 (21 Jul 2026)
+# Changes in 2.5.1 (22 Jul 2026)
 
 **Features and Improvements**:
 
