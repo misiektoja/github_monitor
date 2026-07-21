@@ -2357,6 +2357,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                 sys.stdout.logfile.write("\n")
                 sys.stdout.logfile.flush()
 
+            print()
             if fetch_identity_lists:
                 repo_label = "repository" if total_repos == 1 else "repositories"
                 print(f"- Stargazer/watcher user lists:\tFetched for {identity_lists_fetched}/{total_repos} {repo_label}")
