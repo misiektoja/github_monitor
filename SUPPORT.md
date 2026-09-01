@@ -10,7 +10,7 @@ Confirm which version you are running then run the complete read-only preflight 
 
 ```sh
 github_monitor --version
-github_monitor <github_username> --doctor
+github_monitor --doctor <github_username>
 ```
 
 Most reports come down to an expired or under-scoped GitHub token, an unreachable target, invalid output permissions, an SMTP setup that cannot deliver or a webhook destination the provider no longer accepts. Doctor tells those apart in one report.

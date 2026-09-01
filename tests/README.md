@@ -35,7 +35,7 @@ and again before anything is published to PyPI.
 | `test_doctor.py` | Complete doctor transcripts, exit status, dependency states, private-setting sources, offline failures, read-only paths, TTY progress and separately approved real delivery tests |
 | `test_event_configuration.py` | Supported event types, intentional 30-event window and retry defaults |
 | `test_github_token_setup.py` | Hidden token entry, targeted dotenv updates and refusal to save an invalid token |
-| `test_install_method_commands.py` | PyPI and standalone install detection with POSIX and Windows command rendering |
+| `test_install_method_commands.py` | PyPI and downloaded-script detection with portable plus exact POSIX and Windows commands |
 | `test_profile_fields.py` | Addition, removal and failure handling for nullable profile fields |
 | `test_recovery_errors.py` | Closed recovery codes, classification, retryability and layered secret redaction that leaves ordinary output intact |
 | `test_repository_contracts.py` | Governance documents, issue templates, action pinning, release gating and the CI contract |

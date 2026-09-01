@@ -135,7 +135,7 @@ If you installed manually, download the newest *[github_monitor.py](https://raw.
 <a id="quick-start"></a>
 ## Quick Start
 
-The recommended first run is the guided setup wizard:
+The easiest first run is the guided setup wizard:
 
 ```sh
 github_monitor --setup
@@ -143,9 +143,26 @@ github_monitor --setup
 
 It asks for the target, polling interval, GitHub authentication, optional email and webhook alerts and output destinations. Answers stay in memory until the complete masked summary is reviewed. Choose **Save** to write non-secret settings to `github_monitor.conf` and private values to a separate mode-0600 `.env` file. Existing destinations receive timestamped mode-0600 backups before replacement.
 
-The wizard validates a newly entered GitHub token before saving it. After saving, it can run the read-only doctor preflight and start monitoring with separate default-no approvals. Every printed command matches a PyPI or standalone script install and includes custom config and dotenv paths.
+The wizard validates a newly entered GitHub token before saving it. After saving, it offers the read-only Doctor preflight then monitoring. Both prompts default to yes when the saved setup is ready. Commands after setup match a PyPI install or downloaded script and include the selected config plus dotenv paths.
 
-Run the tool without arguments to see the quickest start, guided setup, doctor and full-help commands. An interactive terminal also offers to launch setup. A non-interactive `--setup` run explains how to use `--generate-config` instead.
+Run the tool without arguments to see the same first-run screen used across the monitor tools. It uses short portable commands instead of the active interpreter and absolute script paths:
+
+```text
+For <github_target>, use a GitHub username or complete profile URL.
+
+Quickest start (already configured):
+    python3 github_monitor.py <github_target>
+
+Easiest start (guided setup wizard):
+    python3 github_monitor.py --setup
+
+Check setup before monitoring:
+    python3 github_monitor.py --doctor <github_target>
+
+Full options: python3 github_monitor.py --help
+```
+
+A PyPI install prints `github_monitor` instead of `python3 github_monitor.py`. Windows prints `python github_monitor.py`. An interactive terminal offers the setup wizard with a default-yes prompt. A non-interactive `--setup` run explains how to use `--generate-config` instead.
 
 For manual setup, create a [GitHub personal access token](#github-personal-access-token) then validate and save it through the hidden prompt:
 
@@ -787,7 +804,7 @@ grc tail -F -n 100 github_monitor_<username>.log
 Run the comprehensive preflight before monitoring a new target or when a working setup starts failing:
 
 ```sh
-github_monitor <github_username> --doctor
+github_monitor --doctor <github_username>
 ```
 
 Doctor is read-only by default. It checks the effective configuration after config, dotenv, environment and command-line precedence without creating logs, CSV files or directories. It reports these fixed sections:
@@ -837,7 +854,7 @@ The modes cover the full runtime path:
 
 `VERBOSE_MODE` and `DEBUG_MODE` provide the same controls in the configuration file. An explicit command-line flag takes precedence even when the selected config disables that mode, including while the config is being loaded. Diagnostic runs keep the terminal history visible instead of clearing it. Both printers sanitize internally so loaded secrets plus common GitHub token, authorization and Discord webhook shapes are redacted before terminal or log output.
 
-Recovery codes are stable identifiers such as `config.invalid`, `auth.github_token_invalid`, `network.timeout`, `github.rate_limited` and `file.unwritable`. Include the code when asking for help. Commands printed after setup or inside recovery guidance automatically match a PyPI install or standalone script invocation with platform-correct quoting.
+Recovery codes are stable identifiers such as `config.invalid`, `auth.github_token_invalid`, `network.timeout`, `github.rate_limited` and `file.unwritable`. Include the code when asking for help. Commands printed after setup or inside recovery guidance automatically match a PyPI install or downloaded script with platform-correct quoting.
 
 <a id="change-log"></a>
 ## Change Log
