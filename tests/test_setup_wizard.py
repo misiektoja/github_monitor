@@ -469,6 +469,10 @@ def test_setup_cli_path_is_exposed_and_does_not_start_monitoring(gm_module, monk
     request.addfinalizer(directory.cleanup)
     config_path = Path(directory.name) / "monitor.conf"
     dotenv_path = Path(directory.name) / ".env-monitor"
+    clear_calls = []
+    monkeypatch.setattr(gm_module, "CLEAR_SCREEN", True)
+    monkeypatch.setattr(gm_module, "clear_screen", lambda enabled: clear_calls.append(enabled))
+    monkeypatch.setattr(gm_module.TerminalStream, "isatty", lambda self: True, raising=False)
     monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
     monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", "--setup", "--config-file", str(config_path), "--env-file", str(dotenv_path)])
 
@@ -476,6 +480,7 @@ def test_setup_cli_path_is_exposed_and_does_not_start_monitoring(gm_module, monk
         gm_module.main()
 
     assert exit_error.value.code == 1
+    assert clear_calls == [True]
     assert "The setup wizard needs an interactive terminal (TTY)." in capsys.readouterr().out
     assert not config_path.exists()
     assert not dotenv_path.exists()

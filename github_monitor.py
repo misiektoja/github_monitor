@@ -8559,7 +8559,7 @@ def main():
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-    keep_cli_history = any(flag in sys.argv for flag in ("--setup", "--doctor", "--set-github-token", "--set-webhook-url"))
+    keep_cli_history = any(flag in sys.argv for flag in ("--doctor", "--set-github-token", "--set-webhook-url"))
     if CLEAR_SCREEN and (VERBOSE_MODE or DEBUG_MODE):
         verbose_print("Terminal clearing was skipped so diagnostic output remains visible")
         debug_print("Terminal screen clear skipped because diagnostic mode is active")
