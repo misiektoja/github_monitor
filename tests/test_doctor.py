@@ -238,6 +238,7 @@ def test_doctor_environment_distinguishes_required_and_optional_dependencies(gm_
     rows = {(check.status, check.label) for check in report.checks}
     assert ("FAIL", "Required dependency PyGithub is missing") in rows
     assert ("WARN", "Optional dependency tzlocal is not installed") in rows
+    assert ("PASS", f"Install method: {gm_module.detect_install_context().install_method}") in rows
     assert report.failure_count == 1
     assert report.warning_count == 1
 

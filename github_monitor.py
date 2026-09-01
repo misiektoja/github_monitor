@@ -7193,7 +7193,7 @@ def doctor_check_environment(report, module_finder=None):
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
             report.add("Environment", "WARN", f"Optional dependency {package_name} is not installed", f"{feature.capitalize()} will not work while other features remain available", f"Install it with: {install_command}")
     install_context = detect_install_context()
-    report.add("Environment", "PASS", f"Install method is {install_method_display_name(install_context.install_method)}", f"Command: {render_install_command([], install_context)}")
+    report.add("Environment", "PASS", f"Install method: {install_context.install_method}", f"Command: {render_install_command([], install_context)}")
 
 
 # Returns whether a URL is a complete credential-free HTTPS endpoint
