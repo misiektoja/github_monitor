@@ -129,7 +129,7 @@ def test_setup_wizard_writes_reviewed_config_and_secrets(gm_module, request):
 
     assert exit_code == 0
     transcript = output.getvalue()
-    assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nSetup Wizard\n\n")
+    assert transcript.startswith(gm_module.STARTUP_BANNER + f"\n                     v{gm_module.VERSION}\n\nSetup Wizard\n\n")
     assert transcript.index("GitHub username or profile URL") < transcript.index("GitHub polling interval (seconds or use s/m/h/d)") < transcript.index("Create or view your GitHub personal access token:")
     assert transcript.index("Setup summary\n") < transcript.index("Saved files\n") < transcript.index("Next steps\n")
     assert "\nTarget\n" not in transcript
@@ -349,7 +349,7 @@ def test_zero_argument_welcome_offers_guided_setup_on_a_tty(gm_module):
 
     transcript = output.getvalue()
     assert exit_code == 7
-    assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nFor <github_target>, use a GitHub username or complete profile URL.\n\n")
+    assert transcript.startswith(gm_module.STARTUP_BANNER + f"\n                     v{gm_module.VERSION}\n\nFor <github_target>, use a GitHub username or complete profile URL.\n\n")
     assert "Quickest start (already configured):\n    python3 github_monitor.py <github_target>\n\n" in transcript
     assert "Easiest start (guided setup wizard):\n    python3 github_monitor.py --setup   (or just answer Y below)\n\n" in transcript
     assert "Check setup before monitoring:\n    python3 github_monitor.py --doctor <github_target>\n\n" in transcript

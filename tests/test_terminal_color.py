@@ -13,6 +13,38 @@ import github_monitor as monitor
 CHANGE_REPORT_LINES = ("* Daily contributions changed for user octocat from 98 to 100 (+2)!", "* Repo 'hello world': number of stars changed from 10 to 12 (+2)", "* Repo 'emoji tools 🛠️' update date changed after 2 days")
 
 
+# Verifies the selected GitHub banner remains exact and version independent
+def test_selected_banner_exact_content():
+    assert monitor.STARTUP_BANNER == r"""
+ .---------------.      ____ _ _   _   _       _
+|      .---.      |    / ___(_) |_| | | |_   _| |__
+|   .-( o o )-.   |   | |  _| | __| |_| | | | | '_ \
+|  /  |  ^  |  \  |   | |_| | | |_|  _  | |_| | |_) |
+|     \ '-' /     |    \____|_|\__|_| |_|\__,_|_.__/
+ '-----'---'-----'
+                     __  __             _ _
+                    |  \/  | ___  _ __ (_) |_ ___  _ __
+                    | |\/| |/ _ \| '_ \| | __/ _ \| '__|
+                    | |  | | (_) | | | | | || (_) | |
+                    |_|  |_|\___/|_| |_|_|\__\___/|_|"""
+
+
+# Verifies the art is portable, bounded and free of trailing whitespace
+def test_banner_ascii_width_and_whitespace():
+    monitor.STARTUP_BANNER.encode("ascii")
+    lines = monitor.STARTUP_BANNER.splitlines()
+    assert max(map(len, lines)) <= 90
+    assert all(line == line.rstrip() for line in lines)
+
+
+# Verifies the printed version stays dynamic and followed by one blank line
+def test_banner_dynamic_version_line(monkeypatch, capsys):
+    monkeypatch.setattr(monitor, "VERSION", "9.9-test")
+    monkeypatch.setattr(monitor, "COLOR_ENABLED", False)
+    monitor.print_startup_banner()
+    assert capsys.readouterr().out == monitor.STARTUP_BANNER + "\n" + (" " * 21) + "v9.9-test\n\n"
+
+
 # Enables colour with a deterministic style map
 @pytest.fixture
 def colored(monkeypatch):

@@ -495,10 +495,29 @@ MAX_EVENT_BODY_LENGTH = 3500
 # to solve the issue: 'SyntaxError: f-string expression part cannot include a backslash'
 nl_ch = "\n"
 
+STARTUP_BANNER = r"""
+ .---------------.      ____ _ _   _   _       _
+|      .---.      |    / ___(_) |_| | | |_   _| |__
+|   .-( o o )-.   |   | |  _| | __| |_| | | | | '_ \
+|  /  |  ^  |  \  |   | |_| | | |_|  _  | |_| | |_) |
+|     \ '-' /     |    \____|_|\__|_| |_|\__,_|_.__/
+ '-----'---'-----'
+                     __  __             _ _
+                    |  \/  | ___  _ __ (_) |_ ___  _ __
+                    | |\/| |/ _ \| '_ \| | __/ _ \| '__|
+                    | |  | | (_) | | | | | || (_) | |
+                    |_|  |_|\___/|_| |_|_|\__\___/|_|"""
+
 
 import sys
 import importlib.util
 import shlex
+
+
+# Writes the uncoloured startup banner for bootstrap failures
+def _write_plain_startup_banner(destination):
+    destination.write(STARTUP_BANNER + "\n")
+    destination.write(f"{'':21}v{VERSION}\n\n")
 
 
 # Renders an environment-only doctor report when Python cannot run the full module
@@ -509,7 +528,7 @@ def bootstrap_doctor_python_report(stream=None):
     version = ".".join(str(part) for part in sys.version_info[:3])
     minimum = ".".join(str(part) for part in MIN_PYTHON_VERSION)
     install_command = f"Install Python {minimum} or newer"
-    destination.write(f"GitHub Monitoring Tool v{VERSION}\n\n")
+    _write_plain_startup_banner(destination)
     destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
     destination.write(f"Doctor\n\nEnvironment\n[FAIL] Python {version} is unsupported\n  Minimum supported version: {minimum}\nTo fix: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
     destination.write(f"\nSummary\n  1 check(s) failed, 0 warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
@@ -538,7 +557,7 @@ def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
     if all(availability.values()):
         return None
     destination = sys.stdout if stream is None else stream
-    destination.write(f"GitHub Monitoring Tool v{VERSION}\n\n")
+    _write_plain_startup_banner(destination)
     destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
     destination.write("Doctor\n\nEnvironment\n")
     version = ".".join(str(part) for part in sys.version_info[:3])
@@ -736,7 +755,6 @@ def sanitize_terminal_text(message):
 
 COLOR_ENABLED = False
 _COLOR_STYLES: dict = {}
-STARTUP_BANNER = "GitHub Monitoring Tool"
 
 # Default built-in colour theme. Values can be overridden via COLOR_THEME in config
 DEFAULT_COLOR_THEME = {

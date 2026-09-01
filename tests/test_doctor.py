@@ -175,7 +175,7 @@ def test_doctor_healthy_transcript_is_complete(gm_module, monkeypatch):
 
     transcript = output.getvalue()
     assert result == 0
-    assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nRunning preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\nDoctor\n")
+    assert transcript.startswith(gm_module.STARTUP_BANNER + f"\n                     v{gm_module.VERSION}\n\nRunning preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\nDoctor\n")
     sections = [transcript.index(f"\n{name}\n") for name in ("Environment", "Configuration", "Authentication", "Connectivity", "Target", "Monitoring", "Notifications", "Summary")]
     assert sections == sorted(sections)
     assert "[PASS] GitHub token was accepted" in transcript
@@ -267,7 +267,7 @@ def test_doctor_bootstrap_reports_missing_required_dependency(gm_module):
 
     transcript = output.getvalue()
     assert result == 1
-    assert transcript.startswith(f"GitHub Monitoring Tool v{gm_module.VERSION}\n\nRunning preflight checks.")
+    assert transcript.startswith(gm_module.STARTUP_BANNER + f"\n                     v{gm_module.VERSION}\n\nRunning preflight checks.")
     assert "[FAIL] Required dependency requests is missing" in transcript
     assert "[WARN] Optional dependency tzlocal is not installed" in transcript
     assert "To fix: Install it with:" in transcript
