@@ -21,6 +21,8 @@ When an error includes a recovery code, include that code in the report. Re-run 
 
 Doctor checks Environment, Configuration, Authentication, Connectivity, Target, Monitoring and Notifications in a fixed order. It writes no files. Each check has a stable `[PASS]`, `[WARN]`, `[FAIL]` or `[SKIP]` marker plus a fix and guide for every non-pass result.
 
+The Configuration section resolves `LOCAL_TIMEZONE`. It reports the detected zone when the setting is `Auto` and fails when the zone is invalid or cannot be detected.
+
 The Notifications section signs in to the configured SMTP server and validates webhook settings without sending anything. Each ready row lists the alert categories that channel would deliver.
 
 ## Terminal output
