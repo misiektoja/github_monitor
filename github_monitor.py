@@ -7765,15 +7765,16 @@ def _wizard_print_setup_destinations(destination, context, state):
     destination.write(f"Dotenv:                 {state.dotenv_path}\n")
 
 
+# The theme part each setup summary row draws its value in, for rows whose value has a known kind
+WIZARD_SUMMARY_VALUE_STYLES = {"Target": "username", "Polling interval": "duration", "GitHub API": "url"}
+
+
 # Colours one setup summary value from its row label
 def _wizard_summary_value(label, value):
     text = str(value)
-    if label == "Target":
-        return colorize("username", text)
-    if label == "Polling interval":
-        return colorize("duration", text)
-    if label in ("GitHub API",):
-        return colorize("url", text)
+    part = WIZARD_SUMMARY_VALUE_STYLES.get(label)
+    if part:
+        return colorize(part, text)
     if text.startswith("enabled") or text == "complete":
         return colorize("boolean_true", text)
     if text in ("disabled", "incomplete"):
