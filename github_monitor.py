@@ -410,7 +410,6 @@ if sys.version_info < (3, 10):
     sys.exit(1)
 
 import time
-import string
 import os
 from datetime import datetime, timezone, date
 from dateutil import relativedelta
@@ -769,7 +768,7 @@ def sanitize_and_preserve_html(text, convert_line_breaks=True, repo_url=None):
         prev_was_block = False
         prev_was_empty = False
 
-        for i, line in enumerate(lines):
+        for line in lines:
             stripped = line.strip()
             is_block = bool(re.search(r'<(details|summary|ul|ol|li|pre|blockquote|hr|p)[\s>]', stripped, re.IGNORECASE))
 
@@ -1245,7 +1244,6 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
         prev_type = None  # 'text' or 'html'
         prev_html_tag = None  # last HTML tag name (e.g., 'ul', 'details', 'a')
         prev_html_had_image = False  # whether previous HTML line contained an <img>
-        prev_text_line = None  # stripped previous text line
         pending_blank = False
 
         for line in lines:
@@ -1297,7 +1295,6 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
                             result_lines.append('<br>')
                 result_lines.append(line)
                 prev_type = 'text'
-                prev_text_line = stripped
                 pending_blank = False
 
         html_text = ''.join(result_lines)
@@ -2670,6 +2667,8 @@ class EmptyPaginatedList(list):
         self.totalCount = 0
 
 
+# Callers wrap a lambda and invoke the result immediately, so a lambda that reads a loop variable is
+# evaluated inside the same iteration. Those call sites carry a noqa marker for the loop-binding rule
 # Wraps GitHub API call with retry and linear back-off, returning a specified default on failure
 def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BACKOFF_SEC, default: Any = None,) -> Callable[..., Any]:
     def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -3319,7 +3318,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
             commit_details = None
             if repo:
-                commit_details = gh_call(lambda: repo.get_commit(commit["sha"]))()
+                commit_details = gh_call(lambda: repo.get_commit(commit["sha"]))()  # noqa: B023
 
             if commit_details:
                 commit_date = commit_details.commit.author.date
@@ -3363,7 +3362,6 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     elif event.type == "PushEvent" and repo:
         before_sha = event.payload.get("before")
         head_sha = event.payload.get("head") or event.payload.get("after")
-        size_hint = event.payload.get("size")
 
         # Debug when payload has no commits
         # st += print_v("\n[debug] PushEvent payload has no 'commits' array; using compare API")
@@ -3392,7 +3390,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     st += print_v("." * HORIZONTAL_LINE1)
 
                     commit_sha = getattr(c, "sha", None) or getattr(c, "id", None)
-                    commit_details = gh_call(lambda: repo.get_commit(commit_sha))() if (repo and commit_sha) else None
+                    commit_details = gh_call(lambda: repo.get_commit(commit_sha))() if (repo and commit_sha) else None  # noqa: B023
 
                     commit_message = commit_details.commit.message if commit_details and commit_details.commit else ""
                     is_multiline = '\n' in commit_message if commit_message else False
@@ -4886,7 +4884,7 @@ def github_monitor_user(user, csv_file_name):
         # Changed followings
         try:
             followings_raw = list(gh_call(g_user.get_following)())
-            followings_count = gh_call(lambda: g_user.following)()
+            followings_count = gh_call(lambda: g_user.following)()  # noqa: B023
         except NET_ERRORS as e:
             print(f"* Error while fetching followings: {e}")
             print_cur_ts("Timestamp:\t\t\t")
@@ -4899,7 +4897,7 @@ def github_monitor_user(user, csv_file_name):
         # Changed followers
         try:
             followers_raw = list(gh_call(g_user.get_followers)())
-            followers_count = gh_call(lambda: g_user.followers)()
+            followers_count = gh_call(lambda: g_user.followers)()  # noqa: B023
         except NET_ERRORS as e:
             print(f"* Error while fetching followers: {e}")
             print_cur_ts("Timestamp:\t\t\t")
@@ -4913,9 +4911,9 @@ def github_monitor_user(user, csv_file_name):
         try:
             if GET_ALL_REPOS:
                 repos_raw = list(gh_call(g_user.get_repos)())
-                repos_count = gh_call(lambda: g_user.public_repos)()
+                repos_count = gh_call(lambda: g_user.public_repos)()  # noqa: B023
             else:
-                repos_raw = list(gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])())
+                repos_raw = list(gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])())  # noqa: B023
                 repos_count = len(repos_raw)
         except NET_ERRORS as e:
             print(f"* Error while fetching repositories: {e}")
@@ -4985,7 +4983,7 @@ def github_monitor_user(user, csv_file_name):
                 print_cur_ts("Timestamp:\t\t\t")
 
         # Changed bio
-        bio = gh_call(lambda: g_user.bio, default=profile_field_unavailable)()
+        bio = gh_call(lambda: g_user.bio, default=profile_field_unavailable)()  # noqa: B023
         if has_nullable_profile_field_changed(bio, bio_old, profile_field_unavailable):
             print(f"* Bio has changed for user {user} !\n")
             print(f"Old bio:\n\n{bio_old}\n")
@@ -5017,7 +5015,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed location
-        location = gh_call(lambda: g_user.location, default=profile_field_unavailable)()
+        location = gh_call(lambda: g_user.location, default=profile_field_unavailable)()  # noqa: B023
         if has_nullable_profile_field_changed(location, location_old, profile_field_unavailable):
             print(f"* Location has changed for user {user} !\n")
             print(f"Old location:\t\t\t{location_old}\n")
@@ -5047,7 +5045,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed user name
-        user_name = gh_call(lambda: g_user.name, default=profile_field_unavailable)()
+        user_name = gh_call(lambda: g_user.name, default=profile_field_unavailable)()  # noqa: B023
         if has_nullable_profile_field_changed(user_name, user_name_old, profile_field_unavailable):
             print(f"* User name has changed for user {user} !\n")
             print(f"Old user name:\t\t\t{user_name_old}\n")
@@ -5077,7 +5075,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed company
-        company = gh_call(lambda: g_user.company, default=profile_field_unavailable)()
+        company = gh_call(lambda: g_user.company, default=profile_field_unavailable)()  # noqa: B023
         if has_nullable_profile_field_changed(company, company_old, profile_field_unavailable):
             print(f"* User company has changed for user {user} !\n")
             print(f"Old company:\t\t\t{company_old}\n")
@@ -5107,7 +5105,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed email
-        email = gh_call(lambda: g_user.email, default=profile_field_unavailable)()
+        email = gh_call(lambda: g_user.email, default=profile_field_unavailable)()  # noqa: B023
         if has_nullable_profile_field_changed(email, email_old, profile_field_unavailable):
             print(f"* User email has changed for user {user} !\n")
             print(f"Old email:\t\t\t{email_old}\n")
@@ -5137,7 +5135,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed blog URL
-        blog = gh_call(lambda: g_user.blog, default=profile_field_unavailable)()
+        blog = gh_call(lambda: g_user.blog, default=profile_field_unavailable)()  # noqa: B023
         if has_nullable_profile_field_changed(blog, blog_old, profile_field_unavailable):
             print(f"* User blog URL has changed for user {user} !\n")
             print(f"Old blog URL:\t\t\t{blog_old}\n")
@@ -5159,7 +5157,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed account update date
-        account_updated_date = gh_call(lambda: g_user.updated_at)()
+        account_updated_date = gh_call(lambda: g_user.updated_at)()  # noqa: B023
         if account_updated_date is not None and account_updated_date != account_updated_date_old:
             print(f"* User account has been updated for user {user} ! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n")
             print(f"Old account update date:\t{get_date_from_ts(account_updated_date_old)}\n")
@@ -5240,7 +5238,7 @@ def github_monitor_user(user, csv_file_name):
             if GET_ALL_REPOS:
                 repos_list = gh_call(g_user.get_repos)()
             else:
-                repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])()
+                repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])()  # noqa: B023
 
             # Filter repos for detailed monitoring only (keep full repos_list for profile change detection)
             repos_list_filtered = repos_list
@@ -5300,7 +5298,6 @@ def github_monitor_user(user, csv_file_name):
                                 r_forks_old = repo_old.get("forks", 0)
                                 r_stars_old = repo_old.get("stars", 0)
                                 r_subscribers_old = repo_old.get("subscribers", 0)
-                                r_url_old = repo_old.get("url", "")
                                 r_update_old = repo_old.get("update_date")
                                 r_stargazers_list_old = repo_old.get("stargazers_list")
                                 r_subscribers_list_old = repo_old.get("subscribers_list")
@@ -5390,7 +5387,7 @@ def github_monitor_user(user, csv_file_name):
 
         # New GitHub events
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
-            events = list(gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)))())
+            events = list(gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)))())  # noqa: B023
             if events is not None:
                 available_events = len(events)
                 if available_events == 0:

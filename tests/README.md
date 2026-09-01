@@ -23,6 +23,7 @@ enforces the same order so tests always use the working tree.
 | `test_repository_monitoring.py` | Discussion collection, repository snapshots, open and closed notifications, event formatting |
 | `test_profile_fields.py` | Addition, removal and failure handling for nullable profile fields |
 | `test_event_configuration.py` | Supported event types, intentional 30-event window and retry defaults |
+| `test_repository_metadata.py` | Governance files, citation, funding, line endings, the declared editor style, the pinned linter and release integrity |
 
 ## Conventions
 

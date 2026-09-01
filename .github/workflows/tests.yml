@@ -8,6 +8,27 @@ on:
   workflow_call:
 
 jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the pinned linter
+        run: python -m pip install -e '.[lint]'
+
+      - name: Lint the module and the test suite
+        run: python -m ruff check github_monitor.py tests
+
   test:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

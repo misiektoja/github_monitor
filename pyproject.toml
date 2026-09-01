@@ -34,7 +34,9 @@ classifiers = [
 keywords = ["github", "monitoring", "tracking", "real-time", "osint", "pygithub"]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+test = ["pytest>=7.0", "pyyaml>=6.0"]
+# Pinned so a new ruff release cannot fail CI on a rule that did not exist when the change was written
+lint = ["ruff==0.16.4"]
 
 [project.urls]
 Homepage = "https://github.com/misiektoja/github_monitor"
@@ -47,6 +49,16 @@ github_monitor = "github_monitor:main"
 [tool.setuptools]
 py-modules = ["github_monitor"]
 include-package-data = true
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+# Defect rules only: syntax errors, pyflakes and bugbear. Formatting and import order are left
+# to the surrounding code, which keeps each function definition on one physical line
+select = ["E9", "F", "B"]
+# Both are style preferences that would rewrite hundreds of existing lines without fixing a defect
+ignore = ["F541", "B904"]
 
 [tool.pytest.ini_options]
 # Run the in-repo source, never an installed copy, by putting the project root first on sys.path
