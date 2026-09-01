@@ -385,13 +385,31 @@ def test_doctor_output_path_checks_are_read_only(gm_module, monkeypatch, request
     monkeypatch.setattr(gm_module, "GITHUB_LOGFILE", str(log_path))
     report = gm_module.DoctorReport(target_name="octocat", target_profile=FakeProfile(), github_token="token")
 
-    gm_module.doctor_check_monitoring(report)
+    gm_module.doctor_check_output_paths(report)
 
     assert not nested.exists()
     assert not csv_path.exists()
     assert not Path(f"{log_path}_octocat.log").exists()
-    assert any(check.label == "CSV output path is writable" for check in report.checks)
-    assert any(check.label == "Output log path is writable" for check in report.checks)
+    rows = {(check.section, check.label) for check in report.checks}
+    assert ("Configuration", "CSV destination appears writable") in rows
+    assert ("Configuration", "Log destination appears writable") in rows
+
+
+# Verifies the log destination waits for a target because the file name carries it
+def test_doctor_defers_the_log_destination_without_a_target(gm_module, monkeypatch, request):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    monkeypatch.setattr(gm_module, "CSV_FILE", "")
+    monkeypatch.setattr(gm_module, "DISABLE_LOGGING", False)
+    monkeypatch.setattr(gm_module, "GITHUB_LOGFILE", str(Path(directory.name) / "monitor"))
+    report = gm_module.DoctorReport()
+
+    gm_module.doctor_check_output_paths(report)
+
+    rows = {(check.status, check.label) for check in report.checks}
+    assert ("PASS", "Log destination will be finalized after a target is selected") in rows
+    assert ("PASS", "CSV logging is disabled") in rows
 
 
 # Verifies notification readiness follows enabled state before validating destinations

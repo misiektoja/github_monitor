@@ -7445,7 +7445,6 @@ def doctor_check_monitoring(report, contribution_checker=None):
         report.add("Monitoring", "FAIL", "Daily contribution feed could not be checked", "A reachable target profile is required", "Fix the Target section then run doctor again")
     else:
         report.add("Monitoring", "PASS", "Daily contribution tracking is disabled")
-    doctor_check_output_paths(report)
 
 
 # Returns the nearest existing parent used for a read-only path permission check
@@ -7457,7 +7456,7 @@ def doctor_existing_parent(path):
     return parent
 
 
-# Adds one read-only output path readiness check without creating anything
+# Adds one read-only output destination check without creating anything
 def doctor_add_path_check(report, label, path):
     selected = Path(path).expanduser()
     if selected.exists():
@@ -7468,21 +7467,24 @@ def doctor_add_path_check(report, label, path):
         writable = parent.is_dir() and os.access(parent, os.W_OK)
         detail = f"Path: {selected} | Existing parent: {parent}"
     if writable:
-        report.add("Monitoring", "PASS", f"{label} path is writable", detail)
+        report.add("Configuration", "PASS", f"{label} appears writable", detail)
     else:
-        report.add("Monitoring", "FAIL", f"{label} path is not writable", detail, f"Choose a writable {label.lower()} path or correct its parent permissions")
+        report.add("Configuration", "FAIL", f"{label} is not writable: {selected}", detail, f"Choose a writable path for the {label.lower()} or correct its parent permissions")
 
 
-# Adds read-only CSV and output log path checks for enabled outputs
+# Adds read-only checks for each file monitoring would write
 def doctor_check_output_paths(report):
     if CSV_FILE:
-        doctor_add_path_check(report, "CSV output", CSV_FILE)
+        doctor_add_path_check(report, "CSV destination", CSV_FILE)
     else:
-        report.add("Monitoring", "PASS", "CSV output is disabled")
+        report.add("Configuration", "PASS", "CSV logging is disabled", "No CSV file will be written")
     if DISABLE_LOGGING:
-        report.add("Monitoring", "PASS", "Output logging is disabled")
+        report.add("Configuration", "PASS", "Output logging is disabled", "No log file will be written")
+    elif report.target_name:
+        doctor_add_path_check(report, "Log destination", resolve_output_log_path(report.target_name))
     else:
-        doctor_add_path_check(report, "Output log", resolve_output_log_path(report.target_name))
+        # The log file name carries the target, so it is only resolved once a target is known
+        report.add("Configuration", "PASS", "Log destination will be finalized after a target is selected", f"Base path: {Path(os.path.expanduser(GITHUB_LOGFILE))}")
 
 
 # Returns whether email settings indicate that any alert can fire
@@ -7663,6 +7665,7 @@ def run_doctor_preflight(args, parser, request_get=None, github_factory=None, co
         doctor_check_configuration(report, args, parser)
         if not report.target_name:
             report.target_name = wizard_normalize_target(TARGET_GITHUB_USERNAME)
+        doctor_check_output_paths(report)
         colour_stream = destination
         while isinstance(colour_stream, (Logger, TerminalStream)):
             colour_stream = colour_stream.terminal
