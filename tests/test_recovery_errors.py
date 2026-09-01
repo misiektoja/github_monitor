@@ -72,11 +72,11 @@ def test_recovery_error_preserves_advice_and_cause(gm_module):
     assert str(error) == "Stopped"
 
 
-# Verifies secret masking reveals only a bounded prefix and suffix
+# Verifies secret masking reveals no characters from a configured value
 def test_secret_masking_never_returns_the_complete_value(gm_module):
     secret = "abcdefghijk"
     masked = gm_module.mask_secret(secret)
-    assert masked == "abc...ijk"
+    assert masked == "<redacted>"
     assert masked != secret
 
 

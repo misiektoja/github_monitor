@@ -2,6 +2,8 @@
 
 Start with the [README](README.md). [Requirements](README.md#requirements), [Installation](README.md#installation) and [Quick Start](README.md#quick-start) cover most first-run problems, and [Configuration](README.md#configuration) explains every setting the tool reads.
 
+For a new install, run `github_monitor --setup`. Review the complete summary before saving. The wizard keeps private values in a separate dotenv file then offers the read-only doctor preflight after authentication is complete. If no interactive terminal is available, run `github_monitor --generate-config github_monitor.conf` and follow the manual setup steps in the README.
+
 ## Check your setup first
 
 Confirm which version you are running then run the complete read-only preflight for the affected target:

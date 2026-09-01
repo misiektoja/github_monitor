@@ -524,6 +524,7 @@ import csv
 from dataclasses import dataclass, field
 import getpass
 import subprocess
+import tempfile
 try:
     import pytz
 except ModuleNotFoundError:
@@ -2068,15 +2069,11 @@ def known_secret_values():
     return values
 
 
-# Returns a recognizable masked form without exposing the complete secret
+# Returns a fixed marker for every configured secret without exposing any characters
 def mask_secret(value, visible=3):
-    text = str(value or "")
-    if not text:
+    if not str(value or ""):
         return "<not set>"
-    if len(text) <= 2:
-        return "*" * len(text)
-    shown = min(max(1, int(visible)), max(1, (len(text) - 1) // 2))
-    return f"{text[:shown]}...{text[-shown:]}"
+    return "<redacted>"
 
 
 # Redacts known values and common credential shapes from arbitrary error text
@@ -6867,10 +6864,11 @@ def doctor_email_alerts_enabled():
     return any(selected) or bool(ERROR_NOTIFICATION and configured_destination)
 
 
-# Returns the user-facing spelling of the selected webhook provider
-def webhook_provider_display_name():
-    provider = normalized_webhook_provider()
-    return "Discord" if provider == "discord" else "ntfy" if provider == "ntfy" else sanitize_error_text(WEBHOOK_PROVIDER)
+# Returns the user-facing spelling of one selected webhook provider
+def webhook_provider_display_name(provider=None):
+    normalized = normalized_webhook_provider(provider)
+    selected = WEBHOOK_PROVIDER if provider is None else provider
+    return "Discord" if normalized == "discord" else "ntfy" if normalized == "ntfy" else sanitize_error_text(selected)
 
 
 # Adds channel readiness checks and stores structural delivery-test readiness
@@ -7053,6 +7051,700 @@ def run_doctor_preflight(args, parser, request_get=None, github_factory=None, co
     return 1 if report.failure_count else 0
 
 
+WIZARD_SECTION_KEYS = {
+    "Target": ("DO_NOT_MONITOR_GITHUB_EVENTS", "TRACK_REPOS_CHANGES", "TRACK_CONTRIB_CHANGES"),
+    "Polling": ("GITHUB_CHECK_INTERVAL", "LOCAL_TIMEZONE"),
+    "Authentication": ("GITHUB_API_URL", "GITHUB_HTML_URL"),
+    "Email": ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_SSL", "SENDER_EMAIL", "RECEIVER_EMAIL", "PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"),
+    "Webhook": ("WEBHOOK_ENABLED", "WEBHOOK_PROVIDER", "WEBHOOK_PROFILE_NOTIFICATION", "WEBHOOK_EVENT_NOTIFICATION", "WEBHOOK_REPO_NOTIFICATION", "WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION", "WEBHOOK_CONTRIB_NOTIFICATION", "WEBHOOK_ERROR_NOTIFICATION"),
+    "Destinations": ("CSV_FILE", "DISABLE_LOGGING", "DOTENV_FILE"),
+}
+WIZARD_SECRET_KEYS = {"Authentication": ("GITHUB_TOKEN",), "Email": ("SMTP_PASSWORD",), "Webhook": ("WEBHOOK_URL", "NTFY_ACCESS_TOKEN")}
+WIZARD_CONFIG_ORDER = tuple(name for names in WIZARD_SECTION_KEYS.values() for name in names)
+
+
+# Signals a clean interactive cancellation before any wizard files are written
+class WizardCancelled(Exception):
+    pass
+
+
+@dataclass
+class WizardSetupState:
+    target: str
+    config_path: Path
+    dotenv_path: Path
+    install_context: InstallContext
+    values: dict[str, Any]
+    secrets: dict[str, str]
+    baseline_values: dict[str, Any]
+    baseline_secrets: dict[str, str]
+    preserved_values: dict[str, Any] = field(default_factory=dict)
+    authenticated_login: str = ""
+    environment_token_available: bool = False
+
+    # Reports whether doctor can exercise an authenticated real path
+    @property
+    def authentication_complete(self):
+        return bool(self.secrets.get("GITHUB_TOKEN") or self.environment_token_available)
+
+
+# Normalizes a GitHub username or profile URL to one canonical username
+def wizard_normalize_target(value):
+    selected = str(value).strip()
+    if "://" in selected:
+        try:
+            parsed = urlsplit(selected)
+        except ValueError:
+            return ""
+        parts = [part for part in parsed.path.split("/") if part]
+        if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname or len(parts) != 1:
+            return ""
+        selected = parts[0]
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", selected):
+        return ""
+    return selected
+
+
+# Parses one human duration and returns a positive whole number of seconds
+def wizard_parse_duration(value):
+    selected = str(value).strip().casefold()
+    if not selected:
+        raise ValueError("Enter a duration such as 30s, 2m, 1.5h, 1h 30m or 1d")
+    position = 0
+    total = 0.0
+    matches = list(re.finditer(r"\s*(\d+(?:\.\d+)?)\s*([smhd])", selected))
+    for match in matches:
+        if selected[position:match.start()].strip():
+            raise ValueError("Use seconds, minutes, hours or days such as 30s, 2m, 1.5h, 1h 30m or 1d")
+        amount = float(match.group(1))
+        total += amount * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2)]
+        position = match.end()
+    if not matches or selected[position:].strip() or total <= 0 or total > 31536000:
+        raise ValueError("Use a positive duration no longer than one year")
+    seconds = round(total)
+    if seconds <= 0:
+        raise ValueError("The duration must be at least one second")
+    return seconds
+
+
+# Reads one wizard answer after rendering its prompt to the selected stream
+def wizard_read_answer(prompt, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write(prompt)
+    destination.flush()
+    try:
+        return str(input_func()).strip()
+    except (EOFError, KeyboardInterrupt) as exc:
+        destination.write("\n")
+        raise WizardCancelled from exc
+
+
+# Reads one hidden wizard answer while forcing debug output off around the secret path
+def wizard_read_secret(prompt, getpass_func=None, stream=None):
+    global DEBUG_MODE
+    destination = sys.stdout if stream is None else stream
+    destination.write(prompt)
+    destination.flush()
+    hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
+    previous_debug_mode = DEBUG_MODE
+    DEBUG_MODE = False
+    try:
+        return str(hidden_prompt("")).strip()
+    except (EOFError, KeyboardInterrupt) as exc:
+        destination.write("\n")
+        raise WizardCancelled from exc
+    finally:
+        DEBUG_MODE = previous_debug_mode
+
+
+# Reads a yes or no answer with an explicit default and retries invalid input
+def wizard_ask_yes_no(prompt, default=False, input_func=input, stream=None):
+    suffix = " [Y/n]: " if default else " [y/N]: "
+    destination = sys.stdout if stream is None else stream
+    while True:
+        answer = wizard_read_answer(prompt + suffix, input_func, destination).casefold()
+        if not answer:
+            return default
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        destination.write("Please answer yes or no.\n")
+
+
+# Reads one numbered choice and returns its stable value
+def wizard_ask_choice(prompt, choices, default, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write(prompt + "\n")
+    for index, (_, label) in enumerate(choices, 1):
+        marker = " (default)" if choices[index - 1][0] == default else ""
+        destination.write(f"  {index}. {label}{marker}\n")
+    while True:
+        answer = wizard_read_answer("Choice: ", input_func, destination)
+        if not answer:
+            return default
+        if answer.isdigit() and 1 <= int(answer) <= len(choices):
+            return choices[int(answer) - 1][0]
+        destination.write(f"Enter a number from 1 through {len(choices)}.\n")
+
+
+# Reads one text value with a shown default and optional validation
+def wizard_ask_text(label, default="", validator=None, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    shown_default = f" [{default}]" if default not in (None, "") else ""
+    while True:
+        answer = wizard_read_answer(f"{label}{shown_default}: ", input_func, destination)
+        selected = str(default) if not answer else answer
+        if validator is None:
+            return selected
+        error = validator(selected)
+        if not error:
+            return selected
+        destination.write(f"That value is not valid: {error}\n")
+
+
+# Returns a concise validation error for one general HTTPS service endpoint
+def wizard_https_url_error(value):
+    try:
+        parsed = urlsplit(str(value).strip())
+    except ValueError:
+        return "enter a complete HTTPS URL"
+    if parsed.scheme.casefold() != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return "enter a complete HTTPS URL without credentials, a query or a fragment"
+    return ""
+
+
+# Returns a concise validation error for one wizard email configuration
+def wizard_email_settings_error(values, secrets):
+    host = str(values.get("SMTP_HOST", ""))
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not re.fullmatch(r"(?=.{4,253}\Z)((?!-)[A-Za-z0-9-]{1,63}(?<!-)\.)+[A-Za-z]{2,63}\.?", host):
+            return "SMTP host must be a valid IP address or fully qualified domain name"
+    try:
+        port = int(values.get("SMTP_PORT", 0))
+    except (TypeError, ValueError):
+        return "SMTP port must be a number from 1 through 65535"
+    if not 1 <= port <= 65535:
+        return "SMTP port must be a number from 1 through 65535"
+    email_pattern = r"[^@\s]+@[^@\s]+\.[^@\s]+"
+    if not re.fullmatch(email_pattern, str(values.get("SENDER_EMAIL", ""))) or not re.fullmatch(email_pattern, str(values.get("RECEIVER_EMAIL", ""))):
+        return "sender and receiver must be valid email addresses"
+    if not str(values.get("SMTP_USER", "")).strip() or not secrets.get("SMTP_PASSWORD"):
+        return "SMTP username and password are required"
+    return ""
+
+
+# Loads safe baseline values from existing config and dotenv files without applying them globally
+def build_wizard_state(config_path, dotenv_path, install_context=None):
+    selected_config = Path(config_path).expanduser().resolve()
+    selected_dotenv = Path(dotenv_path).expanduser().resolve()
+    if selected_config == selected_dotenv:
+        raise ValueError("Configuration and dotenv must use different files")
+    defaults = parse_config_content(CONFIG_BLOCK, "<built-in-config>")
+    existing_values = {}
+    if selected_config.exists():
+        debug_print(f"Reading setup baseline configuration path={selected_config}")
+        existing_values = parse_config_content(selected_config.read_text(encoding="utf-8"), str(selected_config), reference_values=defaults)
+    values = dict(defaults)
+    values.update(existing_values)
+    secrets = {}
+    if selected_dotenv.exists():
+        debug_print(f"Reading setup baseline dotenv path={selected_dotenv}")
+        try:
+            from dotenv import dotenv_values
+            secrets.update({str(name): str(value) for name, value in dotenv_values(selected_dotenv).items() if name in SECRET_KEYS and value is not None})
+        except Exception as exc:
+            raise ValueError(f"Dotenv file '{selected_dotenv}' could not be read: {type(exc).__name__}: {exc}") from None
+    for name in SECRET_KEYS:
+        configured = existing_values.pop(name, None)
+        if name not in secrets and isinstance(configured, str) and configured and not configured.startswith("your_"):
+            secrets[name] = configured
+    values["DOTENV_FILE"] = str(selected_dotenv)
+    baseline_values = dict(values)
+    baseline_secrets = dict(secrets)
+    preserved = {name: value for name, value in existing_values.items() if name not in SECRET_KEYS}
+    context = detect_install_context() if install_context is None else install_context
+    return WizardSetupState("", selected_config, selected_dotenv, context, values, secrets, baseline_values, baseline_secrets, preserved, environment_token_available=bool(os.environ.get("GITHUB_TOKEN")))
+
+
+# Restores one wizard section to its pre-wizard values before recollecting it
+def wizard_reset_section(state, section):
+    for name in WIZARD_SECTION_KEYS[section]:
+        state.values[name] = state.baseline_values[name]
+    for name in WIZARD_SECRET_KEYS.get(section, ()):
+        if name in state.baseline_secrets:
+            state.secrets[name] = state.baseline_secrets[name]
+        else:
+            state.secrets.pop(name, None)
+    if section == "Target":
+        state.target = ""
+    if section == "Authentication":
+        state.authenticated_login = ""
+
+
+# Collects the target and core monitoring feature choices
+def wizard_collect_target(state, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("\nTarget\n")
+    while True:
+        entered = wizard_ask_text("GitHub username or profile URL", state.target, input_func=input_func, stream=destination)
+        normalized = wizard_normalize_target(entered)
+        if normalized:
+            state.target = normalized
+            if normalized != entered:
+                destination.write(f"Using normalized GitHub username: {normalized}\n")
+            break
+        destination.write("That target is not valid. Enter a GitHub username or full profile URL.\n")
+    state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] = not wizard_ask_yes_no("Monitor public GitHub events?", not bool(state.values["DO_NOT_MONITOR_GITHUB_EVENTS"]), input_func, destination)
+    state.values["TRACK_REPOS_CHANGES"] = wizard_ask_yes_no("Track detailed repository changes?", bool(state.values["TRACK_REPOS_CHANGES"]), input_func, destination)
+    state.values["TRACK_CONTRIB_CHANGES"] = wizard_ask_yes_no("Track daily contribution changes?", bool(state.values["TRACK_CONTRIB_CHANGES"]), input_func, destination)
+
+
+# Collects a human polling interval and timezone
+def wizard_collect_polling(state, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("\nPolling\n")
+    seconds = int(state.values["GITHUB_CHECK_INTERVAL"])
+    default_duration = f"{seconds // 86400}d" if seconds % 86400 == 0 else f"{seconds // 3600}h" if seconds % 3600 == 0 else f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s"
+    while True:
+        entered = wizard_ask_text("Polling interval", default_duration, input_func=input_func, stream=destination)
+        try:
+            state.values["GITHUB_CHECK_INTERVAL"] = wizard_parse_duration(entered)
+            break
+        except ValueError as exc:
+            destination.write(f"That duration is not valid: {exc}\n")
+    timezone_default = str(state.values["LOCAL_TIMEZONE"])
+    state.values["LOCAL_TIMEZONE"] = wizard_ask_text("Local timezone", timezone_default, lambda value: "" if value == "Auto" or is_valid_timezone(value) else "use Auto or a valid IANA timezone such as Europe/Warsaw", input_func, destination)
+
+
+# Collects GitHub endpoints and optionally validates a hidden token
+def wizard_collect_authentication(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("\nAuthentication\n")
+    state.values["GITHUB_API_URL"] = wizard_ask_text("GitHub API URL", str(state.values["GITHUB_API_URL"]), lambda value: "" if validate_github_endpoint_url(value) else "enter a complete HTTPS GitHub API URL", input_func, destination)
+    state.values["GITHUB_HTML_URL"] = wizard_ask_text("GitHub web URL", str(state.values["GITHUB_HTML_URL"]), wizard_https_url_error, input_func, destination)
+    existing = bool(state.secrets.get("GITHUB_TOKEN") or state.environment_token_available)
+    if not wizard_ask_yes_no("Set or replace the GitHub token now?", not existing, input_func, destination):
+        return
+    validator = validate_github_token if token_validator is None else token_validator
+    while True:
+        token = wizard_read_secret("GitHub token: ", getpass_func, destination)
+        if not token:
+            destination.write("No token was entered. Authentication will remain incomplete.\n")
+            if "GITHUB_TOKEN" in state.baseline_secrets:
+                state.secrets["GITHUB_TOKEN"] = state.baseline_secrets["GITHUB_TOKEN"]
+            else:
+                state.secrets.pop("GITHUB_TOKEN", None)
+            return
+        destination.write("Validating the GitHub token before saving ...\n")
+        try:
+            login = validator(token, state.values["GITHUB_API_URL"])
+        except Exception as exc:
+            destination.write(f"Token validation failed: {sanitize_error_text(exc)}\n")
+            if not wizard_ask_yes_no("Try another token?", True, input_func, destination):
+                if "GITHUB_TOKEN" in state.baseline_secrets:
+                    state.secrets["GITHUB_TOKEN"] = state.baseline_secrets["GITHUB_TOKEN"]
+                else:
+                    state.secrets.pop("GITHUB_TOKEN", None)
+                return
+            continue
+        state.secrets["GITHUB_TOKEN"] = token
+        state.authenticated_login = str(login)
+        destination.write(f"GitHub token is valid for user: {state.authenticated_login}\n")
+        return
+
+
+# Collects optional email delivery settings and alert choices
+def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("\nEmail\n")
+    configured_destination = not str(state.values["SMTP_HOST"]).startswith("your_smtp_server_")
+    enabled_default = any(bool(state.values[name]) for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION")) or bool(state.values["ERROR_NOTIFICATION"] and configured_destination)
+    if not wizard_ask_yes_no("Configure email alerts?", enabled_default, input_func, destination):
+        for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"):
+            state.values[name] = False
+        return
+    state.values["SMTP_HOST"] = wizard_ask_text("SMTP host", "" if str(state.values["SMTP_HOST"]).startswith("your_") else state.values["SMTP_HOST"], input_func=input_func, stream=destination)
+    state.values["SMTP_PORT"] = int(wizard_ask_text("SMTP port", state.values["SMTP_PORT"], lambda value: "" if str(value).isdigit() and 1 <= int(value) <= 65535 else "enter a number from 1 through 65535", input_func, destination))
+    state.values["SMTP_USER"] = wizard_ask_text("SMTP username", "" if str(state.values["SMTP_USER"]).startswith("your_") else state.values["SMTP_USER"], input_func=input_func, stream=destination)
+    if wizard_ask_yes_no("Set or replace the SMTP password now?", not bool(state.secrets.get("SMTP_PASSWORD")), input_func, destination):
+        password = wizard_read_secret("SMTP password: ", getpass_func, destination)
+        if password:
+            state.secrets["SMTP_PASSWORD"] = password
+    state.values["SMTP_SSL"] = wizard_ask_yes_no("Use STARTTLS for SMTP?", bool(state.values["SMTP_SSL"]), input_func, destination)
+    state.values["SENDER_EMAIL"] = wizard_ask_text("Sender email", "" if str(state.values["SENDER_EMAIL"]).startswith("your_") else state.values["SENDER_EMAIL"], input_func=input_func, stream=destination)
+    state.values["RECEIVER_EMAIL"] = wizard_ask_text("Receiver email", "" if str(state.values["RECEIVER_EMAIL"]).startswith("your_") else state.values["RECEIVER_EMAIL"], input_func=input_func, stream=destination)
+    validation_error = wizard_email_settings_error(state.values, state.secrets)
+    if validation_error:
+        destination.write(f"Email settings are incomplete: {validation_error}\n")
+        destination.write("Email alerts will stay disabled. Review this section to correct them.\n")
+        for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"):
+            state.values[name] = False
+        return
+    state.values["PROFILE_NOTIFICATION"] = wizard_ask_yes_no("Email profile changes?", bool(state.values["PROFILE_NOTIFICATION"]), input_func, destination)
+    state.values["EVENT_NOTIFICATION"] = False if state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] else wizard_ask_yes_no("Email new GitHub events?", bool(state.values["EVENT_NOTIFICATION"]), input_func, destination)
+    state.values["REPO_NOTIFICATION"] = False if not state.values["TRACK_REPOS_CHANGES"] else wizard_ask_yes_no("Email detailed repository changes?", bool(state.values["REPO_NOTIFICATION"]), input_func, destination)
+    state.values["REPO_UPDATE_DATE_NOTIFICATION"] = False if not state.values["TRACK_REPOS_CHANGES"] else wizard_ask_yes_no("Email repository update date changes?", bool(state.values["REPO_UPDATE_DATE_NOTIFICATION"]), input_func, destination)
+    state.values["CONTRIB_NOTIFICATION"] = False if not state.values["TRACK_CONTRIB_CHANGES"] else wizard_ask_yes_no("Email daily contribution changes?", bool(state.values["CONTRIB_NOTIFICATION"]), input_func, destination)
+    state.values["ERROR_NOTIFICATION"] = wizard_ask_yes_no("Email monitoring errors?", True, input_func, destination)
+
+
+# Collects optional Discord or ntfy delivery settings and alert choices
+def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("\nWebhook\n")
+    if not wizard_ask_yes_no("Configure webhook alerts?", bool(state.values["WEBHOOK_ENABLED"]), input_func, destination):
+        state.values["WEBHOOK_ENABLED"] = False
+        return
+    provider = wizard_ask_choice("Webhook provider", (("discord", "Discord"), ("ntfy", "ntfy")), normalized_webhook_provider(state.values["WEBHOOK_PROVIDER"]) or "discord", input_func, destination)
+    state.values["WEBHOOK_PROVIDER"] = provider
+    if wizard_ask_yes_no("Set or replace the webhook destination now?", not bool(state.secrets.get("WEBHOOK_URL")), input_func, destination):
+        while True:
+            entered = wizard_read_secret(f"Paste the {webhook_provider_display_name(provider)} webhook URL: ", getpass_func, destination)
+            normalized = normalize_ntfy_topic_url(entered) if provider == "ntfy" else entered
+            detected = detect_webhook_provider(normalized)
+            valid = bool(normalized and validate_webhook_url(normalized) and (provider == "ntfy" or detected == "discord"))
+            if valid:
+                state.secrets["WEBHOOK_URL"] = normalized
+                break
+            destination.write(f"That is not a valid {'Discord webhook URL' if provider == 'discord' else 'ntfy topic or HTTPS topic URL'}.\n")
+    if provider == "ntfy" and wizard_ask_yes_no("Set or replace an optional ntfy access token?", False, input_func, destination):
+        access_token = wizard_read_secret("ntfy access token: ", getpass_func, destination)
+        if "\r" in access_token or "\n" in access_token or access_token.casefold().startswith(("bearer ", "basic ")):
+            destination.write("The ntfy token was ignored because it contains an authorization scheme or line break.\n")
+        elif access_token:
+            state.secrets["NTFY_ACCESS_TOKEN"] = access_token
+    if not state.secrets.get("WEBHOOK_URL"):
+        state.values["WEBHOOK_ENABLED"] = False
+        destination.write("Webhook alerts will stay disabled until a destination is saved.\n")
+        return
+    state.values["WEBHOOK_ENABLED"] = True
+    state.values["WEBHOOK_PROFILE_NOTIFICATION"] = wizard_ask_yes_no("Webhook profile changes?", bool(state.values["WEBHOOK_PROFILE_NOTIFICATION"]), input_func, destination)
+    state.values["WEBHOOK_EVENT_NOTIFICATION"] = False if state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] else wizard_ask_yes_no("Webhook new GitHub events?", bool(state.values["WEBHOOK_EVENT_NOTIFICATION"]), input_func, destination)
+    state.values["WEBHOOK_REPO_NOTIFICATION"] = False if not state.values["TRACK_REPOS_CHANGES"] else wizard_ask_yes_no("Webhook detailed repository changes?", bool(state.values["WEBHOOK_REPO_NOTIFICATION"]), input_func, destination)
+    state.values["WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION"] = False if not state.values["TRACK_REPOS_CHANGES"] else wizard_ask_yes_no("Webhook repository update date changes?", bool(state.values["WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION"]), input_func, destination)
+    state.values["WEBHOOK_CONTRIB_NOTIFICATION"] = False if not state.values["TRACK_CONTRIB_CHANGES"] else wizard_ask_yes_no("Webhook daily contribution changes?", bool(state.values["WEBHOOK_CONTRIB_NOTIFICATION"]), input_func, destination)
+    state.values["WEBHOOK_ERROR_NOTIFICATION"] = wizard_ask_yes_no("Webhook monitoring errors?", True, input_func, destination)
+
+
+# Collects log and CSV output destinations
+def wizard_collect_destinations(state, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("\nDestinations\n")
+    state.values["DISABLE_LOGGING"] = not wizard_ask_yes_no("Write the normal per-target log file?", not bool(state.values["DISABLE_LOGGING"]), input_func, destination)
+    csv_default = str(state.values["CSV_FILE"] or "")
+    state.values["CSV_FILE"] = wizard_ask_text("Optional CSV output path (blank disables it)", csv_default, input_func=input_func, stream=destination)
+    state.values["DOTENV_FILE"] = str(state.dotenv_path)
+
+
+# Collects every wizard section in the shared output order
+def wizard_collect_all(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    wizard_collect_target(state, input_func, stream)
+    wizard_collect_polling(state, input_func, stream)
+    wizard_collect_authentication(state, input_func, getpass_func, stream, token_validator)
+    wizard_collect_email(state, input_func, getpass_func, stream)
+    wizard_collect_webhook(state, input_func, getpass_func, stream)
+    wizard_collect_destinations(state, input_func, stream)
+
+
+# Renders one complete masked setup summary before any file is changed
+def wizard_render_summary(state, stream=None):
+    destination = sys.stdout if stream is None else stream
+    email_enabled = any(state.values[name] for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"))
+    webhook_enabled = bool(state.values["WEBHOOK_ENABLED"])
+    destination.write("\nSetup summary\n")
+    rows = (
+        ("Target", state.target),
+        ("Polling interval", display_time(state.values["GITHUB_CHECK_INTERVAL"])),
+        ("Timezone", state.values["LOCAL_TIMEZONE"]),
+        ("GitHub API", state.values["GITHUB_API_URL"]),
+        ("GitHub token", mask_secret(state.secrets.get("GITHUB_TOKEN") or ("environment" if state.environment_token_available else ""))),
+        ("Email alerts", "Enabled" if email_enabled else "Disabled"),
+        ("SMTP password", mask_secret(state.secrets.get("SMTP_PASSWORD"))),
+        ("Webhook alerts", f"Enabled through {'Discord' if state.values['WEBHOOK_PROVIDER'] == 'discord' else 'ntfy'}" if webhook_enabled else "Disabled"),
+        ("Webhook URL", mask_secret(state.secrets.get("WEBHOOK_URL"))),
+        ("Output log", "Enabled" if not state.values["DISABLE_LOGGING"] else "Disabled"),
+        ("CSV output", state.values["CSV_FILE"] or "Disabled"),
+        ("Configuration", state.config_path),
+        ("Dotenv", state.dotenv_path),
+    )
+    width = max(len(label) for label, _ in rows) + 1
+    for label, value in rows:
+        destination.write(f"  {(label + ':'):<{width}} {value}\n")
+
+
+# Recollects one selected section while preserving every other answer
+def wizard_edit_section(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
+    sections = tuple((name, name) for name in WIZARD_SECTION_KEYS)
+    selected = wizard_ask_choice("Review or change which section?", sections, "Target", input_func, destination)
+    wizard_reset_section(state, selected)
+    collectors = {
+        "Target": lambda: wizard_collect_target(state, input_func, destination),
+        "Polling": lambda: wizard_collect_polling(state, input_func, destination),
+        "Authentication": lambda: wizard_collect_authentication(state, input_func, getpass_func, destination, token_validator),
+        "Email": lambda: wizard_collect_email(state, input_func, getpass_func, destination),
+        "Webhook": lambda: wizard_collect_webhook(state, input_func, getpass_func, destination),
+        "Destinations": lambda: wizard_collect_destinations(state, input_func, destination),
+    }
+    collectors[selected]()
+
+
+# Reviews the complete setup until the user saves or confirms discard
+def wizard_review_setup(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
+    while True:
+        wizard_render_summary(state, destination)
+        action = wizard_ask_choice("What would you like to do?", (("save", "Save"), ("edit", "Review or change"), ("discard", "Discard and exit")), "save", input_func, destination)
+        if action == "save":
+            return True
+        if action == "edit":
+            wizard_edit_section(state, input_func, getpass_func, destination, token_validator)
+            continue
+        if wizard_ask_yes_no("Discard every answer and exit without writing files?", False, input_func, destination):
+            return False
+
+
+# Renders the complete data-only configuration selected by the wizard
+def render_wizard_config(state):
+    selected = dict(state.preserved_values)
+    for name in WIZARD_CONFIG_ORDER:
+        selected[name] = state.values[name]
+    selected["DOTENV_FILE"] = str(state.dotenv_path)
+    ordered_names = [name for name in WIZARD_CONFIG_ORDER if name in selected]
+    ordered_names.extend(sorted(name for name in selected if name not in ordered_names and name not in SECRET_KEYS))
+    lines = ["# Generated by github_monitor --setup", "# Secrets are stored in the separate dotenv file.", ""]
+    lines.extend(f"{name} = {selected[name]!r}" for name in ordered_names)
+    content = "\n".join(lines) + "\n"
+    validate_config_content(content, str(state.config_path))
+    return content
+
+
+# Updates selected dotenv assignments in memory while preserving unrelated lines
+def render_wizard_dotenv(state):
+    try:
+        existing = state.dotenv_path.read_text(encoding="utf-8") if state.dotenv_path.exists() else ""
+    except Exception as exc:
+        raise ValueError(f"Dotenv file '{state.dotenv_path}' could not be read: {type(exc).__name__}: {exc}") from None
+    lines = existing.splitlines()
+    for key, value in state.secrets.items():
+        if key not in SECRET_KEYS or not value:
+            continue
+        if "\r" in value or "\n" in value or "\x00" in value:
+            raise ValueError(f"{key} contains an unsupported line break or null byte")
+        encoded = value.replace("\\", "\\\\").replace('"', '\\"')
+        assignment = f'{key}="{encoded}"'
+        replaced = False
+        updated = []
+        for line in lines:
+            if re.match(rf"^\s*{re.escape(key)}\s*=", line):
+                if not replaced:
+                    updated.append(assignment)
+                    replaced = True
+            else:
+                updated.append(line)
+        if not replaced:
+            updated.append(assignment)
+        lines = updated
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+# Creates a unique fsynced mode-0600 backup before replacing one existing file
+def backup_wizard_file(path, timestamp=None):
+    if not path.exists():
+        return None
+    stamp = timestamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    original = path.read_bytes()
+    for suffix in range(100):
+        discriminator = "" if suffix == 0 else f".{suffix}"
+        backup_path = path.with_name(f"{path.name}.{stamp}{discriminator}.bak")
+        try:
+            descriptor = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(descriptor, "wb") as backup_file:
+            backup_file.write(original)
+            backup_file.flush()
+            os.fsync(backup_file.fileno())
+        return backup_path
+    raise FileExistsError(f"Could not create a unique backup for '{path}'")
+
+
+# Prepares one fsynced mode-0600 temporary file beside its final destination
+def prepare_wizard_atomic_file(path, content):
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        os.chmod(temporary_path, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output_file:
+            output_file.write(content)
+            output_file.flush()
+            os.fsync(output_file.fileno())
+    except Exception as exc:
+        try:
+            os.close(descriptor)
+        except OSError as close_error:
+            debug_swallowed_exception("Setup temporary descriptor cleanup", close_error)
+        temporary_path.unlink(missing_ok=True)
+        debug_print(f"Setup temporary file write failed path={path} error={type(exc).__name__}: {exc}")
+        raise
+    return temporary_path
+
+
+# Saves both wizard files only after validation, backup and temporary writes succeed
+def save_wizard_files(state):
+    for path in (state.config_path, state.dotenv_path):
+        if not path.parent.is_dir():
+            raise FileNotFoundError(f"Parent directory does not exist: {path.parent}")
+    config_content = render_wizard_config(state)
+    dotenv_content = render_wizard_dotenv(state)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    backups = [backup_wizard_file(state.config_path, timestamp), backup_wizard_file(state.dotenv_path, timestamp)]
+    prepared = []
+    try:
+        prepared = [prepare_wizard_atomic_file(state.config_path, config_content), prepare_wizard_atomic_file(state.dotenv_path, dotenv_content)]
+        os.replace(prepared[0], state.config_path)
+        os.replace(prepared[1], state.dotenv_path)
+        os.chmod(state.config_path, 0o600)
+        os.chmod(state.dotenv_path, 0o600)
+    finally:
+        for temporary_path in prepared:
+            temporary_path.unlink(missing_ok=True)
+    debug_print(f"Setup configuration write succeeded path={state.config_path}")
+    debug_print(f"Setup dotenv write succeeded path={state.dotenv_path}")
+    return tuple(path for path in backups if path is not None)
+
+
+# Builds the exact install-aware argument list used after setup
+def wizard_monitor_arguments(state):
+    return [state.target, "--config-file", str(state.config_path), "--env-file", str(state.dotenv_path)]
+
+
+# Runs the complete buffered setup interaction and optional doctor handoff
+def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, getpass_func=None, input_stream=None, stream=None, interactive=None, install_context=None, token_validator=None, doctor_runner=None, monitor_launcher=None, show_banner=True):
+    destination = sys.stdout if stream is None else stream
+    source = sys.stdin if input_stream is None else input_stream
+    try:
+        terminal_is_interactive = bool(source.isatty()) if interactive is None else bool(interactive)
+    except Exception as exc:
+        debug_swallowed_exception("Setup input terminal detection", exc)
+        terminal_is_interactive = False
+    context = detect_install_context() if install_context is None else install_context
+    selected_config = Path(config_path or (Path.cwd() / DEFAULT_CONFIG_FILENAME)).expanduser().resolve()
+    selected_dotenv = Path(env_file or (Path.cwd() / ".env")).expanduser().resolve()
+    if show_banner:
+        destination.write(f"GitHub Monitoring Tool v{VERSION}\n\n")
+    if not terminal_is_interactive:
+        generate_command = render_install_command(["--generate-config", str(selected_config)], context)
+        destination.write("Setup Wizard\n\n")
+        destination.write("Guided setup requires an interactive terminal so private values can be entered safely.\n")
+        destination.write(f"Generate a config manually with: {generate_command}\n")
+        destination.write(f"Then edit it and store secrets in a dotenv file. Guide: {QUICK_START_GUIDE_URL}\n")
+        return 1
+    try:
+        state = build_wizard_state(selected_config, selected_dotenv, context)
+        destination.write("Setup Wizard\n\n")
+        destination.write("This asks a few questions and writes a ready-to-run configuration.\n")
+        destination.write("Press Enter to accept the shown default. Ctrl+C cancels.\n\n")
+        destination.write("Recommended setup monitors public events every 30 minutes. Secrets go to the dotenv file. Non-secret settings go to the config file.\n\n")
+        labels = ("Detected install method:", "Configuration:", "Dotenv:")
+        width = max(len(label) for label in labels) + 1
+        destination.write(f"{labels[0]:<{width}} {context.install_method}\n")
+        destination.write(f"{labels[1]:<{width}} {state.config_path}\n")
+        destination.write(f"{labels[2]:<{width}} {state.dotenv_path}\n")
+        wizard_collect_all(state, input_func, getpass_func, destination, token_validator)
+        if not wizard_review_setup(state, input_func, getpass_func, destination, token_validator):
+            destination.write("\nSetup discarded. No files were written.\n")
+            return 1
+        backups = save_wizard_files(state)
+    except WizardCancelled:
+        destination.write("Setup cancelled. No files were written.\n")
+        return 1
+    except Exception as exc:
+        advice = classify_recovery_error(exc, "config")
+        destination.write("\n")
+        destination.write(render_recovery_advice(advice) + "\n")
+        return 1
+    destination.write("\nSaved files\n")
+    destination.write(f"  Configuration: {state.config_path}\n")
+    destination.write(f"  Dotenv:       {state.dotenv_path}\n")
+    for backup in backups:
+        destination.write(f"  Backup:       {backup}\n")
+    monitor_arguments = wizard_monitor_arguments(state)
+    doctor_arguments = [*monitor_arguments, "--doctor"]
+    doctor_exit = None
+    try:
+        if state.authentication_complete:
+            destination.write("\n")
+            if wizard_ask_yes_no("Run doctor now? It writes no files and offers real delivery tests only with separate approval.", False, input_func, destination):
+                destination.write("\n")
+                doctor_args = parser.parse_args(doctor_arguments)
+                runner = run_doctor_preflight if doctor_runner is None else doctor_runner
+                doctor_exit = runner(doctor_args, parser, input_func=input_func, input_stream=source, stream=destination)
+    except WizardCancelled:
+        destination.write("Setup is saved. Use the commands below when ready.\n")
+    destination.write("\nNext steps\n")
+    if doctor_exit is None:
+        destination.write(f"  1. Check setup: {render_install_command(doctor_arguments, context)}\n")
+        destination.write(f"  2. Start monitoring: {render_install_command(monitor_arguments, context)}\n")
+    else:
+        destination.write(f"  1. Start monitoring: {render_install_command(monitor_arguments, context)}\n")
+    destination.write(f"  Guide: {QUICK_START_GUIDE_URL}\n")
+    if doctor_exit == 0:
+        try:
+            start_now = wizard_ask_yes_no("Start monitoring now? Monitoring will continue until Ctrl+C.", False, input_func, destination)
+        except WizardCancelled:
+            start_now = False
+            destination.write("Setup is saved. Start monitoring with the command above when ready.\n")
+        if start_now and monitor_launcher is not None:
+            return int(monitor_launcher(monitor_arguments) or 0)
+    return 0
+
+
+# Prints the four next actions for an empty invocation and optionally launches setup
+def run_zero_argument_welcome(parser, input_func=input, input_stream=None, stream=None, install_context=None, setup_runner=None):
+    destination = sys.stdout if stream is None else stream
+    source = sys.stdin if input_stream is None else input_stream
+    context = detect_install_context() if install_context is None else install_context
+    destination.write(f"GitHub Monitoring Tool v{VERSION}\n\nWelcome\n\n")
+    commands = (
+        ("Quickest start", ["GITHUB_USERNAME"]),
+        ("Guided setup", ["--setup"]),
+        ("Check setup", ["GITHUB_USERNAME", "--doctor"]),
+        ("Full options", ["--help"]),
+    )
+    width = max(len(label) for label, _ in commands) + 1
+    for label, arguments in commands:
+        destination.write(f"{(label + ':'):<{width}} {render_install_command(arguments, context)}\n")
+    destination.write(f"\nGuide: {QUICK_START_GUIDE_URL}\n")
+    try:
+        interactive = bool(source.isatty())
+    except Exception as exc:
+        debug_swallowed_exception("Welcome input terminal detection", exc)
+        interactive = False
+    if not interactive:
+        return 0
+    destination.write("\n")
+    if not wizard_ask_yes_no("Run guided setup now?", False, input_func, destination):
+        return 0
+    destination.write("\n")
+    runner = run_setup_wizard if setup_runner is None else setup_runner
+    return runner(parser, input_func=input_func, input_stream=source, stream=destination, interactive=True, install_context=context, show_banner=False)
+
+
+# Restarts argument handling with the wizard's saved monitoring command
+def launch_wizard_monitoring(arguments):
+    original_argv = list(sys.argv)
+    sys.argv = [original_argv[0], *arguments]
+    try:
+        main()
+    finally:
+        sys.argv = original_argv
+    return 0
+
+
 # Parses command-line settings and starts the requested GitHub Monitor action
 def main():
     global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE
@@ -7062,7 +7754,7 @@ def main():
     if "--debug" in sys.argv:
         DEBUG_MODE = True
 
-    if "--generate-config" in sys.argv and "--doctor" not in sys.argv:
+    if "--generate-config" in sys.argv and "--doctor" not in sys.argv and "--setup" not in sys.argv:
         config_content = CONFIG_BLOCK.strip("\n") + "\n"
         # Check if a filename was provided after --generate-config
         try:
@@ -7094,8 +7786,9 @@ def main():
 
     stdout_bck = sys.stdout
 
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    if len(sys.argv) > 1 and "--setup" not in sys.argv:
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
 
     parser = argparse.ArgumentParser(
         prog="github_monitor",
@@ -7133,6 +7826,12 @@ def main():
         const=True,
         metavar="FILENAME",
         help="Print default config template and exit (on Windows PowerShell specify a filename to avoid redirect encoding issues)",
+    )
+    conf.add_argument(
+        "--setup",
+        dest="setup",
+        action="store_true",
+        help="Run the interactive setup wizard and save config plus dotenv files",
     )
     conf.add_argument(
         "--env-file",
@@ -7431,8 +8130,19 @@ def main():
     args = parser.parse_args()
 
     if len(sys.argv) == 1:
-        parser.print_help(sys.stderr)
-        sys.exit(1)
+        discovered_config = find_config_file()
+        if discovered_config and not load_config_file(discovered_config):
+            sys.exit(1)
+        sys.exit(run_zero_argument_welcome(parser))
+
+    if args.setup:
+        allowed = {"setup", "config_file", "env_file", "verbose", "debug"}
+        incompatible = [name for name, value in vars(args).items() if name not in allowed and value not in (None, False)]
+        if incompatible:
+            parser.error("--setup can only be combined with --config-file, --env-file, --verbose or --debug")
+        if isinstance(args.env_file, str) and args.env_file.casefold() == "none":
+            parser.error("--setup requires a dotenv destination and cannot use --env-file none")
+        sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, monitor_launcher=launch_wizard_monitoring))
 
     if args.set_github_token and args.set_webhook_url:
         parser.error("--set-github-token cannot be combined with --set-webhook-url")
@@ -7440,7 +8150,7 @@ def main():
     apply_diagnostic_cli_overrides(args)
 
     if args.doctor:
-        incompatible = (args.generate_config, args.set_github_token, args.set_webhook_url, args.send_test_email, args.send_test_webhook, args.list_repos, args.list_starred_repos, args.list_followers_and_followings, args.list_recent_events)
+        incompatible = (args.setup, args.generate_config, args.set_github_token, args.set_webhook_url, args.send_test_email, args.send_test_webhook, args.list_repos, args.list_starred_repos, args.list_followers_and_followings, args.list_recent_events)
         if any(incompatible):
             parser.error("--doctor cannot be combined with setup, listing or one-shot delivery commands")
         sys.exit(run_doctor_preflight(args, parser))

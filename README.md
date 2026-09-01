@@ -133,13 +133,25 @@ If you installed manually, download the newest *[github_monitor.py](https://raw.
 <a id="quick-start"></a>
 ## Quick Start
 
-- Create a [GitHub personal access token](#github-personal-access-token) then validate and save it through the hidden prompt:
+The recommended first run is the guided setup wizard:
+
+```sh
+github_monitor --setup
+```
+
+It asks for the target, polling interval, GitHub authentication, optional email and webhook alerts and output destinations. Answers stay in memory until the complete masked summary is reviewed. Choose **Save** to write non-secret settings to `github_monitor.conf` and private values to a separate mode-0600 `.env` file. Existing destinations receive timestamped mode-0600 backups before replacement.
+
+The wizard validates a newly entered GitHub token before saving it. After saving, it can run the read-only doctor preflight and start monitoring with separate default-no approvals. Every printed command matches a PyPI or standalone script install and includes custom config and dotenv paths.
+
+Run the tool without arguments to see the quickest start, guided setup, doctor and full-help commands. An interactive terminal also offers to launch setup. A non-interactive `--setup` run explains how to use `--generate-config` instead.
+
+For manual setup, create a [GitHub personal access token](#github-personal-access-token) then validate and save it through the hidden prompt:
 
 ```sh
 github_monitor --set-github-token
 ```
 
-Start monitoring the `github_username` activities:
+Start monitoring `github_username`:
 
 ```sh
 github_monitor <github_username>
@@ -148,7 +160,7 @@ github_monitor <github_username>
 Or if you installed [manually](#manual-installation):
 
 ```sh
-python3 github_monitor.py --set-github-token
+python3 github_monitor.py --setup
 python3 github_monitor.py <github_username>
 ```
 
@@ -179,6 +191,8 @@ github_monitor --generate-config github_monitor.conf
 > **IMPORTANT**: On **Windows PowerShell**, using redirection (`>`) can cause the file to be encoded in UTF-16, which will lead to "null bytes" errors when running the tool. It is highly recommended to provide the filename directly as an argument to `--generate-config` to ensure UTF-8 encoding.
 
 Edit the `github_monitor.conf` file and change any desired configuration options (detailed comments are provided for each).
+
+`--setup --config-file PATH --env-file PATH` selects custom wizard destinations. Setup parses an existing config as data and preserves its supported settings. It moves usable secrets found there into the dotenv output. Nothing is written during questioning or section edits. Save validates the complete generated config then prepares both files before replacing either destination.
 
 Startup resolves values in this order:
 
@@ -750,7 +764,7 @@ github_monitor <github_username> --debug
 
 The modes cover the full runtime path:
 
-* Direct HTTP, PyGithub and SMTP operations report their destination and timeout. Credentials are masked inside the printer.
+* Direct HTTP, PyGithub and SMTP operations report their destination and timeout. Every configured credential is rendered as the fixed `<redacted>` marker inside the printer.
 * Exceptions that would otherwise be swallowed name the failed operation and exception type in debug output.
 * Degraded profile, repository, contribution and event checks state which alert cannot fire in verbose output.
 * Email and webhook deliveries report the attempt, response, retryability, wait and confirmed outcome.
