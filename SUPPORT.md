@@ -21,6 +21,8 @@ When an error includes a recovery code, include that code in the report. Re-run 
 
 Doctor checks Environment, Configuration, Authentication, Connectivity, Target, Monitoring and Notifications in a fixed order. It writes no files. Each check has a stable `[PASS]`, `[WARN]`, `[FAIL]` or `[SKIP]` marker plus a fix and guide for every non-pass result.
 
+The Notifications section signs in to the configured SMTP server and validates webhook settings without sending anything. Each ready row lists the alert categories that channel would deliver.
+
 ## Terminal output
 
 Live colour is enabled by `COLORED_OUTPUT` and can be disabled with `--no-color` or `NO_COLOR=1`. It is also disabled for redirected output, piped stdin and terminals with an unset or `dumb` `TERM`. Saved log files never contain ANSI colour sequences.

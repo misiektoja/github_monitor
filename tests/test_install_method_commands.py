@@ -60,7 +60,7 @@ def test_token_setup_uses_install_aware_next_command(gm_module, monkeypatch, cap
     result = gm_module.run_set_github_token(interactive=True, getpass_func=lambda prompt: "private-value", install_context=context)
 
     assert result == str(destination)
-    assert "Start monitoring: /usr/bin/python '/opt/GitHub Monitor/github_monitor.py' GITHUB_USERNAME --env-file '/opt/private settings.env'" in capsys.readouterr().out
+    assert "After Doctor passes, start monitoring:\n    /usr/bin/python '/opt/GitHub Monitor/github_monitor.py' GITHUB_USERNAME --env-file '/opt/private settings.env'" in capsys.readouterr().out
     update.assert_called_once_with(destination, "GITHUB_TOKEN", "private-value")
 
 

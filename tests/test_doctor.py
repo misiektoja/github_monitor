@@ -182,7 +182,7 @@ def test_doctor_healthy_transcript_is_complete(gm_module, monkeypatch):
     assert "[PASS] Required dependency urllib3 is installed" in transcript
     assert "[PASS] GitHub target is accessible" in transcript
     assert "[PASS] Repository feed is accessible" in transcript
-    assert "[PASS] Email alerts are disabled" in transcript
+    assert "[PASS] Email notifications are disabled" in transcript
     assert "[PASS] Webhook alerts are disabled" in transcript
     assert "  All checks passed. You are good to go!" in transcript
     assert "[WARN]" not in transcript
@@ -417,7 +417,7 @@ def test_doctor_notification_checks_gate_disabled_and_invalid_channels(gm_module
     configure_healthy_doctor(gm_module, monkeypatch)
     disabled = gm_module.DoctorReport()
     gm_module.doctor_check_notifications(disabled)
-    assert [check.label for check in disabled.checks] == ["Email alerts are disabled", "Webhook alerts are disabled"]
+    assert [check.label for check in disabled.checks] == ["Email notifications are disabled", "Webhook alerts are disabled"]
     monkeypatch.setattr(gm_module, "PROFILE_NOTIFICATION", True)
     monkeypatch.setattr(gm_module, "WEBHOOK_ENABLED", True)
     monkeypatch.setattr(gm_module, "WEBHOOK_PROFILE_NOTIFICATION", True)
@@ -596,3 +596,53 @@ def test_doctor_warns_about_retired_configuration_settings(gm_module, monkeypatc
     assert any(check.status == "PASS" and check.label == "Configuration file loaded" for check in report.checks)
     warning = next(check for check in report.checks if check.label == "Retired configuration settings were ignored")
     assert warning.status == "WARN" and "OBSOLETE_TEST_SETTING" in warning.detail
+
+
+# Applies a complete email setup so the ready path can be reached without touching a real server
+def configure_email(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.invalid")
+    monkeypatch.setattr(gm_module, "SMTP_PORT", 587)
+    monkeypatch.setattr(gm_module, "SMTP_SSL", True)
+    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.invalid")
+    monkeypatch.setattr(gm_module, "SMTP_PASSWORD", "app-password-placeholder")
+    monkeypatch.setattr(gm_module, "SENDER_EMAIL", "monitor@example.invalid")
+    monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "owner@example.invalid")
+    monkeypatch.setattr(gm_module, "PROFILE_NOTIFICATION", True)
+
+
+# Verifies the email ready row reports the sign-in and the selected alert categories
+def test_the_email_ready_row_reports_the_sign_in_and_the_alerts(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    configure_email(gm_module, monkeypatch)
+    closed = []
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", lambda use_ssl, smtp_timeout=15: SimpleNamespace(quit=lambda: closed.append(True)))
+    report = gm_module.DoctorReport()
+
+    gm_module.doctor_check_notifications(report)
+
+    email_check = report.checks[0]
+    assert email_check.status == "PASS"
+    assert email_check.label == gm_module.SMTP_READY_CHECK_LABEL
+    assert email_check.detail == "Alerts: profile. No email was sent during this passive check"
+    assert report.email_ready is True
+    assert closed == [True]
+
+
+# Verifies a rejected SMTP sign-in fails the check instead of reporting the channel as ready
+def test_a_rejected_smtp_sign_in_fails_the_check(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    configure_email(gm_module, monkeypatch)
+
+    # Raises the rejection the same way a live server would, so the classifier picks the SMTP branch
+    def reject(use_ssl, smtp_timeout=15):
+        raise gm_module.smtplib.SMTPAuthenticationError(535, b"authentication failed")
+
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", reject)
+    report = gm_module.DoctorReport()
+
+    gm_module.doctor_check_notifications(report)
+
+    email_check = report.checks[0]
+    assert email_check.status == "FAIL"
+    assert email_check.fix
+    assert report.email_ready is False

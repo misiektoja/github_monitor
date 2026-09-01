@@ -30,6 +30,10 @@ NOTIFICATION_GUIDE_URL = f"{README_URL}#email-notifications"
 DEBUG_GUIDE_URL = f"{README_URL}#debugging-and-recovery"
 SUPPORT_GUIDE_URL = f"{PROJECT_URL}/blob/main/SUPPORT.md"
 DOCTOR_GUIDE_URL = f"{SUPPORT_GUIDE_URL}#doctor-preflight"
+
+# Shared doctor labels for the two delivery channels, kept identical to the sibling monitors
+SMTP_READY_CHECK_LABEL = "SMTP connection and login succeeded"
+WEBHOOK_READY_CHECK_LABEL = "Webhook URL, headers and alert choices look valid"
 MIN_PYTHON_VERSION = (3, 10)
 
 # ---------------------------
@@ -2564,6 +2568,33 @@ def validate_email_settings(subject="Doctor test", body="Doctor test", body_html
     return None
 
 
+# Closes one SMTP session when there is one, since a failed goodbye must not mask the real result
+def smtp_quit_quietly(smtp_object):
+    if smtp_object is None:
+        return
+    try:
+        smtp_object.quit()
+    except Exception as quit_error:
+        debug_print(f"SMTP quit failed and was ignored error={type(quit_error).__name__}: {quit_error}")
+
+
+# Opens one authenticated SMTP session and leaves closing it to the caller
+def smtp_connect_and_login(use_ssl, smtp_timeout=15):
+    debug_print(f"SMTP delivery attempt=1/1 host={SMTP_HOST} port={SMTP_PORT} timeout={smtp_timeout}s tls={bool(use_ssl)} user={mask_secret(SMTP_USER)} password={mask_secret(SMTP_PASSWORD)}")
+    smtp_object = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
+    try:
+        if use_ssl:
+            smtp_object.starttls(context=ssl.create_default_context())
+        debug_print(f"SMTP connection established host={SMTP_HOST} port={SMTP_PORT}")
+        smtp_object.login(SMTP_USER, SMTP_PASSWORD)
+        debug_print(f"SMTP authentication succeeded host={SMTP_HOST}")
+        return smtp_object
+    except Exception as connect_error:
+        debug_print(f"SMTP session setup failed host={SMTP_HOST} error={type(connect_error).__name__}: {connect_error}")
+        smtp_quit_quietly(smtp_object)
+        raise
+
+
 # Sends email notification
 def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
     validation_error = validate_email_settings(subject, body, body_html)
@@ -2572,16 +2603,7 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
         return 1
 
     try:
-        debug_print(f"SMTP delivery attempt=1/1 host={SMTP_HOST} port={SMTP_PORT} timeout={smtp_timeout}s tls={bool(use_ssl)} user={mask_secret(SMTP_USER)} password={mask_secret(SMTP_PASSWORD)}")
-        if use_ssl:
-            ssl_context = ssl.create_default_context()
-            smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
-            smtpObj.starttls(context=ssl_context)
-        else:
-            smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
-        debug_print(f"SMTP connection established host={SMTP_HOST} port={SMTP_PORT}")
-        smtpObj.login(SMTP_USER, SMTP_PASSWORD)
-        debug_print(f"SMTP authentication succeeded host={SMTP_HOST}")
+        smtpObj = smtp_connect_and_login(use_ssl, smtp_timeout=smtp_timeout)
         email_msg = MIMEMultipart('alternative')
         email_msg["From"] = SENDER_EMAIL
         email_msg["To"] = RECEIVER_EMAIL
@@ -2899,6 +2921,8 @@ def classify_recovery_error(error, context="unknown", install_context=None):
         return make_recovery_advice("auth.github_token_invalid", "GitHub token setup could not be completed", f"Correct the problem then run: {token_command}", False, detail, AUTH_GUIDE_URL)
     if selected_context == "webhook":
         return make_recovery_advice("webhook.invalid", "Webhook setup could not be completed", f"Check the HTTPS destination then run: {webhook_command}", False, detail, NOTIFICATION_GUIDE_URL)
+    if selected_context == "email":
+        return make_recovery_advice("smtp.configuration", "The SMTP server could not be reached", "Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", True, detail, NOTIFICATION_GUIDE_URL)
     if selected_context == "config":
         # The parser already names the line and setting, so the summary carries it instead of only --debug
         reason = sanitize_error_text(error)
@@ -5727,15 +5751,17 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     except Exception as exc:
         debug_print(f"Private settings file update failed path={destination} key=GITHUB_TOKEN error={type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError(f"Could not save GITHUB_TOKEN in '{destination}'. Check the path and file permissions") from None
-    command = ["GITHUB_USERNAME"]
+    paths = []
     if config_path:
-        command.extend(("--config-file", str(config_path)))
-    command.extend(("--env-file", str(destination)))
+        paths.extend(("--config-file", str(config_path)))
+    paths.extend(("--env-file", str(destination)))
     if api_url is not None:
-        command.extend(("--github-url", str(api_url)))
+        paths.extend(("--github-url", str(api_url)))
     print(f"* GitHub token validation succeeded for user: {login}")
     print(f"* Updated private settings file: {destination}")
-    print(f"* Start monitoring: {render_install_command(command, install_context)}")
+    print()
+    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor", "GITHUB_USERNAME"] + paths, install_context))
+    _wizard_print_command(sys.stdout, "After Doctor passes, start monitoring:", render_install_command(["GITHUB_USERNAME"] + paths, install_context))
     return str(destination)
 
 
@@ -5766,13 +5792,15 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
     if not validate_webhook_url(webhook_url):
         raise ValueError("That does not look like a complete HTTPS webhook URL and the dotenv file was not changed")
     update_dotenv_value(destination, "WEBHOOK_URL", webhook_url)
-    command = ["--send-test-webhook"]
+    paths = []
     if config_path:
-        command.extend(("--config-file", str(config_path)))
-    command.extend(("--env-file", str(destination)))
+        paths.extend(("--config-file", str(config_path)))
+    paths.extend(("--env-file", str(destination)))
     print("* Webhook URL looks valid")
     print(f"* Updated private settings file: {destination}")
-    print(f"* Send a test webhook: {render_install_command(command, install_context)}")
+    print()
+    _wizard_print_command(sys.stdout, "Send a test webhook:", render_install_command(["--send-test-webhook"] + paths, install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor", "GITHUB_USERNAME"] + paths, install_context))
     return str(destination)
 
 
@@ -7501,19 +7529,33 @@ def webhook_provider_display_name(provider=None):
     return "Discord" if normalized == "discord" else "ntfy" if normalized == "ntfy" else sanitize_error_text(selected)
 
 
+# Confirms the SMTP sign-in without sending anything, so a rejected login is reported before monitoring starts
+def doctor_add_smtp_login_check(report):
+    smtp_object = None
+    try:
+        smtp_object = smtp_connect_and_login(SMTP_SSL, smtp_timeout=5)
+    except Exception as exc:
+        advice = classify_recovery_error(exc, "email")
+        report.add("Notifications", "FAIL", advice.summary, advice.detail, advice.fix, advice.guide_url or NOTIFICATION_GUIDE_URL)
+        return
+    finally:
+        smtp_quit_quietly(smtp_object)
+    report.email_ready = True
+    report.add("Notifications", "PASS", SMTP_READY_CHECK_LABEL, f"Alerts: {', '.join(_startup_email_notification_categories())}. No email was sent during this passive check")
+
+
 # Adds channel readiness checks and stores structural delivery-test readiness
 def doctor_check_notifications(report):
     if not doctor_email_alerts_enabled():
-        report.add("Notifications", "PASS", "Email alerts are disabled")
+        report.add("Notifications", "PASS", "Email notifications are disabled", "No SMTP connection was attempted and no email was sent")
     else:
         email_error = validate_email_settings()
         if email_error is not None:
             report.add("Notifications", "WARN", "Email alerts are enabled but unusable", email_error, "Correct SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL", NOTIFICATION_GUIDE_URL)
         else:
-            report.email_ready = True
-            report.add("Notifications", "PASS", "Email server, credentials and recipient look valid", f"Destination: {RECEIVER_EMAIL}")
+            doctor_add_smtp_login_check(report)
     if not WEBHOOK_ENABLED:
-        report.add("Notifications", "PASS", "Webhook alerts are disabled")
+        report.add("Notifications", "PASS", "Webhook alerts are disabled", "No webhook was sent")
         return
     selected_webhook_types = any((WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION))
     if not selected_webhook_types and not WEBHOOK_ERROR_NOTIFICATION:
@@ -7533,7 +7575,7 @@ def doctor_check_notifications(report):
         report.add("Notifications", "WARN", "Webhook headers are invalid", header_error, "Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", NOTIFICATION_GUIDE_URL)
     else:
         report.webhook_ready = True
-        report.add("Notifications", "PASS", f"Webhook URL, headers and alert choices look valid for {webhook_provider_display_name()}", f"Destination host: {diagnostic_endpoint(WEBHOOK_URL, host_only=True)}")
+        report.add("Notifications", "PASS", f"{WEBHOOK_READY_CHECK_LABEL} for {webhook_provider_display_name()}", f"Alerts: {', '.join(_startup_webhook_notification_categories())}. The private link was not displayed. No webhook was sent during this passive check")
 
 
 # Sanitizes one doctor field and keeps it on a single output-contract line
@@ -7732,9 +7774,9 @@ def _wizard_summary_value(label, value):
         return colorize("duration", text)
     if label in ("GitHub API",):
         return colorize("url", text)
-    if text.startswith("Enabled"):
+    if text.startswith("enabled") or text == "complete":
         return colorize("boolean_true", text)
-    if text == "Disabled":
+    if text in ("disabled", "incomplete"):
         return colorize("boolean_false", text)
     return text
 
@@ -8151,11 +8193,18 @@ def wizard_collect_all(state, input_func=input, getpass_func=None, stream=None, 
     wizard_collect_destinations(state, input_func, stream)
 
 
+# Returns the alert categories one answer set enables, using the same labels the startup summary prints
+def _wizard_notification_categories(values, prefix=""):
+    labels = (("PROFILE_NOTIFICATION", "profile"), ("EVENT_NOTIFICATION", "events"), ("REPO_NOTIFICATION", "repositories"), ("REPO_UPDATE_DATE_NOTIFICATION", "repository updates"), ("CONTRIB_NOTIFICATION", "contributions"), ("ERROR_NOTIFICATION", "errors"))
+    return [label for name, label in labels if values.get(prefix + name)]
+
+
 # Renders one complete masked setup summary before any file is changed
 def wizard_render_summary(state, stream=None):
     destination = sys.stdout if stream is None else stream
-    email_enabled = any(state.values[name] for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"))
-    webhook_enabled = bool(state.values["WEBHOOK_ENABLED"])
+    email_categories = _wizard_notification_categories(state.values)
+    webhook_categories = _wizard_notification_categories(state.values, "WEBHOOK_") if state.values["WEBHOOK_ENABLED"] else []
+    webhook_state = f"enabled ({webhook_provider_display_name(state.values['WEBHOOK_PROVIDER'])})" if state.values["WEBHOOK_ENABLED"] else "disabled"
     _wizard_heading(destination, "Setup summary", "header")
     rows = [
         ("Target", state.target),
@@ -8163,10 +8212,12 @@ def wizard_render_summary(state, stream=None):
         ("Polling interval", wizard_format_duration(state.values["GITHUB_CHECK_INTERVAL"])),
         ("GitHub API", state.values["GITHUB_API_URL"]),
         ("Authentication status", "complete" if state.authentication_complete else "incomplete"),
-        ("Email", "Enabled" if email_enabled else "Disabled"),
-        ("Webhook", f"Enabled through {'Discord' if state.values['WEBHOOK_PROVIDER'] == 'discord' else 'ntfy'}" if webhook_enabled else "Disabled"),
-        ("Output log", "Enabled" if not state.values["DISABLE_LOGGING"] else "Disabled"),
-        ("CSV output", state.values["CSV_FILE"] or "Disabled"),
+        ("Email", "enabled" if email_categories else "disabled"),
+        ("Email notifications", ", ".join(email_categories) if email_categories else "none"),
+        ("Webhook", webhook_state),
+        ("Webhook alerts", ", ".join(webhook_categories) if webhook_categories else "none"),
+        ("Output log", "enabled" if not state.values["DISABLE_LOGGING"] else "disabled"),
+        ("CSV output", state.values["CSV_FILE"] or "disabled"),
         ("Config destination", state.config_path),
         ("Dotenv destination", state.dotenv_path),
         ("Install method", state.install_context.install_method),
