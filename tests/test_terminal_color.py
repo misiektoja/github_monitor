@@ -24,17 +24,17 @@ def run_cli(*arguments):
 # Verifies the selected GitHub banner remains exact and version independent
 def test_selected_banner_exact_content():
     assert monitor.STARTUP_BANNER == r"""
- .---------------.       ____ _ _   _   _       _
-|     /\_/\      |   / ___(_) |_| | | |_   _| |__
+ .---------------.     ____ _ _   _   _       _
+|     /\_/\      |    / ___(_) |_| | | |_   _| |__
 |    ( o.o )     |   | |  _| | __| |_| | | | | '_ \
 |     > ^ <      |   | |_| | | |_|  _  | |_| | |_) |
 |    /     \     |    \____|_|\__|_| |_|\__,_|_.__/
  '---------------'
-                     __  __             _ _
-                    |  \/  | ___  _ __ (_) |_ ___  _ __
-                    | |\/| |/ _ \| '_ \| | __/ _ \| '__|
-                    | |  | | (_) | | | | | || (_) | |
-                    |_|  |_|\___/|_| |_|_|\__\___/|_|"""
+                      __  __             _ _
+                     |  \/  | ___  _ __ (_) |_ ___  _ __
+                     | |\/| |/ _ \| '_ \| | __/ _ \| '__|
+                     | |  | | (_) | | | | | || (_) | |
+                     |_|  |_|\___/|_| |_|_|\__\___/|_|"""
 
 
 # Verifies the art is portable, bounded and free of trailing whitespace
@@ -43,6 +43,28 @@ def test_banner_ascii_width_and_whitespace():
     lines = monitor.STARTUP_BANNER.splitlines()
     assert max(map(len, lines)) <= 90
     assert all(line == line.rstrip() for line in lines)
+
+
+# Verifies the GitHub wordmark matches the standard FIGlet rows at the shared body column
+def test_banner_github_wordmark_rows():
+    assert [line[21:] for line in monitor.STARTUP_BANNER.splitlines()[1:6]] == [
+        "  ____ _ _   _   _       _",
+        " / ___(_) |_| | | |_   _| |__",
+        "| |  _| | __| |_| | | | | '_ \\",
+        "| |_| | | |_|  _  | |_| | |_) |",
+        " \\____|_|\\__|_| |_|\\__,_|_.__/",
+    ]
+
+
+# Verifies the Monitor wordmark matches the standard FIGlet rows at the shared body column
+def test_banner_monitor_wordmark_rows():
+    assert [line[21:] for line in monitor.STARTUP_BANNER.splitlines()[7:12]] == [
+        " __  __             _ _",
+        "|  \\/  | ___  _ __ (_) |_ ___  _ __",
+        "| |\\/| |/ _ \\| '_ \\| | __/ _ \\| '__|",
+        "| |  | | (_) | | | | | || (_) | |",
+        "|_|  |_|\\___/|_| |_|_|\\__\\___/|_|",
+    ]
 
 
 # Verifies the printed version stays dynamic and followed by one blank line
@@ -56,8 +78,8 @@ def test_banner_dynamic_version_line(monkeypatch, capsys):
 # Verifies GitHub, Monitor and the version share the same body column
 def test_banner_version_alignment():
     banner_lines = monitor.STARTUP_BANNER.splitlines()
-    github_body_column = banner_lines[2].index("/ ___")
-    monitor_body_indent = len(banner_lines[7]) - len(banner_lines[7].lstrip())
+    github_body_column = banner_lines[3].index("| |  _")
+    monitor_body_indent = len(banner_lines[8]) - len(banner_lines[8].lstrip())
     version_indent = len(" " * 21) - len((" " * 21).lstrip())
     assert github_body_column == monitor_body_indent == version_indent
 
