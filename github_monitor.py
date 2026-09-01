@@ -4486,7 +4486,7 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
 
         tz = pytz.timezone(LOCAL_TIMEZONE)
         start_w = current_start - dt.timedelta(days=1)
-        end_w_exclusive = chunk_end + dt.timedelta(days=2)
+        end_w_exclusive = chunk_end + dt.timedelta(days=1)
         start_iso = tz.localize(dt.datetime.combine(start_w, dt.time.min)).isoformat()
         end_iso = tz.localize(dt.datetime.combine(end_w_exclusive, dt.time.min)).isoformat()
 

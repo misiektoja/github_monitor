@@ -460,7 +460,7 @@ If you want to track user's daily contributions then use the `-m` flag:
 github_monitor github_username -m
 ```
 
-Daily contribution checks read the requested day from a wider 30-day GitHub calendar window. This avoids transient partial counts that narrow GraphQL windows can return.
+Daily contribution checks read the requested day from a wider 30-day GitHub calendar window that ends at the following midnight. This avoids transient partial counts that narrow or farther-future GraphQL windows can return.
 
 If for any reason you do not want to monitor GitHub events for the user (e.g. new pushes, PRs, issues, forks, releases etc.), then use the `-k` flag:
 
