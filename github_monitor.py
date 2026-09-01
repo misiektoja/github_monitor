@@ -317,11 +317,13 @@ HORIZONTAL_LINE2 = 80
 CLEAR_SCREEN = True
 
 # Whether output includes user-facing decisions, degraded features and complete startup settings
-# Can also be enabled via --verbose
+# Independent of DEBUG_MODE, so enable both to see everything
+# Can also be enabled via --verbose, which turns it on regardless of this setting
 VERBOSE_MODE = False
 
 # Whether output includes sanitized operations, requests, files, retries and poll timing
-# Can also be enabled via --debug
+# Independent of VERBOSE_MODE, so enable both to see everything
+# Can also be enabled via --debug, which turns it on regardless of this setting
 DEBUG_MODE = False
 
 # Maximum number of times to retry a failed GitHub API/network call
