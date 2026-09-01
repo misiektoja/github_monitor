@@ -3042,6 +3042,44 @@ def startup_secret_buckets():
     return from_dotenv, from_environment, from_config
 
 
+# Renders the --help examples: one heading per task, then a comment and the command it describes
+def render_help_examples(groups, guide_url):
+    blocks = []
+    for title, entries in groups:
+        block = [f"{title}:"]
+        for comment, command in entries:
+            if len(block) > 1:
+                block.append("")
+            block.extend(f"  # {line}" for line in comment.split("\n"))
+            if command:
+                block.append(f"  {command}")
+        blocks.append("\n".join(block))
+    return "Examples:\n\n" + "\n\n".join(blocks) + f"\n\nGuide: {guide_url}\n"
+
+
+# Returns the --help epilog, listing the commands worth knowing rather than every command there is
+def help_examples():
+    prefix = render_install_command([], exact=False)
+    groups = (
+        ("Getting started", (
+            ("Guided setup, recommended for the first run", f"{prefix} --setup"),
+            ("Or save a GitHub token through a hidden prompt", f"{prefix} --set-github-token"),
+            ("Check the setup before relying on it", f"{prefix} --doctor <github_target>"),
+            ("Start monitoring", f"{prefix} <github_target>"),
+        )),
+        ("Notifications", (
+            ("Email on profile changes and new events", f"{prefix} <github_target> -p -s"),
+            ("Send one test email", f"{prefix} --send-test-email"),
+            ("Send one test webhook", f"{prefix} --send-test-webhook"),
+        )),
+        ("Information and diagnostics", (
+            ("List the user's repositories with stats", f"{prefix} -r <github_target>"),
+            ("Trace what the tool is doing", f"{prefix} <github_target> --debug"),
+        )),
+    )
+    return render_help_examples(groups, QUICK_START_GUIDE_URL)
+
+
 # Builds concise and complete startup rows without exposing private values
 def build_startup_summary(target, config_path, env_path, output_path):
     install_context = detect_install_context()
@@ -8687,7 +8725,8 @@ def main():
 
     parser = argparse.ArgumentParser(
         prog="github_monitor",
-        description=(f"Monitor a GitHub user's profile and activity with customizable email alerts [ {PROJECT_URL}/ ]"), formatter_class=argparse.RawTextHelpFormatter
+        description=(f"Monitor a GitHub user's profile and activity with customizable email or webhook alerts [ {PROJECT_URL}/ ]"), formatter_class=argparse.RawTextHelpFormatter,
+        epilog=help_examples()
     )
 
     # Positional
@@ -8741,22 +8780,27 @@ def main():
         help="Path to optional dotenv file (auto-search if not set, disable with 'none')",
     )
     conf.add_argument(
+        "--set-github-token",
+        dest="set_github_token",
+        action="store_true",
+        help="Validate and save a GitHub token through a hidden prompt",
+    )
+    conf.add_argument(
         "--set-webhook-url",
         dest="set_webhook_url",
         action="store_true",
         help="Save a Discord or ntfy webhook URL through a hidden prompt",
     )
+    conf.add_argument(
+        "--doctor",
+        dest="doctor",
+        action="store_true",
+        help="Run a comprehensive read-only setup preflight and exit",
+    )
 
     # API settings
     creds = parser.add_argument_group("API settings")
-    token_input = creds.add_mutually_exclusive_group()
-    token_input.add_argument(
-        "--set-github-token",
-        dest="set_github_token",
-        action="store_true",
-        help="Validate and save a GitHub token through a hidden prompt"
-    )
-    token_input.add_argument(
+    creds.add_argument(
         "-t", "--github-token",
         dest="github_token",
         metavar="GITHUB_TOKEN",
@@ -8772,7 +8816,7 @@ def main():
     )
 
     # Notifications
-    notify = parser.add_argument_group("Notifications")
+    notify = parser.add_argument_group("Email notifications")
     notify.add_argument(
         "-p", "--notify-profile",
         dest="notify_profile",
@@ -8919,7 +8963,7 @@ def main():
     )
 
     # Listing
-    listing = parser.add_argument_group("Listing")
+    listing = parser.add_argument_group("User information & listing")
     listing.add_argument(
         "-r", "--list-repos",
         dest="list_repos",
@@ -8958,12 +9002,6 @@ def main():
 
     # Features & output
     opts = parser.add_argument_group("Features & output")
-    opts.add_argument(
-        "--doctor",
-        dest="doctor",
-        action="store_true",
-        help="Run a comprehensive read-only setup preflight and exit"
-    )
     opts.add_argument(
         "-j", "--track-repos-changes",
         dest="track_repos_changes",
@@ -9058,6 +9096,9 @@ def main():
         if isinstance(args.env_file, str) and args.env_file.casefold() == "none":
             parser.error("--setup requires a dotenv destination and cannot use --env-file none")
         sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, monitor_launcher=launch_wizard_monitoring, show_banner=False))
+
+    if args.set_github_token and args.github_token:
+        parser.error("--set-github-token cannot be combined with -t/--github-token")
 
     if args.set_github_token and args.set_webhook_url:
         parser.error("--set-github-token cannot be combined with --set-webhook-url")

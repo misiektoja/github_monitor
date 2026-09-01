@@ -114,4 +114,4 @@ def test_command_help_lists_private_github_token_setup():
 def test_private_token_setup_rejects_runtime_token_argument():
     result = subprocess.run([sys.executable, str(PROJECT_ROOT / "github_monitor.py"), "--set-github-token", "--github-token", "github_pat_private"], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
     assert result.returncode == 2
-    assert "not allowed with argument" in result.stderr
+    assert "--set-github-token cannot be combined with -t/--github-token" in result.stderr
