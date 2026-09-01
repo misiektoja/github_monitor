@@ -10,6 +10,7 @@ The distributed package contains no vendored third-party source. It declares the
 | --- | --- | --- |
 | [PyGithub](https://pypi.org/project/PyGithub/) | LGPL-3.0 | GitHub REST API client for profile, repository and event retrieval |
 | [requests](https://pypi.org/project/requests/) | Apache-2.0 | HTTP for the monitored service, notifications and artwork |
+| [urllib3](https://pypi.org/project/urllib3/) | MIT | Network exception handling shared with Requests and PyGithub |
 | [python-dateutil](https://pypi.org/project/python-dateutil/) | Apache-2.0 or BSD-3-Clause | Timestamp parsing and relative date arithmetic |
 | [pytz](https://pypi.org/project/pytz/) | MIT | Timezone conversion for displayed and logged times |
 | [tzlocal](https://pypi.org/project/tzlocal/) | MIT | Local timezone detection |

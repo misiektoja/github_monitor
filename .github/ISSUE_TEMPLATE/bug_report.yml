@@ -27,6 +27,15 @@ body:
       required: true
 
   - type: textarea
+    id: doctor-output
+    attributes:
+      label: Doctor preflight output
+      description: Run `github_monitor <github_username> --doctor` and paste its complete sanitized output. Review target names, paths and recipient addresses before posting.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
     id: logs
     attributes:
       label: Relevant log output

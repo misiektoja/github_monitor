@@ -4,17 +4,24 @@ Start with the [README](README.md). [Requirements](README.md#requirements), [Ins
 
 ## Check your setup first
 
-Confirm which version you are running and that the notification channels actually work, then include the results when you ask:
+Confirm which version you are running then run the complete read-only preflight for the affected target:
 
 ```sh
 github_monitor --version
-github_monitor --send-test-email
-github_monitor --send-test-webhook
+github_monitor <github_username> --doctor
 ```
 
-Most reports come down to an expired or under-scoped GitHub token, an SMTP server that rejects the message or a webhook URL the provider no longer accepts. The test commands above tell those apart before anything else.
+Most reports come down to an expired or under-scoped GitHub token, an unreachable target, invalid output permissions, an SMTP setup that cannot deliver or a webhook destination the provider no longer accepts. Doctor tells those apart in one report.
 
 When an error includes a recovery code, include that code in the report. Re-run the failing command with `--verbose` to show decisions and unavailable alerts. Use `--debug` when the report also needs request, delivery, file, retry or poll timing details. Technical detail is sanitized but you should still review copied output before posting it publicly.
+
+## Doctor preflight
+
+Doctor checks Environment, Configuration, Authentication, Connectivity, Target, Monitoring and Notifications in a fixed order. It writes no files. Each check has a stable `[PASS]`, `[WARN]`, `[FAIL]` or `[SKIP]` marker plus a fix and guide for every non-pass result.
+
+A normal non-interactive run sends no messages. When a configured channel is ready and stdin is interactive, doctor offers a separate default-no prompt for one real email and one real webhook. Declining records `[SKIP]`. An approved delivery failure records `[FAIL]` and makes the command exit with status `1`.
+
+Include the complete sanitized doctor report in a bug report. Review target names, paths and recipient addresses before posting even though credential values are redacted.
 
 ## Where to ask
 

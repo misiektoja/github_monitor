@@ -26,6 +26,8 @@ AUTH_GUIDE_URL = f"{README_URL}#github-personal-access-token"
 NOTIFICATION_GUIDE_URL = f"{README_URL}#email-notifications"
 DEBUG_GUIDE_URL = f"{README_URL}#debugging-and-recovery"
 SUPPORT_GUIDE_URL = f"{PROJECT_URL}/blob/main/SUPPORT.md"
+DOCTOR_GUIDE_URL = f"{SUPPORT_GUIDE_URL}#doctor-preflight"
+MIN_PYTHON_VERSION = (3, 10)
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -426,10 +428,82 @@ nl_ch = "\n"
 
 
 import sys
+import importlib.util
+import shlex
 
-if sys.version_info < (3, 10):
+
+# Renders an environment-only doctor report when Python cannot run the full module
+def bootstrap_doctor_python_report(stream=None):
+    if sys.version_info >= MIN_PYTHON_VERSION:
+        return None
+    destination = sys.stdout if stream is None else stream
+    version = ".".join(str(part) for part in sys.version_info[:3])
+    minimum = ".".join(str(part) for part in MIN_PYTHON_VERSION)
+    install_command = f"Install Python {minimum} or newer"
+    destination.write(f"GitHub Monitoring Tool v{VERSION}\n\n")
+    destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
+    destination.write(f"Doctor\n\nEnvironment\n[FAIL] Python {version} is unsupported\n  Minimum supported version: {minimum}\nTo fix: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
+    destination.write(f"\nSummary\n  1 check(s) failed, 0 warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
+    destination.flush()
+    return 1
+
+
+if sys.version_info < MIN_PYTHON_VERSION:
+    if "--doctor" in sys.argv:
+        sys.exit(bootstrap_doctor_python_report())
     print("* Error: Python version 3.10 or higher required !")
     sys.exit(1)
+
+
+# Renders an environment-only doctor report when required imports prevent full startup
+def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
+    finder = importlib.util.find_spec if module_finder is None else module_finder
+    required = (("requests", "requests"), ("urllib3", "urllib3"), ("python-dateutil", "dateutil"), ("pytz", "pytz"), ("PyGithub", "github"))
+    optional = (("python-dotenv", "dotenv", "dotenv discovery and loading"), ("tzlocal", "tzlocal", "automatic timezone detection"))
+    availability = {}
+    for package_name, module_name in required:
+        try:
+            availability[package_name] = finder(module_name) is not None
+        except (ImportError, AttributeError, ValueError):
+            availability[package_name] = False
+    if all(availability.values()):
+        return None
+    destination = sys.stdout if stream is None else stream
+    destination.write(f"GitHub Monitoring Tool v{VERSION}\n\n")
+    destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
+    destination.write("Doctor\n\nEnvironment\n")
+    version = ".".join(str(part) for part in sys.version_info[:3])
+    minimum = ".".join(str(part) for part in MIN_PYTHON_VERSION)
+    destination.write(f"[PASS] Python {version} is supported\n  Minimum supported version: {minimum}\n")
+    failures = 0
+    warnings = 0
+    for package_name, _ in required:
+        if availability[package_name]:
+            destination.write(f"[PASS] Required dependency {package_name} is installed\n")
+        else:
+            failures += 1
+            install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
+            destination.write(f"[FAIL] Required dependency {package_name} is missing\n  The full preflight cannot continue without this package\nTo fix: Install it with: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
+    for package_name, module_name, feature in optional:
+        try:
+            available = finder(module_name) is not None
+        except (ImportError, AttributeError, ValueError):
+            available = False
+        if available:
+            destination.write(f"[PASS] Optional dependency {package_name} is installed\n  Used only for {feature}\n")
+        else:
+            warnings += 1
+            install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
+            destination.write(f"[WARN] Optional dependency {package_name} is not installed\n  {feature.capitalize()} will not work while other features remain available\nTo fix: Install it with: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
+    destination.write(f"\nSummary\n  {failures} check(s) failed, {warnings} warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
+    destination.flush()
+    return 1
+
+
+if "--doctor" in sys.argv and not any(flag in sys.argv for flag in ("--help", "-h", "--version")):
+    bootstrap_doctor_exit = bootstrap_doctor_dependency_report()
+    if bootstrap_doctor_exit is not None:
+        sys.exit(bootstrap_doctor_exit)
 
 import time
 import os
@@ -447,9 +521,8 @@ from email.mime.text import MIMEText
 import argparse
 import ast
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import getpass
-import shlex
 import subprocess
 try:
     import pytz
@@ -1910,40 +1983,37 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
     return result
 
 
-# Sends email notification
-def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
+# Validates the shared SMTP destination, credentials and message fields
+def validate_email_settings(subject="Doctor test", body="Doctor test", body_html=""):
     fqdn_re = re.compile(r'(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}\.?$)')
     email_re = re.compile(r'[^@]+@[^@]+\.[^@]+')
-
     try:
         ipaddress.ip_address(str(SMTP_HOST))
     except ValueError:
         if not fqdn_re.search(str(SMTP_HOST)):
-            print("Error sending email - SMTP settings are incorrect (invalid IP address/FQDN in SMTP_HOST)")
-            return 1
-
+            return "SMTP_HOST must be a valid IP address or fully qualified domain name"
     try:
         port = int(SMTP_PORT)
         if not (1 <= port <= 65535):
             raise ValueError
     except ValueError:
-        print("Error sending email - SMTP settings are incorrect (invalid port number in SMTP_PORT)")
-        return 1
-
+        return "SMTP_PORT must be a number from 1 through 65535"
     if not email_re.search(str(SENDER_EMAIL)) or not email_re.search(str(RECEIVER_EMAIL)):
-        print("Error sending email - SMTP settings are incorrect (invalid email in SENDER_EMAIL or RECEIVER_EMAIL)")
-        return 1
-
+        return "SENDER_EMAIL and RECEIVER_EMAIL must be valid email addresses"
     if not SMTP_USER or not isinstance(SMTP_USER, str) or SMTP_USER == "your_smtp_user" or not SMTP_PASSWORD or not isinstance(SMTP_PASSWORD, str) or SMTP_PASSWORD == "your_smtp_password":
-        print("Error sending email - SMTP settings are incorrect (check SMTP_USER & SMTP_PASSWORD variables)")
-        return 1
-
+        return "SMTP_USER and SMTP_PASSWORD must contain usable credentials"
     if not subject or not isinstance(subject, str):
-        print("Error sending email - SMTP settings are incorrect (subject is not a string or is empty)")
-        return 1
-
+        return "The email subject must be a non-empty string"
     if not body and not body_html:
-        print("Error sending email - SMTP settings are incorrect (body and body_html cannot be empty at the same time)")
+        return "The email body and HTML body cannot both be empty"
+    return None
+
+
+# Sends email notification
+def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
+    validation_error = validate_email_settings(subject, body, body_html)
+    if validation_error is not None:
+        print(f"Error sending email - SMTP settings are incorrect ({validation_error})")
         return 1
 
     try:
@@ -4755,7 +4825,7 @@ def describe_retired_settings(names, quoted_path):
 
 
 # Loads a config file as data and applies only recognized literal settings
-def load_config_file(config_path, namespace=None, report_errors=True, loaded_names_out=None, diagnostic_overrides=None):
+def load_config_file(config_path, namespace=None, report_errors=True, loaded_names_out=None, diagnostic_overrides=None, error_out=None, retired_names_out=None):
     selected_namespace = globals() if namespace is None else namespace
     retired_settings = []
     try:
@@ -4773,6 +4843,8 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
                 selected_namespace["DEBUG_MODE"] = True
         if loaded_names_out is not None:
             loaded_names_out.update(parsed_values)
+        if retired_names_out is not None:
+            retired_names_out.update(retired_settings)
         if retired_settings and report_errors:
             print(f"* Note: {describe_retired_settings(retired_settings, chr(39) + str(config_path) + chr(39))}")
         debug_print(f"Configuration applied path={config_path} settings={len(parsed_values)} retired={len(retired_settings)}")
@@ -4793,6 +4865,8 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
     except Exception as exc:
         detail = f"Config file '{config_path}' failed with {type(exc).__name__}: {exc}"
     debug_print(f"Configuration load failed path={config_path} detail={detail}")
+    if error_out is not None:
+        error_out.append(detail)
     if report_errors:
         config_command = render_install_command(["--generate-config", "github_monitor.conf"])
         advice = make_recovery_advice("config.invalid", detail, f"Keep only documented SETTING = value lines with plain literal values or regenerate with: {config_command}", False, detail, CONFIG_GUIDE_URL)
@@ -4801,7 +4875,7 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
 
 
 # Loads the selected dotenv file then applies every exported secret independently of that file
-def load_startup_secrets(env_file=None, configured_settings=None):
+def load_startup_secrets(env_file=None, configured_settings=None, report_errors=True, errors_out=None):
     global DOTENV_FILE, SECRET_SOURCES
     if env_file is not None:
         DOTENV_FILE = os.path.expanduser(env_file)
@@ -4822,7 +4896,11 @@ def load_startup_secrets(env_file=None, configured_settings=None):
                 env_path = DOTENV_FILE
                 if not os.path.isfile(env_path):
                     debug_print(f"Dotenv file not found path={env_path}")
-                    print(f"* Warning: dotenv file '{env_path}' does not exist\n")
+                    detail = f"Dotenv file '{env_path}' does not exist"
+                    if errors_out is not None:
+                        errors_out.append(detail)
+                    if report_errors:
+                        print(f"* Warning: {detail}\n")
                 else:
                     debug_print(f"Reading dotenv file path={env_path}")
                     dotenv_keys = {str(name) for name in dotenv_values(env_path) if name in SECRET_KEYS}
@@ -4842,12 +4920,19 @@ def load_startup_secrets(env_file=None, configured_settings=None):
             env_path = DOTENV_FILE if DOTENV_FILE else None
             if env_path:
                 install_command = shlex.join([sys.executable, "-m", "pip", "install", "python-dotenv"])
-                print(f"* Warning: Cannot load dotenv file '{env_path}' because 'python-dotenv' is not installed\n\nTo install it, run:\n    {install_command}\n\nOnce installed, re-run this tool\n")
+                detail = f"Cannot load dotenv file '{env_path}' because python-dotenv is not installed"
+                if errors_out is not None:
+                    errors_out.append(detail)
+                if report_errors:
+                    print(f"* Warning: {detail}\n\nTo install it, run:\n    {install_command}\n\nOnce installed, re-run this tool\n")
         except Exception as exc:
             env_path = DOTENV_FILE if DOTENV_FILE else None
             verbose_degraded_feature("Dotenv loading", "dotenv-based private settings", exc)
             advice = make_recovery_advice("file.unreadable", "The dotenv file could not be read", "Check DOTENV_FILE and its permissions or disable it with --env-file none", False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
-            print_recovery_advice(advice)
+            if errors_out is not None:
+                errors_out.append(advice.summary + f": {advice.detail}")
+            if report_errors:
+                print_recovery_advice(advice)
 
     SECRET_SOURCES = {}
     for secret in SECRET_KEYS:
@@ -4860,6 +4945,8 @@ def load_startup_secrets(env_file=None, configured_settings=None):
             SECRET_SOURCES[secret] = "dotenv file"
         elif secret in configured_names and globals().get(secret):
             SECRET_SOURCES[secret] = "configuration file"
+        elif isinstance(globals().get(secret), str) and globals().get(secret) and not globals().get(secret).startswith("your_"):
+            SECRET_SOURCES[secret] = "built-in configuration"
     if SECRET_SOURCES:
         for secret, source in SECRET_SOURCES.items():
             debug_print(f"Secret resolution name={secret} source={source}")
@@ -4967,11 +5054,7 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
     selected_api_url = GITHUB_API_URL if api_url is None else api_url
     if not isinstance(selected_api_url, str) or not selected_api_url.strip():
         raise GitHubTokenConfigurationError("GITHUB_API_URL is empty and the dotenv file was not changed")
-    try:
-        parsed_api_url = urlsplit(selected_api_url.strip())
-    except ValueError:
-        parsed_api_url = None
-    if parsed_api_url is None or parsed_api_url.scheme.casefold() != "https" or not parsed_api_url.hostname or parsed_api_url.username or parsed_api_url.password or parsed_api_url.query or parsed_api_url.fragment:
+    if not validate_github_endpoint_url(selected_api_url):
         raise GitHubTokenConfigurationError("GITHUB_API_URL must be a complete HTTPS URL without embedded credentials, query parameters or fragments")
     endpoint = selected_api_url.strip().rstrip("/") + "/user"
     headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {selected_token}", "User-Agent": f"GitHubMonitor/{VERSION}"}
@@ -6306,7 +6389,7 @@ def github_monitor_user(user, csv_file_name):
 
 
 # Applies validated one-run webhook command-line overrides to runtime settings
-def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser, report_warnings=True) -> None:
     global WEBHOOK_ENABLED, WEBHOOK_URL, WEBHOOK_PROVIDER, WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_ERROR_NOTIFICATION, SECRET_SOURCES
     if args.webhook_provider is not None:
         WEBHOOK_PROVIDER = str(args.webhook_provider)
@@ -6344,7 +6427,630 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
         if detected_provider and detected_provider != configured_provider:
             WEBHOOK_PROVIDER = detected_provider
             verbose_print(f"Selected webhook provider {detected_provider} from the destination URL")
-            print(f"* Warning: Configured webhook provider did not match the URL. Using {detected_provider}.")
+            if report_warnings:
+                print(f"* Warning: Configured webhook provider did not match the URL. Using {detected_provider}.")
+
+
+# Applies monitoring, output and email command-line overrides to effective settings
+def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser, strict=True) -> None:
+    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_CHECK_COUNTER, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
+    if args.check_interval is not None:
+        GITHUB_CHECK_INTERVAL = args.check_interval
+    if args.csv_file is not None:
+        CSV_FILE = os.path.expanduser(args.csv_file)
+    elif CSV_FILE:
+        CSV_FILE = os.path.expanduser(CSV_FILE)
+    if args.disable_logging is True:
+        DISABLE_LOGGING = True
+    if args.notify_profile is True:
+        PROFILE_NOTIFICATION = True
+    if args.notify_events is True:
+        EVENT_NOTIFICATION = True
+    if args.notify_repo_changes is True:
+        REPO_NOTIFICATION = True
+    if args.notify_repo_update_date is True:
+        REPO_UPDATE_DATE_NOTIFICATION = True
+    if args.notify_daily_contribs is True:
+        CONTRIB_NOTIFICATION = True
+    if args.notify_errors is False:
+        ERROR_NOTIFICATION = False
+    if args.track_repos_changes is True:
+        TRACK_REPOS_CHANGES = True
+    if args.repos is not None:
+        if not TRACK_REPOS_CHANGES:
+            if strict:
+                parser.error("--repos requires -j/--track-repos-changes to be enabled")
+        else:
+            REPOS_TO_MONITOR = [repo.strip() for repo in args.repos.split(',') if repo.strip()]
+    if args.track_contribs_changes is True:
+        TRACK_CONTRIB_CHANGES = True
+    if args.no_monitor_events is True:
+        DO_NOT_MONITOR_GITHUB_EVENTS = True
+    if args.get_all_repos is True:
+        GET_ALL_REPOS = True
+    if not TRACK_REPOS_CHANGES:
+        REPO_NOTIFICATION = False
+        REPO_UPDATE_DATE_NOTIFICATION = False
+        WEBHOOK_REPO_NOTIFICATION = False
+        WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION = False
+    if not TRACK_CONTRIB_CHANGES:
+        CONTRIB_NOTIFICATION = False
+        WEBHOOK_CONTRIB_NOTIFICATION = False
+    if DO_NOT_MONITOR_GITHUB_EVENTS:
+        EVENT_NOTIFICATION = False
+        WEBHOOK_EVENT_NOTIFICATION = False
+    intervals_valid = type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0 and isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0
+    LIVENESS_CHECK_COUNTER = LIVENESS_CHECK_INTERVAL / GITHUB_CHECK_INTERVAL if intervals_valid else 0
+
+
+# Returns the final log file path without creating its directory or file
+def resolve_output_log_path(username):
+    log_path = Path(os.path.expanduser(GITHUB_LOGFILE))
+    if log_path.parent != Path('.'):
+        if log_path.suffix == "":
+            log_path = log_path.parent / f"{log_path.name}_{username or 'target'}.log"
+    elif log_path.suffix == "":
+        log_path = Path(f"{log_path.name}_{username or 'target'}.log")
+    return log_path
+
+
+@dataclass(frozen=True)
+class DoctorCheck:
+    section: str
+    status: str
+    label: str
+    detail: str = ""
+    fix: str = ""
+    guide: str = DOCTOR_GUIDE_URL
+
+
+@dataclass
+class DoctorReport:
+    checks: list[DoctorCheck] = field(default_factory=list)
+    github_token: str = ""
+    authenticated_login: str = ""
+    github_client: Any = None
+    target_profile: Any = None
+    target_name: str = ""
+    email_ready: bool = False
+    webhook_ready: bool = False
+
+    # Adds one validated result row to the report
+    def add(self, section, status, label, detail="", fix="", guide=DOCTOR_GUIDE_URL):
+        normalized_status = str(status).upper()
+        if normalized_status not in {"PASS", "WARN", "FAIL", "SKIP"}:
+            raise ValueError(f"Unsupported doctor status {status}")
+        if normalized_status != "PASS" and not fix:
+            raise ValueError(f"Doctor {normalized_status} rows require a fix")
+        self.checks.append(DoctorCheck(section, normalized_status, label, detail, fix, guide))
+
+    # Counts failed checks including approved delivery tests
+    @property
+    def failure_count(self):
+        return sum(check.status == "FAIL" for check in self.checks)
+
+    # Counts warnings while excluding declined optional tests
+    @property
+    def warning_count(self):
+        return sum(check.status == "WARN" for check in self.checks)
+
+
+class DoctorProgress:
+    # Resolves the real terminal beneath a logger wrapper
+    def __init__(self, stream=None):
+        self.stream = sys.stdout if stream is None else stream
+        self.terminal = getattr(self.stream, "terminal", self.stream)
+        self.width = 0
+
+    # Writes one transient progress label only to an interactive terminal
+    def show(self, label):
+        self.clear()
+        if VERBOSE_MODE or DEBUG_MODE:
+            return
+        try:
+            interactive = bool(self.terminal.isatty())
+        except Exception as exc:
+            debug_swallowed_exception("Doctor terminal detection", exc)
+            interactive = False
+        if not interactive:
+            return
+        message = f"* Checking {label} ..."
+        self.terminal.write(message + "\r")
+        self.terminal.flush()
+        self.width = len(message)
+
+    # Erases any transient progress text without affecting piped output
+    def clear(self):
+        if not self.width:
+            return
+        self.terminal.write(" " * self.width + "\r")
+        self.terminal.flush()
+        self.width = 0
+
+
+# Returns whether one importable dependency is available to this runtime
+def doctor_dependency_available(module_name, module_finder=None):
+    finder = importlib.util.find_spec if module_finder is None else module_finder
+    try:
+        return finder(module_name) is not None
+    except Exception as exc:
+        debug_swallowed_exception(f"Dependency lookup for {module_name}", exc)
+        return False
+
+
+# Adds Python, required dependency, optional dependency and install checks
+def doctor_check_environment(report, module_finder=None):
+    version = platform.python_version()
+    minimum = ".".join(str(part) for part in MIN_PYTHON_VERSION)
+    if sys.version_info >= MIN_PYTHON_VERSION:
+        report.add("Environment", "PASS", f"Python {version} is supported", f"Minimum supported version: {minimum}")
+    else:
+        report.add("Environment", "FAIL", f"Python {version} is unsupported", f"Minimum supported version: {minimum}", f"Install Python {minimum} or newer")
+    required = (("requests", "requests"), ("urllib3", "urllib3"), ("python-dateutil", "dateutil"), ("pytz", "pytz"), ("PyGithub", "github"))
+    for package_name, module_name in required:
+        if doctor_dependency_available(module_name, module_finder):
+            report.add("Environment", "PASS", f"Required dependency {package_name} is installed")
+        else:
+            install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
+            report.add("Environment", "FAIL", f"Required dependency {package_name} is missing", "The monitor cannot run its required path without this package", f"Install it with: {install_command}")
+    optional = (("python-dotenv", "dotenv", "dotenv discovery and loading"), ("tzlocal", "tzlocal", "automatic timezone detection"))
+    for package_name, module_name, feature in optional:
+        if doctor_dependency_available(module_name, module_finder):
+            report.add("Environment", "PASS", f"Optional dependency {package_name} is installed", f"Used only for {feature}")
+        else:
+            install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
+            report.add("Environment", "WARN", f"Optional dependency {package_name} is not installed", f"{feature.capitalize()} will not work while other features remain available", f"Install it with: {install_command}")
+    install_context = detect_install_context()
+    report.add("Environment", "PASS", f"Install method is {install_context.install_method}", f"Command: {render_install_command([], install_context)}")
+
+
+# Returns whether a URL is a complete credential-free HTTPS endpoint
+def validate_github_endpoint_url(value):
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = urlsplit(value.strip())
+    except ValueError as exc:
+        debug_swallowed_exception("GitHub endpoint parsing", exc)
+        return False
+    return parsed.scheme.casefold() == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
+
+
+# Adds configuration, dotenv, private-setting and core value checks
+def doctor_check_configuration(report, args, parser):
+    global CLI_CONFIG_PATH, LOCAL_TIMEZONE
+    if args.config_file:
+        CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
+    cfg_path = find_config_file(CLI_CONFIG_PATH)
+    configured_settings = set()
+    config_errors = []
+    retired_settings = set()
+    if CLI_CONFIG_PATH and not cfg_path:
+        report.add("Configuration", "FAIL", "Configuration file was not found", f"Requested path: {CLI_CONFIG_PATH}", "Correct --config-file or generate a new configuration with --generate-config")
+    elif cfg_path:
+        loaded = load_config_file(cfg_path, report_errors=False, loaded_names_out=configured_settings, diagnostic_overrides=(args.verbose is True, args.debug is True), error_out=config_errors, retired_names_out=retired_settings)
+        if loaded:
+            report.add("Configuration", "PASS", "Configuration file loaded", f"Path: {cfg_path}")
+        else:
+            report.add("Configuration", "FAIL", "Configuration file could not be loaded", config_errors[0] if config_errors else f"Path: {cfg_path}", "Keep only documented SETTING = value lines with plain literal values or regenerate the file")
+    else:
+        report.add("Configuration", "PASS", "No configuration file selected", "Built-in defaults and other configured sources remain available")
+    if retired_settings:
+        listed = ", ".join(sorted(retired_settings))
+        report.add("Configuration", "WARN", "Retired configuration settings were ignored", listed, "Remove the retired settings from the configuration file")
+    apply_diagnostic_cli_overrides(args)
+    dotenv_errors = []
+    env_path = load_startup_secrets(args.env_file, configured_settings, report_errors=False, errors_out=dotenv_errors)
+    apply_startup_cli_overrides(args, configured_settings)
+    apply_webhook_cli_overrides(args, parser, report_warnings=False)
+    if args.repos is not None and not (TRACK_REPOS_CHANGES or args.track_repos_changes is True):
+        report.add("Configuration", "FAIL", "Repository selection cannot take effect", "--repos requires repository detail tracking", "Add --track-repos-changes or remove --repos")
+    apply_monitoring_cli_overrides(args, parser, strict=False)
+    if DOTENV_FILE and DOTENV_FILE.casefold() == "none":
+        report.add("Configuration", "PASS", "Dotenv loading is disabled", "No dotenv file was requested")
+    elif env_path and os.path.isfile(env_path) and not dotenv_errors:
+        report.add("Configuration", "PASS", "Dotenv file loaded", f"Path: {env_path}")
+    elif dotenv_errors:
+        report.add("Configuration", "WARN", "Dotenv file could not be loaded", dotenv_errors[0], "Correct --env-file, install python-dotenv or disable dotenv loading with --env-file none")
+    else:
+        report.add("Configuration", "PASS", "No dotenv file selected", "Exported environment variables and config values remain available")
+    source_order = ("dotenv file", "environment", "configuration file", "built-in configuration", "command line")
+    source_labels = {"dotenv file": "Secrets loaded from the dotenv file", "environment": "Secrets loaded from the environment", "configuration file": "Secrets loaded from the configuration file", "built-in configuration": "Secrets loaded from the built-in configuration", "command line": "Secrets loaded from the command line"}
+    source_rows = 0
+    for source in source_order:
+        names = sorted(name for name, actual_source in SECRET_SOURCES.items() if actual_source == source)
+        if names:
+            report.add("Configuration", "PASS", source_labels[source], ", ".join(names))
+            source_rows += 1
+    if not source_rows:
+        report.add("Configuration", "PASS", "No secrets loaded", "No private setting source contributed a usable value")
+    if validate_github_endpoint_url(GITHUB_API_URL):
+        report.add("Configuration", "PASS", "GitHub API URL is valid", diagnostic_endpoint(GITHUB_API_URL))
+    else:
+        report.add("Configuration", "FAIL", "GitHub API URL is invalid", sanitize_error_text(GITHUB_API_URL) or "No URL configured", "Set GITHUB_API_URL to a complete HTTPS URL without credentials, query parameters or fragments")
+    if validate_github_endpoint_url(GITHUB_HTML_URL):
+        report.add("Configuration", "PASS", "GitHub web URL is valid", diagnostic_endpoint(GITHUB_HTML_URL))
+    else:
+        report.add("Configuration", "FAIL", "GitHub web URL is invalid", sanitize_error_text(GITHUB_HTML_URL) or "No URL configured", "Set GITHUB_HTML_URL to a complete HTTPS URL without credentials, query parameters or fragments")
+    if LOCAL_TIMEZONE == "Auto":
+        if get_localzone is None:
+            report.add("Configuration", "FAIL", "Automatic timezone detection is unavailable", "LOCAL_TIMEZONE is Auto but tzlocal is unavailable", "Install tzlocal or set LOCAL_TIMEZONE to a valid pytz timezone")
+        else:
+            try:
+                detected_timezone = str(get_localzone())
+            except Exception as exc:
+                detected_timezone = ""
+                debug_swallowed_exception("Doctor timezone detection", exc)
+            if detected_timezone and is_valid_timezone(detected_timezone):
+                LOCAL_TIMEZONE = detected_timezone
+                report.add("Configuration", "PASS", "Local timezone can be detected", detected_timezone)
+            else:
+                report.add("Configuration", "FAIL", "Automatic timezone detection failed", "tzlocal did not return a supported timezone", "Set LOCAL_TIMEZONE to a valid pytz timezone")
+    elif is_valid_timezone(LOCAL_TIMEZONE):
+        report.add("Configuration", "PASS", "Local timezone is valid", str(LOCAL_TIMEZONE))
+    else:
+        report.add("Configuration", "FAIL", "Local timezone is invalid", sanitize_error_text(LOCAL_TIMEZONE), "Set LOCAL_TIMEZONE to a valid pytz timezone")
+    if type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0:
+        report.add("Configuration", "PASS", "Polling interval is valid", display_time(GITHUB_CHECK_INTERVAL))
+    else:
+        report.add("Configuration", "FAIL", "Polling interval is invalid", str(GITHUB_CHECK_INTERVAL), "Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds")
+    if isinstance(CHECK_INTERNET_TIMEOUT, (int, float)) and not isinstance(CHECK_INTERNET_TIMEOUT, bool) and CHECK_INTERNET_TIMEOUT > 0:
+        report.add("Configuration", "PASS", "Connectivity timeout is valid", f"{CHECK_INTERNET_TIMEOUT} seconds")
+    else:
+        report.add("Configuration", "FAIL", "Connectivity timeout is invalid", str(CHECK_INTERNET_TIMEOUT), "Set CHECK_INTERNET_TIMEOUT to a positive number of seconds")
+    if type(EVENTS_NUMBER) is int and EVENTS_NUMBER > 0:
+        report.add("Configuration", "PASS", "Recent event window is valid", f"{EVENTS_NUMBER} events")
+    else:
+        report.add("Configuration", "FAIL", "Recent event window is invalid", str(EVENTS_NUMBER), "Set EVENTS_NUMBER to a positive integer")
+    retry_policy_valid = type(NET_MAX_RETRIES) is int and NET_MAX_RETRIES > 0 and isinstance(NET_BASE_BACKOFF_SEC, (int, float)) and not isinstance(NET_BASE_BACKOFF_SEC, bool) and NET_BASE_BACKOFF_SEC >= 0
+    if retry_policy_valid:
+        report.add("Configuration", "PASS", "GitHub retry policy is valid", f"Attempts: {NET_MAX_RETRIES} | Base backoff: {NET_BASE_BACKOFF_SEC} seconds")
+    else:
+        report.add("Configuration", "FAIL", "GitHub retry policy is invalid", f"NET_MAX_RETRIES={NET_MAX_RETRIES} | NET_BASE_BACKOFF_SEC={NET_BASE_BACKOFF_SEC}", "Use a positive retry count and a non-negative base backoff")
+    if isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0:
+        report.add("Configuration", "PASS", "Liveness interval is valid", "Disabled" if not LIVENESS_CHECK_INTERVAL else display_time(LIVENESS_CHECK_INTERVAL))
+    else:
+        report.add("Configuration", "FAIL", "Liveness interval is invalid", str(LIVENESS_CHECK_INTERVAL), "Set LIVENESS_CHECK_INTERVAL to zero or a positive number of seconds")
+    if DO_NOT_MONITOR_GITHUB_EVENTS:
+        report.add("Configuration", "PASS", "Event type selection is not required", "GitHub event monitoring is disabled")
+    elif isinstance(EVENTS_TO_MONITOR, (list, tuple)) and any(isinstance(value, str) and value.strip() for value in EVENTS_TO_MONITOR):
+        report.add("Configuration", "PASS", "Event type selection is valid", f"Configured entries: {len(EVENTS_TO_MONITOR)}")
+    else:
+        report.add("Configuration", "FAIL", "Event type selection is invalid", "No usable event type is configured", "Add ALL or at least one supported event name to EVENTS_TO_MONITOR")
+    try:
+        ascii_log_separators_enabled()
+        report.add("Configuration", "PASS", "Log separator mode is valid", str(ASCII_LOG_SEPARATORS))
+    except ValueError as exc:
+        report.add("Configuration", "FAIL", "Log separator mode is invalid", str(exc), "Set ASCII_LOG_SEPARATORS to Auto, On or Off")
+    return cfg_path, env_path
+
+
+# Adds a live token validation result and retains authenticated state for later checks
+def doctor_check_authentication(report, request_get=None):
+    report.github_token = str(GITHUB_TOKEN or "")
+    if not report.github_token or report.github_token == "your_github_classic_personal_access_token":
+        token_command = render_install_command(["--set-github-token"])
+        report.add("Authentication", "FAIL", "GitHub token is missing", "No usable GITHUB_TOKEN was resolved", f"Create a token then run: {token_command}", AUTH_GUIDE_URL)
+        return
+    try:
+        report.authenticated_login = validate_github_token(report.github_token, request_get=request_get)
+        report.add("Authentication", "PASS", "GitHub token was accepted", f"Authenticated as: {report.authenticated_login}")
+    except Exception as exc:
+        detail = sanitize_error_text(exc).replace(" and the dotenv file was not changed", "")
+        report.add("Authentication", "FAIL", "GitHub token validation failed", f"{type(exc).__name__}: {detail}", "Check the token, its access and GITHUB_API_URL then run doctor again", AUTH_GUIDE_URL)
+
+
+# Adds one bounded connectivity check for the configured startup endpoint
+def doctor_check_connectivity(report, request_get=None):
+    if not validate_github_endpoint_url(CHECK_INTERNET_URL):
+        report.add("Connectivity", "FAIL", "Connectivity check URL is invalid", sanitize_error_text(CHECK_INTERNET_URL) or "No URL configured", "Set CHECK_INTERNET_URL to a complete HTTPS URL")
+        return
+    get_request = req.get if request_get is None else request_get
+    try:
+        debug_http_request("GET", CHECK_INTERNET_URL, "doctor connectivity", CHECK_INTERNET_TIMEOUT)
+        response = get_request(CHECK_INTERNET_URL, timeout=CHECK_INTERNET_TIMEOUT, allow_redirects=False)
+        status = getattr(response, "status_code", None)
+        debug_http_response("GET", CHECK_INTERNET_URL, "doctor connectivity", status)
+    except Exception as exc:
+        report.add("Connectivity", "FAIL", "Configured connectivity endpoint is unreachable", f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check network, DNS, proxy and CHECK_INTERNET_URL settings")
+        return
+    if isinstance(status, int) and status < 500:
+        report.add("Connectivity", "PASS", "Configured connectivity endpoint responded", f"{diagnostic_endpoint(CHECK_INTERNET_URL)} returned HTTP {status}")
+    else:
+        report.add("Connectivity", "FAIL", "Configured connectivity endpoint returned an error", f"HTTP {status}", "Retry later or correct CHECK_INTERNET_URL")
+
+
+# Adds a target lookup and retains the fetched profile for feed checks
+def doctor_check_target(report, github_factory=None):
+    if not report.target_name:
+        command = render_install_command(["GITHUB_USERNAME", "--doctor"])
+        report.add("Target", "WARN", "No GitHub target was provided", "Nothing can be monitored until a username is supplied", f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL)
+        return
+    if not report.authenticated_login:
+        report.add("Target", "FAIL", "GitHub target could not be checked", f"Target: {report.target_name}", "Fix GitHub authentication then run doctor again", AUTH_GUIDE_URL)
+        return
+    try:
+        report.github_client = create_github_client("doctor target validation") if github_factory is None else github_factory()
+        debug_github_operation("doctor target lookup", report.target_name)
+        report.target_profile = report.github_client.get_user(report.target_name)
+        resolved_login = str(getattr(report.target_profile, "login", report.target_name))
+        report.add("Target", "PASS", "GitHub target is accessible", f"Resolved login: {resolved_login}")
+    except Exception as exc:
+        report.add("Target", "FAIL", "GitHub target is not accessible", f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check the username, token access and GitHub Enterprise endpoint then run doctor again", QUICK_START_GUIDE_URL)
+
+
+# Evaluates one lazy PyGithub feed without retaining its potentially large contents
+def doctor_probe_feed(operation, iterable_factory):
+    debug_github_operation(operation)
+    iterator = iter(iterable_factory())
+    next(iterator, None)
+
+
+# Adds monitoring feed, feature and read-only output path checks
+def doctor_check_monitoring(report, contribution_checker=None):
+    if report.target_name and report.target_profile is None:
+        report.add("Monitoring", "FAIL", "Core monitoring feeds could not be checked", "A reachable target profile is required", "Fix the Target section then run doctor again")
+    elif report.target_profile is not None:
+        feed_checks = [("Repository feed is accessible", "doctor repository feed", lambda: report.target_profile.get_repos(type='owner')), ("Starred repository feed is accessible", "doctor starred repository feed", report.target_profile.get_starred)]
+        if not DO_NOT_MONITOR_GITHUB_EVENTS:
+            feed_checks.append(("Recent event feed is accessible", "doctor recent event feed", report.target_profile.get_events))
+        for label, operation, factory in feed_checks:
+            try:
+                doctor_probe_feed(operation, factory)
+                report.add("Monitoring", "PASS", label)
+            except Exception as exc:
+                report.add("Monitoring", "FAIL", label.replace(" is accessible", " is unavailable"), f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check target visibility, token access and GitHub API availability")
+        if DO_NOT_MONITOR_GITHUB_EVENTS:
+            report.add("Monitoring", "PASS", "GitHub event monitoring is disabled", "No event feed check was needed")
+    if TRACK_REPOS_CHANGES:
+        if REPOS_TO_MONITOR:
+            report.add("Monitoring", "PASS", "Repository detail tracking is enabled", f"Selection: {', '.join(str(value) for value in REPOS_TO_MONITOR)}")
+        else:
+            report.add("Monitoring", "WARN", "Repository detail tracking has no selected repositories", "No repository detail alerts can fire", "Set REPOS_TO_MONITOR or pass --repos")
+    else:
+        report.add("Monitoring", "PASS", "Repository detail tracking is disabled")
+    if TRACK_CONTRIB_CHANGES and report.target_profile is not None:
+        checker = get_daily_contributions_count if contribution_checker is None else contribution_checker
+        try:
+            checker(report.target_name, today_local(), report.github_token)
+            report.add("Monitoring", "PASS", "Daily contribution feed is accessible")
+        except Exception as exc:
+            report.add("Monitoring", "FAIL", "Daily contribution feed is unavailable", f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check token access, timezone and GitHub GraphQL availability")
+    elif TRACK_CONTRIB_CHANGES:
+        report.add("Monitoring", "FAIL", "Daily contribution feed could not be checked", "A reachable target profile is required", "Fix the Target section then run doctor again")
+    else:
+        report.add("Monitoring", "PASS", "Daily contribution tracking is disabled")
+    doctor_check_output_paths(report)
+
+
+# Returns the nearest existing parent used for a read-only path permission check
+def doctor_existing_parent(path):
+    candidate = Path(path).expanduser()
+    parent = candidate if candidate.is_dir() else candidate.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    return parent
+
+
+# Adds one read-only output path readiness check without creating anything
+def doctor_add_path_check(report, label, path):
+    selected = Path(path).expanduser()
+    if selected.exists():
+        writable = selected.is_file() and os.access(selected, os.W_OK)
+        detail = f"Path: {selected}"
+    else:
+        parent = doctor_existing_parent(selected)
+        writable = parent.is_dir() and os.access(parent, os.W_OK)
+        detail = f"Path: {selected} | Existing parent: {parent}"
+    if writable:
+        report.add("Monitoring", "PASS", f"{label} path is writable", detail)
+    else:
+        report.add("Monitoring", "FAIL", f"{label} path is not writable", detail, f"Choose a writable {label.lower()} path or correct its parent permissions")
+
+
+# Adds read-only CSV and output log path checks for enabled outputs
+def doctor_check_output_paths(report):
+    if CSV_FILE:
+        doctor_add_path_check(report, "CSV output", CSV_FILE)
+    else:
+        report.add("Monitoring", "PASS", "CSV output is disabled")
+    if DISABLE_LOGGING:
+        report.add("Monitoring", "PASS", "Output logging is disabled")
+    else:
+        doctor_add_path_check(report, "Output log", resolve_output_log_path(report.target_name))
+
+
+# Returns whether email settings indicate that any alert can fire
+def doctor_email_alerts_enabled():
+    selected = (PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, CONTRIB_NOTIFICATION)
+    configured_destination = not str(SMTP_HOST).startswith("your_smtp_server_")
+    return any(selected) or bool(ERROR_NOTIFICATION and configured_destination)
+
+
+# Returns the user-facing spelling of the selected webhook provider
+def webhook_provider_display_name():
+    provider = normalized_webhook_provider()
+    return "Discord" if provider == "discord" else "ntfy" if provider == "ntfy" else sanitize_error_text(WEBHOOK_PROVIDER)
+
+
+# Adds channel readiness checks and stores structural delivery-test readiness
+def doctor_check_notifications(report):
+    if not doctor_email_alerts_enabled():
+        report.add("Notifications", "PASS", "Email alerts are disabled")
+    else:
+        email_error = validate_email_settings()
+        if email_error is not None:
+            report.add("Notifications", "WARN", "Email alerts are enabled but unusable", email_error, "Correct SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL", NOTIFICATION_GUIDE_URL)
+        else:
+            report.email_ready = True
+            report.add("Notifications", "PASS", "Email server, credentials and recipient look valid", f"Destination: {RECEIVER_EMAIL}")
+    if not WEBHOOK_ENABLED:
+        report.add("Notifications", "PASS", "Webhook alerts are disabled")
+        return
+    selected_webhook_types = any((WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION))
+    if not selected_webhook_types and not WEBHOOK_ERROR_NOTIFICATION:
+        report.add("Notifications", "WARN", "Webhook alerts have no usable alert choices", "The channel is enabled but no selected alert can fire", "Enable at least one webhook alert type or disable WEBHOOK_ENABLED", NOTIFICATION_GUIDE_URL)
+        return
+    if not validate_webhook_url(WEBHOOK_URL):
+        report.add("Notifications", "WARN", "Webhook alerts have no valid destination", "WEBHOOK_URL must be a complete supported HTTPS destination", "Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", NOTIFICATION_GUIDE_URL)
+        return
+    provider = normalized_webhook_provider()
+    customization_error = validate_webhook_customization(provider)
+    header_error = validate_webhook_headers(provider)
+    if not provider:
+        report.add("Notifications", "WARN", "Webhook provider is invalid", sanitize_error_text(WEBHOOK_PROVIDER), "Set WEBHOOK_PROVIDER to discord or ntfy", NOTIFICATION_GUIDE_URL)
+    elif customization_error is not None:
+        report.add("Notifications", "WARN", "Webhook customization is invalid", customization_error, "Correct WEBHOOK_TEMPLATE, WEBHOOK_USERNAME, WEBHOOK_AVATAR_URL or WEBHOOK_TRANSFORMS", NOTIFICATION_GUIDE_URL)
+    elif header_error is not None:
+        report.add("Notifications", "WARN", "Webhook headers are invalid", header_error, "Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", NOTIFICATION_GUIDE_URL)
+    else:
+        report.webhook_ready = True
+        report.add("Notifications", "PASS", f"Webhook URL, headers and alert choices look valid for {webhook_provider_display_name()}", f"Destination host: {diagnostic_endpoint(WEBHOOK_URL, host_only=True)}")
+
+
+# Sanitizes one doctor field and keeps it on a single output-contract line
+def sanitize_doctor_text(value):
+    return " ".join(sanitize_error_text(value).splitlines()).strip()
+
+
+# Renders one doctor result while sanitizing every user-visible field
+def render_doctor_check(check, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write(f"[{check.status}] {sanitize_doctor_text(check.label)}\n")
+    if check.detail:
+        destination.write(f"  {sanitize_doctor_text(check.detail)}\n")
+    if check.status != "PASS":
+        destination.write(f"To fix: {sanitize_doctor_text(check.fix)}\n")
+        destination.write(f"Guide: {sanitize_doctor_text(check.guide)}\n")
+
+
+# Renders fixed-order report sections with exactly one blank line between them
+def render_doctor_sections(report, stream=None):
+    destination = sys.stdout if stream is None else stream
+    current_section = None
+    for check in report.checks:
+        if check.section == "Optional delivery tests":
+            continue
+        if check.section != current_section:
+            destination.write(f"\n{check.section}\n")
+            current_section = check.section
+        render_doctor_check(check, destination)
+
+
+# Returns whether stdin supports separate interactive delivery approvals
+def doctor_input_is_interactive(input_stream=None):
+    source = sys.stdin if input_stream is None else input_stream
+    try:
+        return bool(source.isatty())
+    except Exception as exc:
+        debug_swallowed_exception("Doctor input terminal detection", exc)
+        return False
+
+
+# Returns whether doctor output is attached to a real terminal instead of a pipe
+def doctor_output_is_interactive(stream=None):
+    destination = sys.stdout if stream is None else stream
+    terminal = getattr(destination, "terminal", destination)
+    try:
+        return bool(terminal.isatty())
+    except Exception as exc:
+        debug_swallowed_exception("Doctor output terminal detection", exc)
+        return False
+
+
+# Reads one default-no delivery approval without exposing any private setting
+def ask_doctor_approval(prompt, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write(f"{prompt} [y/N]: ")
+    destination.flush()
+    try:
+        answer = input_func()
+    except (EOFError, KeyboardInterrupt):
+        destination.write("\n")
+        return False
+    return str(answer).strip().casefold() in {"y", "yes"}
+
+
+# Offers separately approved real delivery tests only on interactive stdin
+def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=None, stream=None, email_sender=None, webhook_sender=None):
+    if not (report.email_ready or report.webhook_ready) or not doctor_input_is_interactive(input_stream) or not doctor_output_is_interactive(stream):
+        return
+    destination = sys.stdout if stream is None else stream
+    destination.write("\nOptional delivery tests\n\n")
+    destination.write("Doctor will not write files. Each approved test sends one real message.\n\n")
+    send_email_func = send_email if email_sender is None else email_sender
+    send_webhook_func = send_webhook if webhook_sender is None else webhook_sender
+    if report.email_ready:
+        approved = ask_doctor_approval("Send one test email now? This will deliver a real message", input_func, destination)
+        if approved:
+            result = send_email_func("github_monitor doctor test", "This real test message confirms that doctor can deliver email.", "", SMTP_SSL, smtp_timeout=5)
+            if result == 0:
+                check = DoctorCheck("Optional delivery tests", "PASS", "Test email was delivered", f"Destination: {RECEIVER_EMAIL}")
+            else:
+                check = DoctorCheck("Optional delivery tests", "FAIL", "Test email delivery failed", "The SMTP delivery function returned an error", "Review the SMTP error above and correct the email settings", NOTIFICATION_GUIDE_URL)
+        else:
+            check = DoctorCheck("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test", "Run doctor again and approve the email test when ready", NOTIFICATION_GUIDE_URL)
+        report.checks.append(check)
+        render_doctor_check(check, destination)
+    if report.webhook_ready:
+        provider = webhook_provider_display_name()
+        approved = ask_doctor_approval(f"Send one test webhook through {provider} now? This will publish a real notification", input_func, destination)
+        if approved:
+            result = send_webhook_func("GitHub Monitor doctor test", "This real test notification confirms that doctor can deliver webhooks.", "event", force=True)
+            if result == 0:
+                check = DoctorCheck("Optional delivery tests", "PASS", f"Test webhook through {provider} was delivered", f"Destination host: {diagnostic_endpoint(WEBHOOK_URL, host_only=True)}")
+            else:
+                check = DoctorCheck("Optional delivery tests", "FAIL", f"Test webhook through {provider} failed", "The webhook delivery function returned an error", "Review the webhook error above and correct the destination settings", NOTIFICATION_GUIDE_URL)
+        else:
+            check = DoctorCheck("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test", "Run doctor again and approve the webhook test when ready", NOTIFICATION_GUIDE_URL)
+        report.checks.append(check)
+        render_doctor_check(check, destination)
+
+
+# Renders the single actionable doctor verdict and guide URL
+def render_doctor_summary(report, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("\nSummary\n")
+    if report.failure_count:
+        destination.write(f"  {report.failure_count} check(s) failed, {report.warning_count} warning(s). Fix the failures above before relying on the tool.\n")
+    elif report.warning_count:
+        destination.write(f"  All critical checks passed with {report.warning_count} warning(s). Review the warnings above.\n")
+    else:
+        destination.write("  All checks passed. You are good to go!\n")
+    destination.write(f"\nGuide: {DOCTOR_GUIDE_URL}\n")
+
+
+# Runs the complete read-only preflight and returns its healthcheck exit code
+def run_doctor_preflight(args, parser, request_get=None, github_factory=None, contribution_checker=None, module_finder=None, input_func=input, input_stream=None, stream=None, email_sender=None, webhook_sender=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write(f"GitHub Monitoring Tool v{VERSION}\n\n")
+    destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
+    report = DoctorReport(target_name=str(args.username or ""))
+    progress = DoctorProgress(destination)
+    try:
+        progress.show("environment")
+        doctor_check_environment(report, module_finder)
+        progress.show("configuration")
+        progress.clear()
+        doctor_check_configuration(report, args, parser)
+        progress.show("authentication")
+        doctor_check_authentication(report, request_get)
+        progress.show("connectivity")
+        doctor_check_connectivity(report, request_get)
+        progress.show("target")
+        doctor_check_target(report, github_factory)
+        progress.show("monitoring feeds")
+        doctor_check_monitoring(report, contribution_checker)
+        progress.show("notifications")
+        doctor_check_notifications(report)
+    finally:
+        progress.clear()
+    destination.write("Doctor\n")
+    render_doctor_sections(report, destination)
+    doctor_run_optional_delivery_tests(report, input_func, input_stream, destination, email_sender, webhook_sender)
+    render_doctor_summary(report, destination)
+    destination.flush()
+    return 1 if report.failure_count else 0
 
 
 # Parses command-line settings and starts the requested GitHub Monitor action
@@ -6356,7 +7062,7 @@ def main():
     if "--debug" in sys.argv:
         DEBUG_MODE = True
 
-    if "--generate-config" in sys.argv:
+    if "--generate-config" in sys.argv and "--doctor" not in sys.argv:
         config_content = CONFIG_BLOCK.strip("\n") + "\n"
         # Check if a filename was provided after --generate-config
         try:
@@ -6653,6 +7359,12 @@ def main():
     # Features & output
     opts = parser.add_argument_group("Features & output")
     opts.add_argument(
+        "--doctor",
+        dest="doctor",
+        action="store_true",
+        help="Run a comprehensive read-only setup preflight and exit"
+    )
+    opts.add_argument(
         "-j", "--track-repos-changes",
         dest="track_repos_changes",
         action="store_true",
@@ -6727,6 +7439,12 @@ def main():
 
     apply_diagnostic_cli_overrides(args)
 
+    if args.doctor:
+        incompatible = (args.generate_config, args.set_github_token, args.set_webhook_url, args.send_test_email, args.send_test_webhook, args.list_repos, args.list_starred_repos, args.list_followers_and_followings, args.list_recent_events)
+        if any(incompatible):
+            parser.error("--doctor cannot be combined with setup, listing or one-shot delivery commands")
+        sys.exit(run_doctor_preflight(args, parser))
+
     if args.config_file:
         CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
 
@@ -6771,6 +7489,12 @@ def main():
         sys.exit(0)
 
     apply_webhook_cli_overrides(args, parser)
+    apply_monitoring_cli_overrides(args, parser)
+
+    if type(GITHUB_CHECK_INTERVAL) is not int or GITHUB_CHECK_INTERVAL <= 0:
+        advice = make_recovery_advice("config.value_invalid", "The GitHub polling interval is invalid", "Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds", False, f"GITHUB_CHECK_INTERVAL={GITHUB_CHECK_INTERVAL}", CONFIG_GUIDE_URL)
+        print_recovery_advice(advice)
+        sys.exit(1)
 
     local_tz = None
     if LOCAL_TIMEZONE == "Auto":
@@ -6826,9 +7550,6 @@ def main():
         print_recovery_advice(advice)
         sys.exit(1)
 
-    if args.get_all_repos is True:
-        GET_ALL_REPOS = True
-
     if args.list_followers_and_followings:
         try:
             github_print_followers_and_followings(args.username)
@@ -6852,16 +7573,6 @@ def main():
             print_recovery_advice(classify_recovery_error(e, "target"))
             sys.exit(1)
         sys.exit(0)
-
-    if args.check_interval:
-        GITHUB_CHECK_INTERVAL = args.check_interval
-        LIVENESS_CHECK_COUNTER = LIVENESS_CHECK_INTERVAL / GITHUB_CHECK_INTERVAL
-
-    if args.csv_file:
-        CSV_FILE = os.path.expanduser(args.csv_file)
-    else:
-        if CSV_FILE:
-            CSV_FILE = os.path.expanduser(CSV_FILE)
 
     if CSV_FILE:
         try:
@@ -6896,17 +7607,8 @@ def main():
         print_recovery_advice(advice)
         sys.exit(1)
 
-    if args.disable_logging is True:
-        DISABLE_LOGGING = True
-
     if not DISABLE_LOGGING:
-        log_path = Path(os.path.expanduser(GITHUB_LOGFILE))
-        if log_path.parent != Path('.'):
-            if log_path.suffix == "":
-                log_path = log_path.parent / f"{log_path.name}_{args.username}.log"
-        else:
-            if log_path.suffix == "":
-                log_path = Path(f"{log_path.name}_{args.username}.log")
+        log_path = resolve_output_log_path(args.username)
         try:
             debug_print(f"Ensuring output log directory exists path={log_path.parent}")
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -6919,54 +7621,6 @@ def main():
             sys.exit(1)
     else:
         FINAL_LOG_PATH = None
-
-    if args.notify_profile is True:
-        PROFILE_NOTIFICATION = True
-
-    if args.notify_events is True:
-        EVENT_NOTIFICATION = True
-
-    if args.notify_repo_changes is True:
-        REPO_NOTIFICATION = True
-
-    if args.notify_repo_update_date is True:
-        REPO_UPDATE_DATE_NOTIFICATION = True
-
-    if args.notify_daily_contribs is True:
-        CONTRIB_NOTIFICATION = True
-
-    if args.notify_errors is False:
-        ERROR_NOTIFICATION = False
-
-    if args.track_repos_changes is True:
-        TRACK_REPOS_CHANGES = True
-
-    if args.repos is not None:
-        if not TRACK_REPOS_CHANGES:
-            print("* Error: --repos requires -j/--track-repos-changes to be enabled")
-            sys.exit(1)
-        # Split comma-separated repo names and strip whitespace
-        REPOS_TO_MONITOR = [repo.strip() for repo in args.repos.split(',') if repo.strip()]
-
-    if args.track_contribs_changes is True:
-        TRACK_CONTRIB_CHANGES = True
-
-    if args.no_monitor_events is True:
-        DO_NOT_MONITOR_GITHUB_EVENTS = True
-
-    if not TRACK_REPOS_CHANGES:
-        REPO_NOTIFICATION = False
-        REPO_UPDATE_DATE_NOTIFICATION = False
-        WEBHOOK_REPO_NOTIFICATION = False
-        WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION = False
-
-    if not TRACK_CONTRIB_CHANGES:
-        CONTRIB_NOTIFICATION = False
-        WEBHOOK_CONTRIB_NOTIFICATION = False
-
-    if DO_NOT_MONITOR_GITHUB_EVENTS:
-        EVENT_NOTIFICATION = False
-        WEBHOOK_EVENT_NOTIFICATION = False
 
     if SMTP_HOST.startswith("your_smtp_server_"):
         EVENT_NOTIFICATION = False

@@ -70,6 +70,7 @@ pip install github_monitor
    * [Check Intervals](#check-intervals)
    * [Signal Controls (macOS/Linux/Unix)](#signal-controls-macoslinuxunix)
    * [Coloring Log Output with GRC](#coloring-log-output-with-grc)
+   * [Doctor Preflight](#doctor-preflight)
    * [Debugging and Recovery](#debugging-and-recovery)
 6. [Change Log](#change-log)
 7. [Contributing](#contributing)
@@ -81,7 +82,7 @@ pip install github_monitor
 ## Requirements
 
 * Python 3.10 or higher
-* Libraries: [PyGithub](https://github.com/PyGithub/PyGithub) (2.8 or newer), `requests`, `python-dateutil`, `pytz`, `tzlocal`, `python-dotenv`
+* Libraries: [PyGithub](https://github.com/PyGithub/PyGithub) (2.8 or newer), `requests`, `urllib3`, `python-dateutil`, `pytz`, `tzlocal`, `python-dotenv`
 
 Tested on:
 
@@ -109,7 +110,7 @@ Download the *[github_monitor.py](https://raw.githubusercontent.com/misiektoja/g
 Install dependencies via pip:
 
 ```sh
-pip install PyGithub requests python-dateutil pytz tzlocal python-dotenv
+pip install PyGithub requests urllib3 python-dateutil pytz tzlocal python-dotenv
 ```
 
 Alternatively, from the downloaded *[requirements.txt](https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/requirements.txt)*:
@@ -702,6 +703,27 @@ Example:
 ```sh
 grc tail -F -n 100 github_monitor_<username>.log
 ```
+
+<a id="doctor-preflight"></a>
+### Doctor Preflight
+
+Run the comprehensive preflight before monitoring a new target or when a working setup starts failing:
+
+```sh
+github_monitor <github_username> --doctor
+```
+
+Doctor is read-only by default. It checks the effective configuration after config, dotenv, environment and command-line precedence without creating logs, CSV files or directories. It reports these fixed sections:
+
+* Environment: Python support, required dependencies, optional dependencies and install method.
+* Configuration: selected files, secret names and sources, GitHub URLs, timezone, polling interval and log separator mode.
+* Authentication and connectivity: live token validation plus the configured connectivity endpoint.
+* Target and monitoring: target access, repository, starred repository and event feeds, optional contribution tracking and read-only output path permissions.
+* Notifications: whether email and webhook alerts are disabled, unusable or ready.
+
+Every check uses one of four stable markers: `[PASS]`, `[WARN]`, `[FAIL]` or `[SKIP]`. Warnings keep exit status `0`. Any failed check or approved delivery test returns exit status `1`, so doctor can be used in a container healthcheck or CI smoke test.
+
+When stdin is interactive and a notification channel is ready, doctor offers a separate default-no approval for one real email and one real webhook. A piped or non-interactive run never sends messages. Review the sanitized report before posting it because targets, paths and recipient addresses can still identify your setup.
 
 <a id="debugging-and-recovery"></a>
 ### Debugging and Recovery

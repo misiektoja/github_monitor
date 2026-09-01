@@ -31,6 +31,7 @@ and again before anything is published to PyPI.
 | --- | --- |
 | `test_daily_contributions.py` | Stable calendar window selection and missing-day handling |
 | `test_diagnostic_modes.py` | User-visible verbose and debug transcripts across requests, swallowed exceptions, degraded checks, delivery, files, waits and private-setting sources |
+| `test_doctor.py` | Complete doctor transcripts, exit status, dependency states, private-setting sources, offline failures, read-only paths, TTY progress and separately approved real delivery tests |
 | `test_event_configuration.py` | Supported event types, intentional 30-event window and retry defaults |
 | `test_github_token_setup.py` | Hidden token entry, targeted dotenv updates and refusal to save an invalid token |
 | `test_install_method_commands.py` | PyPI and standalone install detection with POSIX and Windows command rendering |
