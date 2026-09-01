@@ -2,6 +2,8 @@
 
 import io
 import re
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,17 +13,23 @@ import github_monitor as monitor
 
 
 CHANGE_REPORT_LINES = ("* Daily contributions changed for user octocat from 98 to 100 (+2)!", "* Repo 'hello world': number of stars changed from 10 to 12 (+2)", "* Repo 'emoji tools 🛠️' update date changed after 2 days")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+# Runs one isolated command-line action against the working-tree script
+def run_cli(*arguments):
+    return subprocess.run([sys.executable, str(PROJECT_ROOT / "github_monitor.py"), *arguments], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
 
 
 # Verifies the selected GitHub banner remains exact and version independent
 def test_selected_banner_exact_content():
     assert monitor.STARTUP_BANNER == r"""
- .---------------.      ____ _ _   _   _       _
-|      .---.      |    / ___(_) |_| | | |_   _| |__
-|   .-( o o )-.   |   | |  _| | __| |_| | | | | '_ \
-|  /  |  ^  |  \  |   | |_| | | |_|  _  | |_| | |_) |
-|     \ '-' /     |    \____|_|\__|_| |_|\__,_|_.__/
- '-----'---'-----'
+ .---------------.       ____ _ _   _   _       _
+|     /\_/\      |   / ___(_) |_| | | |_   _| |__
+|    ( o.o )     |   | |  _| | __| |_| | | | | '_ \
+|     > ^ <      |   | |_| | | |_|  _  | |_| | |_) |
+|    /     \     |    \____|_|\__|_| |_|\__,_|_.__/
+ '---------------'
                      __  __             _ _
                     |  \/  | ___  _ __ (_) |_ ___  _ __
                     | |\/| |/ _ \| '_ \| | __/ _ \| '__|
@@ -43,6 +51,38 @@ def test_banner_dynamic_version_line(monkeypatch, capsys):
     monkeypatch.setattr(monitor, "COLOR_ENABLED", False)
     monitor.print_startup_banner()
     assert capsys.readouterr().out == monitor.STARTUP_BANNER + "\n" + (" " * 21) + "v9.9-test\n\n"
+
+
+# Verifies GitHub, Monitor and the version share the same body column
+def test_banner_version_alignment():
+    banner_lines = monitor.STARTUP_BANNER.splitlines()
+    github_body_column = banner_lines[2].index("/ ___")
+    monitor_body_indent = len(banner_lines[7]) - len(banner_lines[7].lstrip())
+    version_indent = len(" " * 21) - len((" " * 21).lstrip())
+    assert github_body_column == monitor_body_indent == version_indent
+
+
+# Verifies version output stays one line and excludes the startup art
+def test_version_output_is_machine_friendly():
+    result = run_cli("--version")
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [f"github_monitor.py v{monitor.VERSION}"]
+    assert monitor.STARTUP_BANNER.splitlines()[1] not in result.stdout
+
+
+# Verifies generated config output begins with content and excludes the startup art
+def test_generate_config_output_is_machine_friendly():
+    result = run_cli("--generate-config")
+    assert result.returncode == 0
+    assert result.stdout.startswith("# Optional saved target")
+    assert monitor.STARTUP_BANNER.splitlines()[1] not in result.stdout
+
+
+# Verifies help shows one startup banner
+def test_help_shows_one_startup_banner():
+    result = run_cli("--help")
+    assert result.returncode == 0
+    assert result.stdout.count(" .---------------.") == 1
 
 
 # Enables colour with a deterministic style map
@@ -132,6 +172,13 @@ def test_startup_banner_uses_only_its_own_colours(colored, capsys):
 def test_startup_banner_art_is_unchanged(colored):
     rendered = monitor.apply_color_to_text(monitor.STARTUP_BANNER)
     assert monitor.ANSI_ESCAPE_RE.sub("", rendered) == monitor.STARTUP_BANNER
+
+
+# Verifies the Setup Wizard heading keeps the newline inside the sibling-style header span
+def test_setup_wizard_heading_uses_header_colour(colored):
+    output = io.StringIO()
+    assert monitor.run_setup_wizard(None, stream=output, interactive=False, show_banner=False) == 1
+    assert output.getvalue().startswith(f"{colored['header']}Setup Wizard\n{monitor.ANSI_RESET}\n")
 
 
 # Verifies labelled GitHub rows use their expected theme parts

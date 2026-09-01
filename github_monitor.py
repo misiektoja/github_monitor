@@ -496,12 +496,12 @@ MAX_EVENT_BODY_LENGTH = 3500
 nl_ch = "\n"
 
 STARTUP_BANNER = r"""
- .---------------.      ____ _ _   _   _       _
-|      .---.      |    / ___(_) |_| | | |_   _| |__
-|   .-( o o )-.   |   | |  _| | __| |_| | | | | '_ \
-|  /  |  ^  |  \  |   | |_| | | |_|  _  | |_| | |_) |
-|     \ '-' /     |    \____|_|\__|_| |_|\__,_|_.__/
- '-----'---'-----'
+ .---------------.       ____ _ _   _   _       _
+|     /\_/\      |   / ___(_) |_| | | |_   _| |__
+|    ( o.o )     |   | |  _| | __| |_| | | | | '_ \
+|     > ^ <      |   | |_| | | |_|  _  | |_| | |_) |
+|    /     \     |    \____|_|\__|_| |_|\__,_|_.__/
+ '---------------'
                      __  __             _ _
                     |  \/  | ___  _ __ (_) |_ ___  _ __
                     | |\/| |/ _ \| '_ \| | __/ _ \| '__|
@@ -8390,7 +8390,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         _write_startup_banner(destination)
     if not terminal_is_interactive:
         generate_command = render_install_command(["--generate-config", str(selected_config)], context)
-        destination.write(colorize("header", "Setup Wizard") + "\n\n")
+        destination.write(colorize("header", "Setup Wizard\n") + "\n")
         destination.write(colorize("warning", "The setup wizard needs an interactive terminal (TTY).") + "\n")
         destination.write("Run --setup from an interactive shell or use --generate-config and edit the files manually.\n")
         _wizard_print_command(destination, "Generate a config manually with:", generate_command)
@@ -8398,7 +8398,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         return 1
     try:
         state = build_wizard_state(selected_config, selected_dotenv, context)
-        destination.write(colorize("header", "Setup Wizard") + "\n\n")
+        destination.write(colorize("header", "Setup Wizard\n") + "\n")
         destination.write("This asks a few questions and writes a ready-to-run configuration.\n")
         destination.write("Press Enter to accept the shown default. Ctrl+C cancels.\n\n")
         destination.write("Secrets go to the dotenv file. Non-secret settings go to the config file.\n\n")
