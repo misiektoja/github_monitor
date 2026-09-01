@@ -19,9 +19,10 @@ Most reports come down to an expired or under-scoped GitHub token, an SMTP serve
 | You want to | Go to |
 | --- | --- |
 | Ask a question or discuss an idea | [Discussions](https://github.com/misiektoja/github_monitor/discussions) |
-| Report something broken | [Open an issue](https://github.com/misiektoja/github_monitor/issues/new) |
-| Request a capability | [Open an issue](https://github.com/misiektoja/github_monitor/issues/new) |
+| Report something broken | [Bug report](https://github.com/misiektoja/github_monitor/issues/new?template=bug_report.yml) |
+| Request a capability | [Feature request](https://github.com/misiektoja/github_monitor/issues/new?template=feature_request.yml) |
 | Report a vulnerability | [Private security advisory](https://github.com/misiektoja/github_monitor/security/advisories/new), never a public issue |
+| Contribute a change | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Before you post
 
