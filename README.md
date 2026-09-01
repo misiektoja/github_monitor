@@ -62,6 +62,7 @@ pip install github_monitor
    * [SMTP Settings](#smtp-settings)
    * [Webhook Settings](#webhook-settings)
    * [Storing Secrets](#storing-secrets)
+   * [TLS Verification](#tls-verification)
 5. [Usage](#usage)
    * [Monitoring Mode](#monitoring-mode)
    * [Listing Mode](#listing-mode)
@@ -143,7 +144,7 @@ github_monitor --setup
 
 It asks for the target, whether to save it, the polling interval, GitHub authentication, optional email and webhook alerts and output destinations. Polling accepts seconds or values such as `30s`, `2m`, `1.5h`, `1h 30m` and `1d`. The existing automatic timezone setting is retained instead of adding another setup question. Answers stay in memory until the complete summary is reviewed. Choose **Save settings** to write non-secret settings to `github_monitor.conf` and private values to a separate mode-0600 `.env` file. Existing destinations receive timestamped mode-0600 backups before replacement.
 
-The wizard links to GitHub's token settings then validates a newly entered token before saving it. An empty token is requested again unless you explicitly confirm that setup should remain unusable for monitoring. After saving, the wizard offers the read-only Doctor preflight then monitoring. Both prompts default to yes when the saved setup is ready. Commands after setup match a PyPI install or downloaded script and include the selected config plus dotenv paths.
+The wizard links to GitHub's token settings then validates a newly entered token before saving it. Every answer the wizard cannot use offers a way out, so one value you cannot produce right now does not cost you the answers already given: a blank answer asks whether to continue without it and names what stops working, a rejected one offers to enter it again and declining a webhook destination leaves that channel and its alerts off. After saving, the wizard offers the read-only Doctor preflight then monitoring. Both prompts default to yes when the saved setup is ready. Commands after setup match a PyPI install or downloaded script and include the selected config plus dotenv paths.
 
 Run the tool without arguments to see the same first-run screen used across the monitor tools. It uses short portable commands instead of the active interpreter and absolute script paths:
 
@@ -517,6 +518,15 @@ The final fallback is storing secrets in the configuration file or source code.
 
 Sending a `SIGHUP` signal reloads `GITHUB_TOKEN`, `SMTP_PASSWORD`, `WEBHOOK_URL` and `NTFY_ACCESS_TOKEN` from the active dotenv file without restarting the tool.
 
+<a id="tls-verification"></a>
+### TLS Verification
+
+The tool verifies the TLS certificate of every server it contacts: the GitHub API, the GitHub web pages it reads, the connectivity check endpoint and, when enabled, the webhook service.
+
+Set `VERIFY_SSL` to `False` only on a network that intercepts TLS with its own certificate authority, such as a corporate proxy. With verification off, an intercepted connection cannot be told apart from the real service.
+
+The startup summary shows `TLS verification` and [`--doctor`](#doctor-preflight) reports a warning while it is off.
+
 <a id="usage"></a>
 ## Usage
 
@@ -814,7 +824,7 @@ github_monitor --doctor <github_username>
 Doctor is read-only by default. It checks the effective configuration after config, dotenv, environment and command-line precedence without creating logs, CSV files or directories. It opens with the detected install method, then reports these fixed sections:
 
 * Environment: Python support, required dependencies and optional dependencies.
-* Configuration: selected files, secret names and sources, GitHub URLs, timezone, polling interval, log separator mode and the log and CSV files monitoring would write.
+* Configuration: selected files, secret names and sources, [TLS verification](#tls-verification), GitHub URLs, timezone, polling interval, log separator mode and the log and CSV files monitoring would write.
 * Authentication and connectivity: live token validation plus the configured connectivity endpoint.
 * Target and monitoring: target access, repository, starred repository and event feeds and optional contribution tracking.
 * Notifications: whether email and webhook alerts are disabled, unusable or ready.

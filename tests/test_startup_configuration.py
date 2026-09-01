@@ -136,4 +136,4 @@ def test_connectivity_check_uses_effective_runtime_defaults(gm_module, monkeypat
     monkeypatch.setattr(gm_module, "CHECK_INTERNET_TIMEOUT", 23)
 
     assert gm_module.check_internet() is True
-    request_get.assert_called_once_with("https://runtime.example/health", timeout=23)
+    request_get.assert_called_once_with("https://runtime.example/health", timeout=23, verify=True)

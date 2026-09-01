@@ -35,7 +35,7 @@ def test_validate_github_token_returns_authenticated_login(gm_module):
     secret = "github_pat_private"
     request_get = Mock(return_value=FakeResponse(200, {"login": "octocat"}))
     assert gm_module.validate_github_token(secret, "https://github.example/api/v3", request_get=request_get) == "octocat"
-    request_get.assert_called_once_with("https://github.example/api/v3/user", headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {secret}", "User-Agent": f"GitHubMonitor/{gm_module.VERSION}"}, timeout=10, allow_redirects=False)
+    request_get.assert_called_once_with("https://github.example/api/v3/user", headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {secret}", "User-Agent": f"GitHubMonitor/{gm_module.VERSION}"}, timeout=10, allow_redirects=False, verify=True)
 
 
 @pytest.mark.parametrize("api_url", ["http://github.example/api/v3", "https://user:password@github.example/api/v3", "https://github.example/api/v3?token=value", "not-a-url", ""])

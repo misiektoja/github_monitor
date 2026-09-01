@@ -13,6 +13,31 @@ WORKFLOW_DIRECTORY = PROJECT_ROOT / ".github" / "workflows"
 REPOSITORY_URL = "https://github.com/misiektoja/github_monitor"
 
 
+# Every markdown file that links into the repository, and which a moved or renamed section can silently break
+REPOSITORY_MARKDOWN = ("README.md", "SUPPORT.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "THIRD_PARTY_NOTICES.md", ".github/pull_request_template.md")
+
+# The issue templates link out of YAML rather than markdown, which is where a stale README anchor survives longest
+ISSUE_TEMPLATES = (".github/ISSUE_TEMPLATE/config.yml", ".github/ISSUE_TEMPLATE/bug_report.yml", ".github/ISSUE_TEMPLATE/feature_request.yml")
+
+
+# Returns the anchors one markdown file defines, from its headings and from any explicit anchor tags
+def page_anchors(path):
+    text = path.read_text(encoding="utf-8")
+    anchors = set(re.findall(r'<a id="([^"]+)"></a>', text))
+    for line in text.splitlines():
+        if not line.startswith("#"):
+            continue
+        title = line.lstrip("#").strip()
+        anchors.add("".join(character for character in title.casefold().replace(" ", "-") if character.isalnum() or character in "-_"))
+    return anchors
+
+
+# Returns the local link targets one repository file names, reading a link to the project page as a README anchor
+def repository_link_targets(text):
+    targets = re.findall(r"\]\((?!https?:|mailto:)([^)]+)\)", text)
+    return list(targets) + [f"README.md#{anchor}" for anchor in re.findall(rf"{re.escape(REPOSITORY_URL)}/?#([^\s)\"']+)", text)]
+
+
 # Reads one repository file as text
 def read_asset(relative_path):
     return (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
@@ -62,6 +87,24 @@ class TestGovernanceDocuments:
         packaged = {name.casefold().replace("_", "-") for name in re.findall(r'"([A-Za-z0-9_.-]+)', declared.group(1))}
         manual = {match.group(0).casefold().replace("_", "-") for line in read_asset("requirements.txt").splitlines() if line.strip() and not line.lstrip().startswith("#") if (match := re.match(r"[A-Za-z0-9_.-]+", line))}
         assert manual == packaged
+
+    # A renamed README section leaves dead links behind in documents no site link test ever opens
+    def test_no_repository_document_links_at_a_missing_local_target(self):
+        broken = []
+        for relative_path in REPOSITORY_MARKDOWN + ISSUE_TEMPLATES:
+            path = PROJECT_ROOT / relative_path
+            if not path.exists():
+                continue
+            for target in repository_link_targets(path.read_text(encoding="utf-8")):
+                page_part, _, anchor = target.partition("#")
+                target_page = path if not page_part else (PROJECT_ROOT / page_part)
+                if page_part and not target_page.exists():
+                    broken.append(f"{relative_path} -> {target}")
+                    continue
+                if anchor and anchor not in page_anchors(target_page):
+                    broken.append(f"{relative_path} -> {target}")
+
+        assert not broken, f"repository documents linking at missing targets: {broken}"
 
     # The support document must route each request type to a channel that exists
     def test_support_document_routes_every_request_type(self):

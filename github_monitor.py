@@ -28,6 +28,7 @@ AUTH_GUIDE_URL = f"{README_URL}#github-personal-access-token"
 GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
 NOTIFICATION_GUIDE_URL = f"{README_URL}#email-notifications"
 DEBUG_GUIDE_URL = f"{README_URL}#debugging-and-recovery"
+TLS_GUIDE_URL = f"{README_URL}#tls-verification"
 SUPPORT_GUIDE_URL = f"{PROJECT_URL}/blob/main/SUPPORT.md"
 DOCTOR_GUIDE_URL = f"{SUPPORT_GUIDE_URL}#doctor-preflight"
 
@@ -294,6 +295,11 @@ CHECK_INTERNET_URL = GITHUB_API_URL
 # Timeout used when checking initial internet connectivity; in seconds
 CHECK_INTERNET_TIMEOUT = 5
 
+# Whether to verify TLS certificates on every outbound request
+# Only set this to False on a network that intercepts TLS with its own certificate authority
+# Switching it off removes the protection against an intercepted connection
+VERIFY_SSL = True
+
 # CSV file to write new events & profile changes
 # Can also be set using the -b flag
 CSV_FILE = ""
@@ -454,6 +460,7 @@ TRACK_CONTRIB_CHANGES = False
 LIVENESS_CHECK_INTERVAL = 0
 CHECK_INTERNET_URL = ""
 CHECK_INTERNET_TIMEOUT = 0
+VERIFY_SSL = True
 CSV_FILE = ""
 DOTENV_FILE = ""
 GITHUB_LOGFILE = ""
@@ -1199,13 +1206,19 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 
+# Silences the repeated certificate warning once verification is off, so the choice is reported by the summary and the doctor instead of on every request
+def apply_tls_verification_setting():
+    if not VERIFY_SSL:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
 # Checks internet connectivity using the effective runtime URL and timeout
 def check_internet(url=None, timeout=None):
     selected_url = CHECK_INTERNET_URL if url is None else url
     selected_timeout = CHECK_INTERNET_TIMEOUT if timeout is None else timeout
     try:
         debug_http_request("GET", selected_url, "startup connectivity", selected_timeout)
-        response = req.get(selected_url, timeout=selected_timeout)
+        response = req.get(selected_url, timeout=selected_timeout, verify=VERIFY_SSL)
         debug_http_response("GET", selected_url, "startup connectivity", getattr(response, "status_code", "unknown"))
         return True
     except req.RequestException as e:
@@ -3026,6 +3039,7 @@ def build_startup_summary(target, config_path, env_path, output_path):
     return [
         StartupSummaryRow("Target", str(target), concise=True),
         StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
+        StartupSummaryRow("TLS verification", "On" if VERIFY_SSL else "Off, server certificates are not checked", concise=not VERIFY_SSL),
         StartupSummaryRow("Notifications (email)", email_state, concise=True),
         StartupSummaryRow("Notifications (webhook)", webhook_state, concise=True),
         StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only", concise=True, full=False, log=False),
@@ -3318,7 +3332,7 @@ def post_webhook_request(**request_kwargs: Any) -> Any:
     if not validate_webhook_url(destination):
         raise req.exceptions.InvalidURL("WEBHOOK_URL must contain a complete HTTPS link")
     debug_http_request("POST", destination, "webhook delivery", WEBHOOK_TIMEOUT_SECONDS, headers=request_kwargs.get("headers"), params=request_kwargs.get("params"), token=NTFY_ACCESS_TOKEN or None, host_only=True)
-    return WEBHOOK_SESSION.post(destination, timeout=WEBHOOK_TIMEOUT_SECONDS, allow_redirects=False, **request_kwargs)
+    return WEBHOOK_SESSION.post(destination, timeout=WEBHOOK_TIMEOUT_SECONDS, verify=VERIFY_SSL, allow_redirects=False, **request_kwargs)
 
 
 # Sends one webhook through an isolated bounded retry path that never uses GitHub retries
@@ -3771,7 +3785,7 @@ class EmptyPaginatedList(list):
 # Creates one timed PyGithub client and records its sanitized connection settings
 def create_github_client(operation):
     debug_print(f"PyGithub client operation={operation} endpoint={diagnostic_endpoint(GITHUB_API_URL)} timeout={PYGITHUB_TIMEOUT_SECONDS}s token={mask_secret(GITHUB_TOKEN)}")
-    return Github(base_url=GITHUB_API_URL, auth=Auth.Token(GITHUB_TOKEN), timeout=PYGITHUB_TIMEOUT_SECONDS)
+    return Github(base_url=GITHUB_API_URL, auth=Auth.Token(GITHUB_TOKEN), timeout=PYGITHUB_TIMEOUT_SECONDS, verify=VERIFY_SSL)
 
 
 # Logs one named PyGithub operation before its lazy network request is consumed
@@ -5698,7 +5712,7 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
     get_request = req.get if request_get is None else request_get
     try:
         debug_http_request("GET", endpoint, "GitHub token validation", 10, headers=headers, token=selected_token)
-        response = get_request(endpoint, headers=headers, timeout=10, allow_redirects=False)
+        response = get_request(endpoint, headers=headers, timeout=10, allow_redirects=False, verify=VERIFY_SSL)
         debug_http_response("GET", endpoint, "GitHub token validation", getattr(response, "status_code", "unknown"))
     except req.RequestException as exc:
         debug_print(f"GitHub token validation request failed error={type(exc).__name__}: {exc}")
@@ -5827,7 +5841,7 @@ def is_blocked_by(user):
 
         user_endpoint = f"{GITHUB_API_URL}/user"
         debug_http_request("GET", user_endpoint, "authenticated viewer lookup for block detection", 15, headers=headers, token=GITHUB_TOKEN)
-        response = req.get(user_endpoint, headers=headers, timeout=15)
+        response = req.get(user_endpoint, headers=headers, timeout=15, verify=VERIFY_SSL)
         debug_http_response("GET", user_endpoint, "authenticated viewer lookup for block detection", response.status_code)
         if response.status_code != 200:
             verbose_degraded_feature("Block status", "block and unblock alerts")
@@ -5846,7 +5860,7 @@ def is_blocked_by(user):
         """
         payload = {"query": query, "variables": {"login": user}}
         debug_http_request("POST", graphql_endpoint, "target block relationship lookup", 15, headers=headers, token=GITHUB_TOKEN)
-        response_graphql = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15)
+        response_graphql = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL)
         debug_http_response("POST", graphql_endpoint, "target block relationship lookup", response_graphql.status_code)
 
         if response_graphql.status_code == 404:
@@ -5887,7 +5901,7 @@ def get_starred_count(user):
         """
         payload = {"query": query, "variables": {"login": user}}
         debug_http_request("POST", graphql_endpoint, "starred repository count", 15, headers=headers, token=GITHUB_TOKEN)
-        response = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15)
+        response = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL)
         debug_http_response("POST", graphql_endpoint, "starred repository count", response.status_code)
 
         if not response.ok:
@@ -5908,7 +5922,7 @@ def has_private_banner(user):
     try:
         url = f"{GITHUB_HTML_URL.rstrip('/')}/{user}"
         debug_http_request("GET", url, "public profile visibility page", 15)
-        r = req.get(url, timeout=15)
+        r = req.get(url, timeout=15, verify=VERIFY_SSL)
         debug_http_response("GET", url, "public profile visibility page", r.status_code)
         return r.ok and "activity is private" in r.text.lower()
     except Exception as exc:
@@ -6006,7 +6020,7 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
 
         variables = {"login": username, "from": start_iso, "to": end_iso}
         debug_http_request("POST", url, "daily contribution calendar", 30, headers=headers, token=token)
-        r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30)
+        r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30, verify=VERIFY_SSL)
         debug_http_response("POST", url, "daily contribution calendar", r.status_code)
         r.raise_for_status()
         data = r.json()
@@ -7311,6 +7325,10 @@ def doctor_check_configuration(report, args, parser):
             source_rows += 1
     if not source_rows:
         report.add("Configuration", "PASS", "No secrets loaded", "No private setting source contributed a usable value")
+    if VERIFY_SSL:
+        report.add("Configuration", "PASS", "TLS certificate verification is on", "Every outbound request checks the server certificate")
+    else:
+        report.add("Configuration", "WARN", "TLS certificate verification is off", "VERIFY_SSL is False, so an intercepted connection cannot be told apart from the real service", "Set VERIFY_SSL back to True unless this network intercepts TLS with its own certificate authority", TLS_GUIDE_URL)
     if validate_github_endpoint_url(GITHUB_API_URL):
         report.add("Configuration", "PASS", "GitHub API URL is valid", diagnostic_endpoint(GITHUB_API_URL))
     else:
@@ -7401,7 +7419,7 @@ def doctor_check_connectivity(report, request_get=None):
     get_request = req.get if request_get is None else request_get
     try:
         debug_http_request("GET", CHECK_INTERNET_URL, "doctor connectivity", CHECK_INTERNET_TIMEOUT)
-        response = get_request(CHECK_INTERNET_URL, timeout=CHECK_INTERNET_TIMEOUT, allow_redirects=False)
+        response = get_request(CHECK_INTERNET_URL, timeout=CHECK_INTERNET_TIMEOUT, allow_redirects=False, verify=VERIFY_SSL)
         status = getattr(response, "status_code", None)
         debug_http_response("GET", CHECK_INTERNET_URL, "doctor connectivity", status)
     except Exception as exc:
@@ -7925,6 +7943,13 @@ def wizard_ask_yes_no(prompt, default=False, input_func=input, stream=None):
         destination.write(colorize("warning", "  Please answer 'y' or 'n'.") + "\n")
 
 
+# Offers the one way out after an entry the wizard cannot use, so declining keeps every answer already given
+def wizard_offer_retry(label, consequence="", input_func=input, stream=None):
+    if consequence:
+        return not wizard_ask_yes_no(f"Continue without the {label}? {consequence}", False, input_func, stream)
+    return wizard_ask_yes_no(f"Try entering the {label} again?", True, input_func, stream)
+
+
 # Reads one numbered choice and returns its stable value
 def wizard_ask_choice(prompt, choices, default, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
@@ -7956,6 +7981,8 @@ def wizard_ask_text(label, default="", validator=None, input_func=input, stream=
         if not error:
             return selected
         destination.write(colorize("warning", f"That value is not valid: {error}") + "\n")
+        if not wizard_offer_retry(label, input_func=input_func, stream=destination):
+            return str(default)
 
 
 # Returns a concise validation error for one general HTTPS service endpoint
@@ -8079,7 +8106,8 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
     while True:
         token = wizard_read_secret("GitHub token: ", getpass_func, destination)
         if not token:
-            if wizard_ask_yes_no("Continue without a token? Nothing can be monitored until one is set", False, input_func, destination):
+            # Monitoring cannot run without it, so leaving it unset has to be a decision rather than a fallthrough
+            if not wizard_offer_retry("GitHub token", "Nothing can be monitored until one is set", input_func, destination):
                 if "GITHUB_TOKEN" in state.baseline_secrets:
                     state.secrets["GITHUB_TOKEN"] = state.baseline_secrets["GITHUB_TOKEN"]
                 else:
@@ -8091,6 +8119,9 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
             login = validator(token, state.values["GITHUB_API_URL"])
         except Exception as exc:
             destination.write(colorize("error", f"Token validation failed: {sanitize_error_text(exc)}") + "\n")
+            # A token GitHub keeps rejecting cannot be corrected from inside the loop, so the wizard must be leavable here too
+            if not wizard_offer_retry("GitHub token", input_func=input_func, stream=destination):
+                return
             continue
         state.secrets["GITHUB_TOKEN"] = token
         state.authenticated_login = str(login)
@@ -8132,11 +8163,19 @@ def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None
     state.values["ERROR_NOTIFICATION"] = wizard_ask_yes_no("Email monitoring errors?", True, input_func, destination)
 
 
+# Switches the channel and every alert it owns off together, so a half-configured webhook cannot be written
+def wizard_disable_webhook(state):
+    state.values["WEBHOOK_ENABLED"] = False
+    for name in WIZARD_SECTION_KEYS["Webhook"]:
+        if name.endswith("_NOTIFICATION"):
+            state.values[name] = False
+
+
 # Collects optional Discord or ntfy delivery settings and alert choices
 def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=None):
     destination = sys.stdout if stream is None else stream
     if not wizard_ask_yes_no("Set up webhook alerts (Discord, ntfy etc.)?", bool(state.values["WEBHOOK_ENABLED"]), input_func, destination):
-        state.values["WEBHOOK_ENABLED"] = False
+        wizard_disable_webhook(state)
         return
     provider = wizard_ask_choice("Webhook provider", (("discord", "Discord", "Send alerts to a Discord webhook URL."), ("ntfy", "ntfy", "Send alerts to an ntfy topic URL.")), normalized_webhook_provider(state.values["WEBHOOK_PROVIDER"]) or "discord", input_func, destination)
     state.values["WEBHOOK_PROVIDER"] = provider
@@ -8149,7 +8188,14 @@ def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=No
             if valid:
                 state.secrets["WEBHOOK_URL"] = normalized
                 break
+            # Nothing can be delivered without a destination, so giving up has to stay reachable from the prompt
+            if not str(entered).strip():
+                if not wizard_offer_retry("webhook URL", "Webhook alerts stay off until one is set", input_func, destination):
+                    break
+                continue
             destination.write(colorize("warning", f"That is not a valid {'Discord webhook URL' if provider == 'discord' else 'ntfy topic or HTTPS topic URL'}.") + "\n")
+            if not wizard_offer_retry("webhook URL", input_func=input_func, stream=destination):
+                break
     if provider == "ntfy" and wizard_ask_yes_no("Set or replace an optional ntfy access token?", False, input_func, destination):
         access_token = wizard_read_secret("ntfy access token: ", getpass_func, destination)
         if "\r" in access_token or "\n" in access_token or access_token.casefold().startswith(("bearer ", "basic ")):
@@ -8157,7 +8203,7 @@ def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=No
         elif access_token:
             state.secrets["NTFY_ACCESS_TOKEN"] = access_token
     if not state.secrets.get("WEBHOOK_URL"):
-        state.values["WEBHOOK_ENABLED"] = False
+        wizard_disable_webhook(state)
         destination.write(colorize("warning", "Webhook alerts will stay disabled until a destination is saved.") + "\n")
         return
     state.values["WEBHOOK_ENABLED"] = True
@@ -9031,6 +9077,7 @@ def main():
             sys.exit(1)
 
     apply_diagnostic_cli_overrides(args)
+    apply_tls_verification_setting()
     env_path = load_startup_secrets(args.env_file, configured_settings)
     apply_startup_cli_overrides(args, configured_settings)
     if args.no_color is True:

@@ -238,9 +238,113 @@ def test_setup_token_prompt_explains_source_and_gates_empty_input(gm_module, req
 
     transcript = output.getvalue()
     assert f"Create or view your GitHub personal access token: {gm_module.GITHUB_TOKEN_SETTINGS_URL}" in transcript
-    assert "Continue without a token? Nothing can be monitored until one is set [y/N]: " in transcript
+    assert "Continue without the GitHub token? Nothing can be monitored until one is set [y/N]: " in transcript
     assert state.secrets["GITHUB_TOKEN"] == token
     assert state.authenticated_login == "octocat"
+
+
+# Builds one wizard state in a disposable directory
+def fresh_wizard_state(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    return gm_module.build_wizard_state(Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor")
+
+
+# Verifies a value the validator refuses can be given up on, keeping the setting that was already there
+def test_setup_rejected_value_can_be_abandoned(gm_module):
+    output = io.StringIO()
+
+    answer = gm_module.wizard_ask_text("GitHub API URL", "https://api.github.com", lambda value: "" if value == "https://api.github.com" else "enter a complete HTTPS GitHub API URL", scripted_reader(["not-a-url", "n"]), output)
+
+    assert answer == "https://api.github.com"
+    assert "Try entering the GitHub API URL again? [Y/n]: " in output.getvalue()
+
+
+# Verifies accepting the blank token offer leaves setup usable to finish rather than asking forever
+def test_setup_token_prompt_can_be_left_unset(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+    output = io.StringIO()
+
+    gm_module.wizard_collect_authentication(state, scripted_reader(["", "", "y"]), scripted_secret_reader([""]), output, lambda entered, _url: "octocat")
+
+    assert "GITHUB_TOKEN" not in state.secrets
+    assert "Continue without the GitHub token? Nothing can be monitored until one is set [y/N]: " in output.getvalue()
+
+
+# Verifies a token GitHub refuses is offered again, since a truncated paste is the common case
+def test_setup_rejected_token_is_asked_again(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+    output = io.StringIO()
+    token = "github_pat_private_wizard_value"
+
+    def validator(entered, _url):
+        if entered != token:
+            raise gm_module.GitHubTokenConfigurationError("GitHub rejected the configured token")
+        return "octocat"
+
+    gm_module.wizard_collect_authentication(state, scripted_reader(["", "", "y"]), scripted_secret_reader(["truncated", token]), output, validator)
+
+    assert state.secrets["GITHUB_TOKEN"] == token
+    assert "Try entering the GitHub token again? [Y/n]: " in output.getvalue()
+
+
+# Verifies a token GitHub keeps refusing can be given up on, since it cannot be corrected from inside the loop
+def test_setup_rejected_token_can_be_abandoned(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+    output = io.StringIO()
+
+    def validator(_entered, _url):
+        raise gm_module.GitHubTokenConfigurationError("GitHub rejected the configured token")
+
+    gm_module.wizard_collect_authentication(state, scripted_reader(["", "", "n"]), scripted_secret_reader(["truncated"]), output, validator)
+
+    assert "GITHUB_TOKEN" not in state.secrets
+
+
+# Verifies a blank destination is told apart from a malformed one and that skipping it leaves the channel off
+def test_setup_blank_webhook_url_is_worded_as_a_blank_one(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+    state.values["WEBHOOK_ERROR_NOTIFICATION"] = True
+    output = io.StringIO()
+
+    gm_module.wizard_collect_webhook(state, scripted_reader(["y", "", "", "y"]), scripted_secret_reader([""]), output)
+
+    transcript = output.getvalue()
+    assert "Continue without the webhook URL? Webhook alerts stay off until one is set [y/N]: " in transcript
+    assert "not a valid" not in transcript
+    assert state.values["WEBHOOK_ENABLED"] is False
+    assert state.values["WEBHOOK_ERROR_NOTIFICATION"] is False
+    assert "WEBHOOK_URL" not in state.secrets
+
+
+# Verifies a destination the wizard cannot use can be given up on, which leaves the channel and its alerts off
+def test_setup_malformed_webhook_url_can_be_abandoned(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+    state.values["WEBHOOK_ERROR_NOTIFICATION"] = True
+    output = io.StringIO()
+
+    gm_module.wizard_collect_webhook(state, scripted_reader(["y", "", "", "n"]), scripted_secret_reader(["not-a-url"]), output)
+
+    transcript = output.getvalue()
+    assert "That is not a valid Discord webhook URL." in transcript
+    assert "Try entering the webhook URL again? [Y/n]: " in transcript
+    assert state.values["WEBHOOK_ENABLED"] is False
+    assert state.values["WEBHOOK_ERROR_NOTIFICATION"] is False
+    assert "WEBHOOK_URL" not in state.secrets
+
+
+# Verifies declining the whole webhook section switches its alerts off with it, not only the master switch
+def test_setup_declining_webhooks_turns_every_webhook_alert_off(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+    state.values["WEBHOOK_ERROR_NOTIFICATION"] = True
+    state.values["WEBHOOK_PROFILE_NOTIFICATION"] = True
+    output = io.StringIO()
+
+    gm_module.wizard_collect_webhook(state, scripted_reader(["n"]), scripted_secret_reader([]), output)
+
+    assert state.values["WEBHOOK_ENABLED"] is False
+    assert state.values["WEBHOOK_ERROR_NOTIFICATION"] is False
+    assert state.values["WEBHOOK_PROFILE_NOTIFICATION"] is False
 
 
 # Verifies review menus use the shared labels, descriptions and validation messages
