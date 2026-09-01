@@ -3028,7 +3028,7 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
         StartupSummaryRow("Notifications (email)", email_state, concise=True),
         StartupSummaryRow("Notifications (webhook)", webhook_state, concise=True),
-        StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only", concise=True),
+        StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only", concise=True, full=False, log=False),
         StartupSummaryRow("Configuration", str(config_path) if config_path else "None", concise=True),
         StartupSummaryRow("Dotenv", str(env_path) if env_path else "None", concise=True),
         StartupSummaryRow("GitHub API URL", str(GITHUB_API_URL)),

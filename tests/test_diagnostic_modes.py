@@ -209,6 +209,17 @@ def test_startup_summary_routes_concise_full_and_log_views(gm_module):
     assert "More details:" not in complete.getvalue()
 
 
+# Verifies the concise output row does not repeat the path the full view already carries as Output logging
+def test_the_output_row_does_not_repeat_the_log_path(gm_module):
+    rows = gm_module.build_startup_summary("octocat", "github_monitor.conf", ".env", "github_monitor_octocat.log")
+    output = next(row for row in rows if row.label == "Output")
+    output_logging = next(row for row in rows if row.label == "Output logging")
+
+    assert (output.concise, output.full, output.log) == (True, False, False)
+    assert output_logging.full is True
+    assert "github_monitor_octocat.log" in output_logging.value
+
+
 @pytest.mark.parametrize("mode", ["--verbose", "--debug"])
 # Drives a broken target through main and verifies each mode produces useful user-visible output
 def test_broken_target_transcript_exercises_real_cli_path(gm_module, monkeypatch, capsys, request, mode):
