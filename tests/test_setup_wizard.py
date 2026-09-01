@@ -167,7 +167,7 @@ def test_setup_wizard_cancellation_writes_nothing(gm_module, request):
     exit_code = gm_module.run_setup_wizard(wizard_parser(), config_path, dotenv_path, input_func=cancel_reader, stream=output, interactive=True)
 
     assert exit_code == 1
-    assert "Setup cancelled. No files were written." in output.getvalue()
+    assert "Setup cancelled. Destination files were not changed." in output.getvalue()
     assert not config_path.exists()
     assert not dotenv_path.exists()
 
@@ -214,6 +214,35 @@ def test_setup_review_can_edit_one_section_without_losing_other_answers(gm_modul
     assert state.target == "octocat"
     assert state.values["TRACK_REPOS_CHANGES"] is True
     assert state.values["GITHUB_CHECK_INTERVAL"] == 300
+
+
+# Verifies review menus use the shared labels, descriptions and validation messages
+def test_setup_review_menu_matches_the_shared_monitor_wording(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    state = gm_module.build_wizard_state(Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor")
+    state.target = "octocat"
+    output = io.StringIO()
+    answers = scripted_reader(["wrong", "2", "7", "1", "", "", "", ""])
+
+    assert gm_module.wizard_review_setup(state, answers, stream=output) is True
+
+    transcript = output.getvalue()
+    assert "Save settings (default)" in transcript
+    assert "Write the displayed settings to the selected files." in transcript
+    assert "Review or change settings" in transcript
+    assert "Discard answers and exit" in transcript
+    assert "Which setup section should be changed?" in transcript
+    assert "Return to summary" in transcript
+    assert "  Enter a number between 1 and 3." in transcript
+
+
+# Verifies yes or no retries use the same short guidance as sibling monitors
+def test_setup_yes_no_retry_matches_the_shared_wording(gm_module):
+    output = io.StringIO()
+
+    assert gm_module.wizard_ask_yes_no("Continue?", input_func=scripted_reader(["maybe", "y"]), stream=output) is True
+    assert "  Please answer 'y' or 'n'." in output.getvalue()
 
 
 # Verifies successful doctor can hand the exact saved command to monitoring

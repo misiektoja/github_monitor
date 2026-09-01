@@ -7809,23 +7809,25 @@ def wizard_ask_yes_no(prompt, default=False, input_func=input, stream=None):
             return True
         if answer in {"n", "no"}:
             return False
-        destination.write(colorize("warning", "Please answer yes or no.") + "\n")
+        destination.write(colorize("warning", "  Please answer 'y' or 'n'.") + "\n")
 
 
 # Reads one numbered choice and returns its stable value
 def wizard_ask_choice(prompt, choices, default, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
+    destination.write("\n")
     destination.write(colorize("section", prompt) + "\n")
-    for index, (_, label) in enumerate(choices, 1):
+    for index, (_, label, description) in enumerate(choices, 1):
         marker = " (default)" if choices[index - 1][0] == default else ""
         destination.write(f"  {colorize('username', str(index))}. {label}{colorize('info', marker)}\n")
+        destination.write(f"     {description}\n")
     while True:
-        answer = wizard_read_answer("Choice: ", input_func, destination)
+        answer = wizard_read_answer(f"Choose [1-{len(choices)}]: ", input_func, destination)
         if not answer:
             return default
         if answer.isdigit() and 1 <= int(answer) <= len(choices):
             return choices[int(answer) - 1][0]
-        destination.write(colorize("warning", f"Enter a number from 1 through {len(choices)}.") + "\n")
+        destination.write(colorize("warning", f"  Enter a number between 1 and {len(choices)}.") + "\n")
 
 
 # Reads one text value with a shown default and optional validation
@@ -8038,7 +8040,7 @@ def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=No
     if not wizard_ask_yes_no("Configure webhook alerts?", bool(state.values["WEBHOOK_ENABLED"]), input_func, destination):
         state.values["WEBHOOK_ENABLED"] = False
         return
-    provider = wizard_ask_choice("Webhook provider", (("discord", "Discord"), ("ntfy", "ntfy")), normalized_webhook_provider(state.values["WEBHOOK_PROVIDER"]) or "discord", input_func, destination)
+    provider = wizard_ask_choice("Webhook provider", (("discord", "Discord", "Send alerts to a Discord webhook URL."), ("ntfy", "ntfy", "Send alerts to an ntfy topic URL.")), normalized_webhook_provider(state.values["WEBHOOK_PROVIDER"]) or "discord", input_func, destination)
     state.values["WEBHOOK_PROVIDER"] = provider
     if wizard_ask_yes_no("Set or replace the webhook destination now?", not bool(state.secrets.get("WEBHOOK_URL")), input_func, destination):
         while True:
@@ -8119,8 +8121,18 @@ def wizard_render_summary(state, stream=None):
 # Recollects one selected section while preserving every other answer
 def wizard_edit_section(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
     destination = sys.stdout if stream is None else stream
-    sections = tuple((name, name) for name in WIZARD_SECTION_KEYS)
-    selected = wizard_ask_choice("Review or change which section?", sections, "Target", input_func, destination)
+    sections = (
+        ("Target", "Target", "Change the GitHub profile and monitoring feature choices."),
+        ("Polling", "Polling", "Change the polling interval and local timezone."),
+        ("Authentication", "Authentication", "Change GitHub endpoints or the access token."),
+        ("Email", "Email alerts", "Change email delivery and alert choices."),
+        ("Webhook", "Webhook alerts", "Change Discord or ntfy delivery and alert choices."),
+        ("Destinations", "File destinations", "Change log and CSV output settings."),
+        ("return", "Return to summary", "Keep every current answer and show the summary again."),
+    )
+    selected = wizard_ask_choice("Which setup section should be changed?", sections, "Target", input_func, destination)
+    if selected == "return":
+        return
     wizard_reset_section(state, selected)
     collectors = {
         "Target": lambda: wizard_collect_target(state, input_func, destination),
@@ -8138,14 +8150,20 @@ def wizard_review_setup(state, input_func=input, getpass_func=None, stream=None,
     destination = sys.stdout if stream is None else stream
     while True:
         wizard_render_summary(state, destination)
-        action = wizard_ask_choice("What would you like to do?", (("save", "Save"), ("edit", "Review or change"), ("discard", "Discard and exit")), "save", input_func, destination)
+        actions = (
+            ("save", "Save settings", "Write the displayed settings to the selected files."),
+            ("edit", "Review or change settings", "Edit one section without losing the other answers."),
+            ("discard", "Discard answers and exit", "Leave the destination files unchanged."),
+        )
+        action = wizard_ask_choice("What would you like to do?", actions, "save", input_func, destination)
         if action == "save":
             return True
         if action == "edit":
             wizard_edit_section(state, input_func, getpass_func, destination, token_validator)
             continue
-        if wizard_ask_yes_no("Discard every answer and exit without writing files?", False, input_func, destination):
+        if wizard_ask_yes_no("Discard all entered answers and exit?", False, input_func, destination):
             return False
+        destination.write(colorize("info", "  Setup answers retained.") + "\n")
 
 
 # Renders the complete data-only configuration selected by the wizard
@@ -8330,11 +8348,11 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         _wizard_print_setup_destinations(destination, context, state)
         wizard_collect_all(state, input_func, getpass_func, destination, token_validator)
         if not wizard_review_setup(state, input_func, getpass_func, destination, token_validator):
-            destination.write("\n" + colorize("warning", "Setup discarded. No files were written.") + "\n")
+            destination.write("\n" + colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
             return 1
         backups = save_wizard_files(state)
     except WizardCancelled:
-        destination.write(colorize("warning", "Setup cancelled. No files were written.") + "\n")
+        destination.write(colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
         return 1
     except Exception as exc:
         advice = classify_recovery_error(exc, "config")
@@ -8342,9 +8360,10 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         destination.write(apply_color_to_text(render_recovery_advice(advice)) + "\n")
         return 1
     config_backup, dotenv_backup = backups
-    saved_rows = [("Configuration:", state.config_path), ("Dotenv:", state.dotenv_path)]
+    saved_rows = [("Configuration:", state.config_path)]
     if config_backup is not None:
-        saved_rows.append(("Configuration backup:", config_backup))
+        saved_rows.append(("Backup:", config_backup))
+    saved_rows.append(("Secrets:" if state.secrets else "Dotenv:", state.dotenv_path))
     if dotenv_backup is not None:
         saved_rows.append(("Dotenv backup:", dotenv_backup))
     saved_width = max(len(label) for label, _ in saved_rows) + 1

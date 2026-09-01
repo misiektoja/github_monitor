@@ -141,7 +141,7 @@ The easiest first run is the guided setup wizard:
 github_monitor --setup
 ```
 
-It asks for the target, polling interval, GitHub authentication, optional email and webhook alerts and output destinations. Answers stay in memory until the complete masked summary is reviewed. Choose **Save** to write non-secret settings to `github_monitor.conf` and private values to a separate mode-0600 `.env` file. Existing destinations receive timestamped mode-0600 backups before replacement.
+It asks for the target, polling interval, GitHub authentication, optional email and webhook alerts and output destinations. Answers stay in memory until the complete masked summary is reviewed. Choose **Save settings** to write non-secret settings to `github_monitor.conf` and private values to a separate mode-0600 `.env` file. Existing destinations receive timestamped mode-0600 backups before replacement.
 
 The wizard validates a newly entered GitHub token before saving it. After saving, it offers the read-only Doctor preflight then monitoring. Both prompts default to yes when the saved setup is ready. Commands after setup match a PyPI install or downloaded script and include the selected config plus dotenv paths.
 
@@ -213,7 +213,7 @@ When the named file already exists, `--generate-config` asks before replacing it
 
 Edit the `github_monitor.conf` file and change any desired configuration options (detailed comments are provided for each).
 
-`--setup --config-file PATH --env-file PATH` selects custom wizard destinations. Setup parses an existing config as data and preserves its supported settings. It moves usable secrets found there into the dotenv output. Nothing is written during questioning or section edits. Save validates the complete generated config then prepares both files before replacing either destination.
+`--setup --config-file PATH --env-file PATH` selects custom wizard destinations. Setup parses an existing config as data and preserves its supported settings. It moves usable secrets found there into the dotenv output. Nothing is written during questioning or section edits. **Save settings** validates the complete generated config then prepares both files before replacing either destination.
 
 Startup resolves values in this order:
 
