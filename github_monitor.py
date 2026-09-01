@@ -1168,7 +1168,7 @@ class Logger(object):
         try:
             self.logfile = open(filename, "a", buffering=1, encoding="utf-8")
         except Exception as exc:
-            debug_print("Opening output log failed", path=filename, error=f"{type(exc).__name__}: {exc}")
+            debug_print("Opening output log", path=filename, outcome="failed", error=f"{type(exc).__name__}: {exc}")
             raise
         debug_print("Output log opened", path=filename)
 
@@ -2589,7 +2589,7 @@ def smtp_quit_quietly(smtp_object):
     try:
         smtp_object.quit()
     except Exception as quit_error:
-        debug_print("SMTP quit failed and was ignored", error=f"{type(quit_error).__name__}: {quit_error}")
+        debug_print("SMTP quit", outcome="failed", error=f"{type(quit_error).__name__}: {quit_error}")
 
 
 # Opens one authenticated SMTP session and leaves closing it to the caller
@@ -2604,7 +2604,7 @@ def smtp_connect_and_login(use_ssl, smtp_timeout=15):
         debug_print("SMTP authentication succeeded", host=SMTP_HOST)
         return smtp_object
     except Exception as connect_error:
-        debug_print("SMTP session setup failed", host=SMTP_HOST, error=f"{type(connect_error).__name__}: {connect_error}")
+        debug_print("SMTP session setup", host=SMTP_HOST, outcome="failed", error=f"{type(connect_error).__name__}: {connect_error}")
         smtp_quit_quietly(smtp_object)
         raise
 
@@ -2730,7 +2730,7 @@ def diagnostic_endpoint(url, host_only=False):
     try:
         parsed = urlsplit(str(url or "").strip())
     except ValueError as exc:
-        debug_print(f"Could not parse diagnostic endpoint: {type(exc).__name__}: {exc}")
+        debug_print("Could not parse diagnostic endpoint", outcome="failed", error=f"{type(exc).__name__}: {exc}")
         return "<invalid endpoint>"
     if not parsed.scheme or not parsed.hostname:
         return sanitize_error_text(url)
@@ -3394,7 +3394,7 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
         except req.RequestException as exc:
             last_error = exc
             attempt_number = attempt + 1
-            debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", error=f"{type(exc).__name__}: {exc}", retryable=attempt < WEBHOOK_MAX_ATTEMPTS - 1)
+            debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", outcome="failed", error=f"{type(exc).__name__}: {exc}", retryable=attempt < WEBHOOK_MAX_ATTEMPTS - 1)
             if attempt == WEBHOOK_MAX_ATTEMPTS - 1:
                 verbose_print(f"Webhook delivery through {provider} failed")
                 debug_print("Webhook delivery", channel=provider, outcome="failed", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
@@ -3432,7 +3432,7 @@ def init_csv_file(csv_file_name):
                 writer.writeheader()
             debug_print("CSV header write succeeded", path=csv_file_name)
     except Exception as e:
-        debug_print("CSV initialization failed", path=csv_file_name, error=f"{type(e).__name__}: {e}")
+        debug_print("CSV initialization", path=csv_file_name, outcome="failed", error=f"{type(e).__name__}: {e}")
         raise RuntimeError(f"Could not initialize CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
@@ -3445,7 +3445,7 @@ def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new
             csvwriter.writerow({'Date': timestamp, 'Type': object_type, 'Name': object_name, 'Old': old, 'New': new})
         debug_print("CSV append succeeded", path=csv_file_name, record_type=object_type)
     except Exception as e:
-        debug_print("CSV append failed", path=csv_file_name, record_type=object_type, error=f"{type(e).__name__}: {e}")
+        debug_print("CSV append", path=csv_file_name, record_type=object_type, outcome="failed", error=f"{type(e).__name__}: {e}")
         raise RuntimeError(f"Failed to write to CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
@@ -3836,7 +3836,7 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
                         sleep_for = int(backoff * i)
 
                 retryable = i < retries
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
                 if retryable:
                     print(f"* {fn.__name__} rate limited, sleeping {sleep_for}s (retry {i}/{retries})")
                     debug_monitor_wait_timing(f"GitHub rate limit before attempt {i + 1}/{retries}", sleep_for)
@@ -3846,7 +3846,7 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
             except NET_ERRORS as e:
                 retryable = i < retries
                 delay = backoff * i
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
                 if retryable:
                     print(f"* {fn.__name__} error: {sanitize_error_text(e)} (retry {i}/{retries})")
                     debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{retries}", delay)
@@ -5507,7 +5507,7 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
         detail = f"Config file '{config_path}' contains unsupported content: {exc}"
     except Exception as exc:
         detail = f"Config file '{config_path}' failed with {type(exc).__name__}: {exc}"
-    debug_print("Configuration load failed", path=config_path, detail=detail)
+    debug_print("Configuration load", path=config_path, outcome="failed", error=detail)
     if error_out is not None:
         error_out.append(detail)
     if report_errors:
@@ -5656,7 +5656,7 @@ def dotenv_contains_key(path: Path, key: str) -> bool:
     try:
         content = path.read_text(encoding="utf-8")
     except Exception as exc:
-        debug_print("Dotenv key check read failed", path=path, key=key, error=f"{type(exc).__name__}: {exc}")
+        debug_print("Dotenv key check read", path=path, key=key, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
     debug_print("Dotenv key check read succeeded", path=path, key=key)
     return any(match_dotenv_assignment(line, key) for line in content.splitlines())
@@ -5670,7 +5670,7 @@ def update_dotenv_value(path: Path, key: str, value: str) -> None:
     try:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
     except Exception as exc:
-        debug_print("Private settings file read failed", path=path, key=key, error=f"{type(exc).__name__}: {exc}")
+        debug_print("Private settings file read", path=path, key=key, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
     output_lines = []
     replaced = False
@@ -5689,7 +5689,7 @@ def update_dotenv_value(path: Path, key: str, value: str) -> None:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as dotenv_file:
             dotenv_file.write("\n".join(output_lines) + "\n")
     except Exception as exc:
-        debug_print("Private settings file update failed", path=path, key=key, error=f"{type(exc).__name__}: {exc}")
+        debug_print("Private settings file update", path=path, key=key, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
     debug_print("Private settings file update succeeded", path=path, key=key, mode="0600")
     verbose_print(f"Saved {key} in the private settings file")
@@ -5715,7 +5715,7 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
         response = get_request(endpoint, headers=headers, timeout=10, allow_redirects=False, verify=VERIFY_SSL)
         debug_http_response("GET", endpoint, "GitHub token validation", getattr(response, "status_code", "unknown"))
     except req.RequestException as exc:
-        debug_print("GitHub token validation request failed", error=f"{type(exc).__name__}: {exc}")
+        debug_print("GitHub token validation request", outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError("Could not reach the configured GitHub API while validating the token and the dotenv file was not changed") from None
     status_code = getattr(response, "status_code", None)
     if status_code in (401, 403):
@@ -5763,7 +5763,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     try:
         update_dotenv_value(destination, "GITHUB_TOKEN", token)
     except Exception as exc:
-        debug_print("Private settings file update failed", path=destination, key="GITHUB_TOKEN", error=f"{type(exc).__name__}: {exc}")
+        debug_print("Private settings file update", path=destination, key="GITHUB_TOKEN", outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError(f"Could not save GITHUB_TOKEN in '{destination}'. Check the path and file permissions") from None
     paths = []
     if config_path:
@@ -8405,7 +8405,7 @@ def prepare_wizard_atomic_file(path, content):
         except OSError as close_error:
             debug_swallowed_exception("Setup temporary descriptor cleanup", close_error)
         temporary_path.unlink(missing_ok=True)
-        debug_print("Setup temporary file write failed", path=path, error=f"{type(exc).__name__}: {exc}")
+        debug_print("Setup temporary file write", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
     return temporary_path
 
@@ -8635,7 +8635,7 @@ def main():
             print_recovery_advice(advice)
             sys.exit(1)
         except OSError as exc:
-            debug_print("Generated configuration write failed", path=locals().get('output_file', '<unknown>'), error=f"{type(exc).__name__}: {exc}")
+            debug_print("Generated configuration write", path=locals().get('output_file', '<unknown>'), outcome="failed", error=f"{type(exc).__name__}: {exc}")
             advice = make_recovery_advice("file.unwritable", "The generated configuration could not be written", "Check the destination path and file permissions", False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
             print_recovery_advice(advice)
             sys.exit(1)
@@ -9211,7 +9211,7 @@ def main():
                 pass
             debug_print("CSV startup write check succeeded", path=CSV_FILE)
         except Exception as e:
-            debug_print("CSV startup write check failed", path=CSV_FILE, error=f"{type(e).__name__}: {e}")
+            debug_print("CSV startup write check", path=CSV_FILE, outcome="failed", error=f"{type(e).__name__}: {e}")
             advice = classify_recovery_error(e, "file")
             if advice.code == "unknown":
                 advice = make_recovery_advice("file.unwritable", "The CSV file cannot be opened for writing", "Check CSV_FILE and its parent directory permissions", False, f"{type(e).__name__}: {e}", CONFIG_GUIDE_URL)

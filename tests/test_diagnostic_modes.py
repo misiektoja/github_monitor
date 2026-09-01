@@ -137,7 +137,7 @@ def test_file_transcript_covers_success_and_failure(gm_module, monkeypatch, caps
 
     output = capsys.readouterr().out
     assert f"Private settings file update succeeded: path={destination}" in output
-    assert f"Private settings file read failed: path={directory.name}" in output
+    assert f"Private settings file read: path={directory.name}, key=GITHUB_TOKEN, outcome=failed" in output
     assert "IsADirectoryError" in output
     assert "private-file-value" not in output
 
