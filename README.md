@@ -178,6 +178,16 @@ github_monitor --generate-config github_monitor.conf
 
 Edit the `github_monitor.conf` file and change any desired configuration options (detailed comments are provided for each).
 
+Startup resolves values in this order:
+
+1. Built-in defaults
+2. The selected configuration file
+3. The selected dotenv file
+4. Exported secret environment variables
+5. Explicit command-line options
+
+An exported secret overrides the same key from a dotenv file. An explicit command-line option overrides every saved source. Startup checks use these effective values instead of the defaults that existed when the module was imported.
+
 <a id="github-personal-access-token"></a>
 ### GitHub Personal Access Token
 
@@ -218,6 +228,8 @@ If you update `GITHUB_TOKEN` in the active dotenv file, send a `SIGHUP` signal t
 By default the tool uses Public Web GitHub API URL: [https://api.github.com](https://api.github.com)
 
 If you want to use GitHub Enterprise API URL then change `GITHUB_API_URL` (or use `-x` flag) to: `https://{your_hostname}/api/v3`
+
+The startup connectivity check follows the effective GitHub API URL unless `CHECK_INTERNET_URL` names a separate endpoint. Its request uses the effective `CHECK_INTERNET_TIMEOUT`. A `--github-url` override is applied before this check runs.
 
 
 <a id="events-to-monitor"></a>
@@ -398,6 +410,8 @@ github_monitor <github_username> --env-file /path/.env-github_monitor
 ```sh
 github_monitor <github_username> --env-file none
 ```
+
+Exported secret environment variables continue to work when dotenv auto-search is disabled or no dotenv file exists.
 
 The final fallback is storing secrets in the configuration file or source code.
 

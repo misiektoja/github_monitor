@@ -36,6 +36,7 @@ and again before anything is published to PyPI.
 | `test_repository_contracts.py` | Governance documents, issue templates, action pinning, release gating and the CI contract |
 | `test_repository_metadata.py` | Governance files, citation, funding, line endings, the declared editor style, the pinned linter and release integrity |
 | `test_repository_monitoring.py` | Discussion collection, repository snapshots, open and closed notifications, event formatting |
+| `test_startup_configuration.py` | Config, dotenv, exported environment and CLI precedence at startup consumer boundaries |
 | `test_webhook_notifications.py` | Webhook URL validation, provider detection and per-event notification switches |
 
 ## Conventions

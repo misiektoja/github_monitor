@@ -12,8 +12,8 @@ PyGithub
 requests
 python-dateutil
 pytz
-tzlocal (optional)
-python-dotenv (optional)
+tzlocal
+python-dotenv
 """
 
 VERSION = "2.6.3"
@@ -520,10 +520,12 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 
-# Checks internet connectivity
-def check_internet(url=CHECK_INTERNET_URL, timeout=CHECK_INTERNET_TIMEOUT):
+# Checks internet connectivity using the effective runtime URL and timeout
+def check_internet(url=None, timeout=None):
+    selected_url = CHECK_INTERNET_URL if url is None else url
+    selected_timeout = CHECK_INTERNET_TIMEOUT if timeout is None else timeout
     try:
-        _ = req.get(url, timeout=timeout)
+        _ = req.get(selected_url, timeout=selected_timeout)
         return True
     except req.RequestException as e:
         print(f"* No connectivity, please check your network:\n\n{e}")
@@ -4235,7 +4237,7 @@ def describe_retired_settings(names, quoted_path):
 
 
 # Loads a config file as data and applies only recognized literal settings
-def load_config_file(config_path, namespace=None, report_errors=True):
+def load_config_file(config_path, namespace=None, report_errors=True, loaded_names_out=None):
     selected_namespace = globals() if namespace is None else namespace
     retired_settings = []
     try:
@@ -4243,6 +4245,8 @@ def load_config_file(config_path, namespace=None, report_errors=True):
         # Parsed as data rather than executed, so a config file picked up from the working directory cannot run code
         parsed_values = parse_config_content(content, str(config_path), retired_settings)
         selected_namespace.update(parsed_values)
+        if loaded_names_out is not None:
+            loaded_names_out.update(parsed_values)
         if retired_settings and report_errors:
             print(f"* Note: {describe_retired_settings(retired_settings, chr(39) + str(config_path) + chr(39))}")
         return True
@@ -4264,6 +4268,57 @@ def load_config_file(config_path, namespace=None, report_errors=True):
         print(f"* Error: {detail}")
         print("* Config files are read as data. Only documented SETTING = value lines with plain literal values are accepted.")
     return False
+
+
+# Loads the selected dotenv file then applies every exported secret independently of that file
+def load_startup_secrets(env_file=None):
+    global DOTENV_FILE
+    if env_file is not None:
+        DOTENV_FILE = os.path.expanduser(env_file)
+    elif DOTENV_FILE:
+        DOTENV_FILE = os.path.expanduser(DOTENV_FILE)
+
+    if DOTENV_FILE and DOTENV_FILE.casefold() == "none":
+        env_path = None
+    else:
+        try:
+            from dotenv import load_dotenv, find_dotenv
+
+            if DOTENV_FILE:
+                env_path = DOTENV_FILE
+                if not os.path.isfile(env_path):
+                    print(f"* Warning: dotenv file '{env_path}' does not exist\n")
+                else:
+                    load_dotenv(env_path, override=False)
+            else:
+                env_path = find_dotenv() or None
+                if env_path:
+                    load_dotenv(env_path, override=False)
+        except ImportError:
+            env_path = DOTENV_FILE if DOTENV_FILE else None
+            if env_path:
+                install_command = shlex.join([sys.executable, "-m", "pip", "install", "python-dotenv"])
+                print(f"* Warning: Cannot load dotenv file '{env_path}' because 'python-dotenv' is not installed\n\nTo install it, run:\n    {install_command}\n\nOnce installed, re-run this tool\n")
+
+    for secret in SECRET_KEYS:
+        value = os.getenv(secret)
+        if value is not None:
+            globals()[secret] = value
+    return env_path
+
+
+# Applies startup CLI overrides before any check consumes effective configuration
+def apply_startup_cli_overrides(args, configured_settings=None):
+    global GITHUB_TOKEN, GITHUB_API_URL, CHECK_INTERNET_URL
+    configured_names = set(configured_settings or ())
+    previous_api_url = GITHUB_API_URL
+    connectivity_follows_api = "CHECK_INTERNET_URL" not in configured_names or CHECK_INTERNET_URL == previous_api_url
+    if args.github_token is not None:
+        GITHUB_TOKEN = args.github_token
+    if args.github_url is not None:
+        GITHUB_API_URL = args.github_url
+    if connectivity_follows_api:
+        CHECK_INTERNET_URL = GITHUB_API_URL
 
 
 # Represents a safe GitHub token setup or validation failure
@@ -5641,10 +5696,6 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    clear_screen(CLEAR_SCREEN)
-
-    print(f"GitHub Monitoring Tool v{VERSION}\n")
-
     parser = argparse.ArgumentParser(
         prog="github_monitor",
         description=("Monitor a GitHub user's profile and activity with customizable email alerts [ https://github.com/misiektoja/github_monitor/ ]"), formatter_class=argparse.RawTextHelpFormatter
@@ -5969,47 +6020,21 @@ def main():
         CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
 
     cfg_path = find_config_file(CLI_CONFIG_PATH)
+    configured_settings = set()
 
     if not cfg_path and CLI_CONFIG_PATH:
         print(f"* Error: Config file '{CLI_CONFIG_PATH}' does not exist")
         sys.exit(1)
 
     if cfg_path:
-        if not load_config_file(cfg_path):
+        if not load_config_file(cfg_path, loaded_names_out=configured_settings):
             sys.exit(1)
 
-    if args.env_file:
-        DOTENV_FILE = os.path.expanduser(args.env_file)
-    else:
-        if DOTENV_FILE:
-            DOTENV_FILE = os.path.expanduser(DOTENV_FILE)
+    env_path = load_startup_secrets(args.env_file)
+    apply_startup_cli_overrides(args, configured_settings)
 
-    if DOTENV_FILE and DOTENV_FILE.lower() == 'none':
-        env_path = None
-    else:
-        try:
-            from dotenv import load_dotenv, find_dotenv
-
-            if DOTENV_FILE:
-                env_path = DOTENV_FILE
-                if not os.path.isfile(env_path):
-                    print(f"* Warning: dotenv file '{env_path}' does not exist\n")
-                else:
-                    load_dotenv(env_path, override=True)
-            else:
-                env_path = find_dotenv() or None
-                if env_path:
-                    load_dotenv(env_path, override=True)
-        except ImportError:
-            env_path = DOTENV_FILE if DOTENV_FILE else None
-            if env_path:
-                print(f"* Warning: Cannot load dotenv file '{env_path}' because 'python-dotenv' is not installed\n\nTo install it, run:\n    pip3 install python-dotenv\n\nOnce installed, re-run this tool\n")
-
-    if env_path:
-        for secret in SECRET_KEYS:
-            val = os.getenv(secret)
-            if val is not None:
-                globals()[secret] = val
+    clear_screen(CLEAR_SCREEN)
+    print(f"GitHub Monitoring Tool v{VERSION}\n")
 
     if args.set_github_token:
         try:
@@ -6040,7 +6065,7 @@ def main():
             LOCAL_TIMEZONE = str(local_tz)
         else:
             print("* Error: Cannot detect local timezone.")
-            print("* Hint: This can happen if the optional 'tzlocal' library is missing. Install it with: pip install tzlocal")
+            print("* Hint: This can happen if the 'tzlocal' library is missing. Install it with the Python interpreter used to run this tool.")
             print("* Or set LOCAL_TIMEZONE to your local timezone manually.")
             sys.exit(1)
     else:
@@ -6067,9 +6092,6 @@ def main():
             sys.exit(1)
         sys.exit(0)
 
-    if args.github_token:
-        GITHUB_TOKEN = args.github_token
-
     if not GITHUB_TOKEN or GITHUB_TOKEN == "your_github_classic_personal_access_token":
         print("* Error: GITHUB_TOKEN (-t / --github_token) value is empty or incorrect")
         sys.exit(1)
@@ -6077,9 +6099,6 @@ def main():
     if not args.username:
         print("* Error: GITHUB_USERNAME argument is required !")
         sys.exit(1)
-
-    if args.github_url:
-        GITHUB_API_URL = args.github_url
 
     if not GITHUB_API_URL:
         print("* Error: GITHUB_API_URL (-x / --github_url) value is empty")
