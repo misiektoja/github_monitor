@@ -261,3 +261,28 @@ def test_command_help_lists_webhook_options():
     assert "--webhook-url URL" in result.stdout
     assert "--set-webhook-url" in result.stdout
     assert "--send-test-webhook" in result.stdout
+
+
+# Verifies every delivery carries the deadline and refuses a redirect, which could retarget the payload
+def test_webhook_delivery_is_bounded_and_does_not_follow_redirects(gm_module, monkeypatch):
+    configure_webhook(gm_module, monkeypatch)
+    webhook_post = Mock(return_value=FakeResponse())
+    monkeypatch.setattr(gm_module.WEBHOOK_SESSION, "post", webhook_post)
+
+    assert gm_module.send_webhook("Title", "Body", "profile") == 0
+    request = webhook_post.call_args
+    assert request.args == (gm_module.WEBHOOK_URL,)
+    assert request.kwargs["timeout"] == gm_module.WEBHOOK_TIMEOUT_SECONDS
+    assert request.kwargs["allow_redirects"] is False
+
+
+# Verifies a destination replaced mid-delivery is refused rather than posted to blindly
+def test_webhook_delivery_refuses_a_destination_that_stopped_validating(gm_module, monkeypatch):
+    configure_webhook(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "http://example.test/hook")
+    webhook_post = Mock(return_value=FakeResponse())
+    monkeypatch.setattr(gm_module.WEBHOOK_SESSION, "post", webhook_post)
+
+    with pytest.raises(gm_module.req.exceptions.InvalidURL):
+        gm_module.post_webhook_request(json={"content": "body"})
+    webhook_post.assert_not_called()

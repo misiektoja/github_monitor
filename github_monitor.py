@@ -2254,6 +2254,15 @@ def print_webhook_error(message: Any) -> None:
     print(f"Error sending webhook: {sanitize_webhook_text(message)}")
 
 
+# Sends one webhook request with the destination, deadline and redirect policy every delivery shares
+def post_webhook_request(**request_kwargs: Any) -> Any:
+    destination = str(WEBHOOK_URL or "").strip()
+    # Revalidated here because a dotenv reload can replace the destination after the delivery started
+    if not validate_webhook_url(destination):
+        raise req.exceptions.InvalidURL("WEBHOOK_URL must contain a complete HTTPS link")
+    return WEBHOOK_SESSION.post(destination, timeout=WEBHOOK_TIMEOUT_SECONDS, allow_redirects=False, **request_kwargs)
+
+
 # Sends one webhook through an isolated bounded retry path that never uses GitHub retries
 def send_webhook(title: str, description: str, notification_type: str = "event", force: bool = False, sleeper: Optional[Callable[[float], None]] = None, image_url: str = "") -> int:
     if not force and not webhook_event_enabled(notification_type):
@@ -2286,11 +2295,11 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
     for attempt in range(WEBHOOK_MAX_ATTEMPTS):
         try:
             if provider == "ntfy":
-                response = WEBHOOK_SESSION.post(str(WEBHOOK_URL).strip(), data=ntfy_message.encode("utf-8"), params={"title": ntfy_title}, headers=request_headers, timeout=WEBHOOK_TIMEOUT_SECONDS)
+                response = post_webhook_request(data=ntfy_message.encode("utf-8"), params={"title": ntfy_title}, headers=request_headers)
             elif isinstance(discord_payload, str):
-                response = WEBHOOK_SESSION.post(str(WEBHOOK_URL).strip(), data=discord_payload, headers=request_headers, timeout=WEBHOOK_TIMEOUT_SECONDS)
+                response = post_webhook_request(data=discord_payload, headers=request_headers)
             else:
-                response = WEBHOOK_SESSION.post(str(WEBHOOK_URL).strip(), json=discord_payload, headers=request_headers, timeout=WEBHOOK_TIMEOUT_SECONDS)
+                response = post_webhook_request(json=discord_payload, headers=request_headers)
             if 200 <= response.status_code <= 299:
                 return 0
             last_error = response
