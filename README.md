@@ -811,9 +811,9 @@ Run the comprehensive preflight before monitoring a new target or when a working
 github_monitor --doctor <github_username>
 ```
 
-Doctor is read-only by default. It checks the effective configuration after config, dotenv, environment and command-line precedence without creating logs, CSV files or directories. It reports these fixed sections:
+Doctor is read-only by default. It checks the effective configuration after config, dotenv, environment and command-line precedence without creating logs, CSV files or directories. It opens with the detected install method, then reports these fixed sections:
 
-* Environment: Python support, required dependencies, optional dependencies and the raw `manual`, `pip`, `docker` or `compose` install method.
+* Environment: Python support, required dependencies and optional dependencies.
 * Configuration: selected files, secret names and sources, GitHub URLs, timezone, polling interval and log separator mode.
 * Authentication and connectivity: live token validation plus the configured connectivity endpoint.
 * Target and monitoring: target access, repository, starred repository and event feeds, optional contribution tracking and read-only output path permissions.

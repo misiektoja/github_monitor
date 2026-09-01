@@ -193,6 +193,19 @@ def test_doctor_healthy_transcript_is_complete(gm_module, monkeypatch):
     assert markers == {"[PASS]"}
 
 
+# Verifies the install method is stated as context instead of a check that can never fail
+def test_doctor_reports_the_install_method_without_a_marker(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    output = io.StringIO()
+
+    gm_module.run_doctor_preflight(doctor_args(), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
+
+    transcript = output.getvalue()
+    method = gm_module.detect_install_context().install_method
+    assert f"\nDoctor\nDetected install method: {method}\n" in transcript
+    assert "[PASS] Install method" not in transcript
+
+
 # Verifies missing setup produces all useful failures in one report and exits unhealthy
 def test_doctor_reports_missing_authentication_and_target(gm_module, monkeypatch):
     configure_healthy_doctor(gm_module, monkeypatch)
@@ -254,7 +267,7 @@ def test_doctor_environment_distinguishes_required_and_optional_dependencies(gm_
     rows = {(check.status, check.label) for check in report.checks}
     assert ("FAIL", "Required dependency PyGithub is missing") in rows
     assert ("WARN", "Optional dependency tzlocal is not installed") in rows
-    assert ("PASS", f"Install method: {gm_module.detect_install_context().install_method}") in rows
+    assert not any(check.label.startswith("Install method") for check in report.checks)
     assert report.failure_count == 1
     assert report.warning_count == 1
 

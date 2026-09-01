@@ -7216,8 +7216,6 @@ def doctor_check_environment(report, module_finder=None):
         else:
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
             report.add("Environment", "WARN", f"Optional dependency {package_name} is not installed", f"{feature.capitalize()} will not work while other features remain available", f"Install it with: {install_command}")
-    install_context = detect_install_context()
-    report.add("Environment", "PASS", f"Install method: {install_context.install_method}", f"Command: {render_install_command([], install_context)}")
 
 
 # Returns whether a URL is a complete credential-free HTTPS endpoint
@@ -7682,6 +7680,9 @@ def run_doctor_preflight(args, parser, request_get=None, github_factory=None, co
     finally:
         progress.clear()
     destination.write(colorize("header", "Doctor") + "\n")
+    # The install method is context rather than a check: it cannot fail, so it is stated once here
+    # instead of taking a result row that no marker describes
+    destination.write(f"Detected install method: {colorize('username', detect_install_context().install_method)}\n")
     render_doctor_sections(report, destination)
     doctor_run_optional_delivery_tests(report, input_func, input_stream, destination, email_sender, webhook_sender)
     render_doctor_summary(report, destination)
