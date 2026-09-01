@@ -94,6 +94,8 @@ class TestIssueTemplates:
         bug_report = read_asset(".github/ISSUE_TEMPLATE/bug_report.yml")
         assert "SECURITY.md" in bug_report
         assert "Never paste" in bug_report
+        assert "Recovery code" in bug_report
+        assert "--debug" in bug_report
 
 
 class TestWorkflowSupplyChain:

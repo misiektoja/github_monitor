@@ -31,12 +31,14 @@ and again before anything is published to PyPI.
 | --- | --- |
 | `test_daily_contributions.py` | Stable calendar window selection and missing-day handling |
 | `test_event_configuration.py` | Supported event types, intentional 30-event window and retry defaults |
-| `test_github_token_setup.py` | Hidden token entry, atomic dotenv updates and refusal to save an invalid token |
+| `test_github_token_setup.py` | Hidden token entry, targeted dotenv updates and refusal to save an invalid token |
+| `test_install_method_commands.py` | PyPI and standalone install detection with POSIX and Windows command rendering |
 | `test_profile_fields.py` | Addition, removal and failure handling for nullable profile fields |
+| `test_recovery_errors.py` | Closed recovery codes, classification, retryability and layered secret redaction |
 | `test_repository_contracts.py` | Governance documents, issue templates, action pinning, release gating and the CI contract |
 | `test_repository_metadata.py` | Governance files, citation, funding, line endings, the declared editor style, the pinned linter and release integrity |
 | `test_repository_monitoring.py` | Discussion collection, repository snapshots, open and closed notifications, event formatting |
-| `test_startup_configuration.py` | Config, dotenv, exported environment and CLI precedence at startup consumer boundaries |
+| `test_startup_configuration.py` | Config, dotenv, exported environment and two-phase CLI precedence at startup consumer boundaries |
 | `test_webhook_notifications.py` | Webhook URL validation, provider detection and per-event notification switches |
 
 ## Conventions

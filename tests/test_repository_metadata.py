@@ -121,6 +121,8 @@ def test_support_document_routes_every_request_type():
     for destination in ("https://github.com/misiektoja/github_monitor/discussions", "https://github.com/misiektoja/github_monitor/security/advisories/new", "https://github.com/misiektoja/github_monitor/issues/new"):
         assert destination in support
     assert "github_monitor --version" in support
+    assert "recovery code" in support.casefold()
+    assert "--debug" in support
     for concept in ("GitHub personal access token", "SMTP passwords", "webhook URLs"):
         assert concept in support
 

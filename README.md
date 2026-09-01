@@ -70,6 +70,7 @@ pip install github_monitor
    * [Check Intervals](#check-intervals)
    * [Signal Controls (macOS/Linux/Unix)](#signal-controls-macoslinuxunix)
    * [Coloring Log Output with GRC](#coloring-log-output-with-grc)
+   * [Debugging and Recovery](#debugging-and-recovery)
 6. [Change Log](#change-log)
 7. [Contributing](#contributing)
 8. [Security](#security)
@@ -701,6 +702,33 @@ Example:
 ```sh
 grc tail -F -n 100 github_monitor_<username>.log
 ```
+
+<a id="debugging-and-recovery"></a>
+### Debugging and Recovery
+
+Failures that stop an action use one consistent shape:
+
+```text
+* Error: What failed
+To fix: The next action to take
+Guide: A relevant documentation link
+```
+
+Run with `--verbose` to include a stable recovery code and whether retrying can help:
+
+```sh
+github_monitor <github_username> --verbose
+```
+
+Run with `--debug` to include sanitized technical detail:
+
+```sh
+github_monitor <github_username> --debug
+```
+
+`VERBOSE_MODE` and `DEBUG_MODE` provide the same controls in the configuration file. An explicit command-line flag takes precedence even when the selected config disables that mode. Debug output redacts loaded secrets plus common GitHub token, authorization and Discord webhook shapes before printing or logging them.
+
+Recovery codes are stable identifiers such as `config.invalid`, `auth.github_token_invalid`, `network.timeout`, `github.rate_limited` and `file.unwritable`. Include the code when asking for help. Commands printed after setup or inside recovery guidance automatically match a PyPI install or standalone script invocation with platform-correct quoting.
 
 <a id="change-log"></a>
 ## Change Log

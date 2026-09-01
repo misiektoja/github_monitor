@@ -18,6 +18,15 @@ python-dotenv
 
 VERSION = "2.6.3"
 
+PROJECT_URL = "https://github.com/misiektoja/github_monitor"
+README_URL = f"{PROJECT_URL}/blob/main/README.md"
+QUICK_START_GUIDE_URL = f"{README_URL}#quick-start"
+CONFIG_GUIDE_URL = f"{README_URL}#configuration"
+AUTH_GUIDE_URL = f"{README_URL}#github-personal-access-token"
+NOTIFICATION_GUIDE_URL = f"{README_URL}#email-notifications"
+DEBUG_GUIDE_URL = f"{README_URL}#debugging-and-recovery"
+SUPPORT_GUIDE_URL = f"{PROJECT_URL}/blob/main/SUPPORT.md"
+
 # ---------------------------
 # CONFIGURATION SECTION START
 # ---------------------------
@@ -305,6 +314,14 @@ HORIZONTAL_LINE2 = 80
 # Whether to clear the terminal screen after starting the tool
 CLEAR_SCREEN = True
 
+# Whether recovery output includes stable codes and retryability
+# Can also be enabled via --verbose
+VERBOSE_MODE = False
+
+# Whether recovery output includes sanitized technical detail
+# Can also be enabled via --debug
+DEBUG_MODE = False
+
 # Maximum number of times to retry a failed GitHub API/network call
 NET_MAX_RETRIES = 5
 
@@ -373,6 +390,8 @@ ASCII_LOG_SEPARATORS = "Auto"
 HORIZONTAL_LINE1 = 0
 HORIZONTAL_LINE2 = 0
 CLEAR_SCREEN = False
+VERBOSE_MODE = False
+DEBUG_MODE = False
 NET_MAX_RETRIES = 0
 NET_BASE_BACKOFF_SEC = 0
 GITHUB_CHECK_SIGNAL_VALUE = 0
@@ -425,8 +444,10 @@ from email.mime.text import MIMEText
 import argparse
 import ast
 import csv
+from dataclasses import dataclass
 import getpass
 import shlex
+import subprocess
 try:
     import pytz
 except ModuleNotFoundError:
@@ -503,9 +524,10 @@ class Logger(object):
         self.logfile = open(filename, "a", buffering=1, encoding="utf-8")
 
     def write(self, message):
-        self.terminal.write(message)
+        safe_message = sanitize_error_text(message)
+        self.terminal.write(safe_message)
         # Expand tabs in file output so aligned columns render consistently across viewers
-        self.logfile.write(normalize_log_separators(message.expandtabs(8)))
+        self.logfile.write(normalize_log_separators(safe_message.expandtabs(8)))
         self.terminal.flush()
         self.logfile.flush()
 
@@ -528,7 +550,7 @@ def check_internet(url=None, timeout=None):
         _ = req.get(selected_url, timeout=selected_timeout)
         return True
     except req.RequestException as e:
-        print(f"* No connectivity, please check your network:\n\n{e}")
+        print_recovery_advice(classify_recovery_error(e, "network"))
         return False
 
 
@@ -1919,13 +1941,13 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
         smtpObj.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, email_msg.as_string())
         smtpObj.quit()
     except Exception as e:
-        print(f"Error sending email: {e}")
+        print(f"Error sending email: {sanitize_error_text(e)}")
         return 1
     return 0
 
 
-# Returns all private webhook values currently known to the process
-def known_webhook_secret_values():
+# Returns all private values currently known to the process
+def known_secret_values():
     values = []
     for key in SECRET_KEYS:
         value = globals().get(key)
@@ -1938,19 +1960,186 @@ def known_webhook_secret_values():
     return values
 
 
-# Redacts webhook destinations and authentication values from arbitrary text
-def sanitize_webhook_text(value):
+# Returns a recognizable masked form without exposing the complete secret
+def mask_secret(value, visible=3):
     text = str(value or "")
-    for secret in known_webhook_secret_values():
+    if not text:
+        return "<not set>"
+    if len(text) <= 2:
+        return "*" * len(text)
+    shown = min(max(1, int(visible)), max(1, (len(text) - 1) // 2))
+    return f"{text[:shown]}...{text[-shown:]}"
+
+
+# Redacts known values and common credential shapes from arbitrary error text
+def sanitize_error_text(value):
+    text = str(value or "")
+    for secret in sorted(known_secret_values(), key=len, reverse=True):
         text = text.replace(secret, "<redacted>")
     patterns = (
         (r"(?m)(\b(?:GITHUB_TOKEN|SMTP_PASSWORD|WEBHOOK_URL|NTFY_ACCESS_TOKEN)\b\s*=\s*).*$", r"\1<redacted>"),
         (r"(?i)(authorization['\"]?\s*[:=]\s*['\"]?(?:bearer|basic)\s+)[^\s,;'\"}]+", r"\1<redacted>"),
         (r"(?i)(['\"]?(?:github_token|smtp_password|webhook_url|ntfy_access_token)['\"]?\s*[:=]\s*['\"]?)[^\s,;'\"}]+", r"\1<redacted>"),
+        (r"(?i)\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+\b", "<redacted>"),
+        (r"(?i)https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api(?:/v[0-9]+)?/webhooks/[0-9]+/[^\s'\"<>]+", "<redacted>"),
+        (r"(?i)([?&](?:access_token|auth|token)=)[^&#\s]+", r"\1<redacted>"),
     )
     for pattern, replacement in patterns:
         text = re.sub(pattern, replacement, text)
     return text
+
+
+# Preserves the original webhook sanitizer name for existing callers
+def sanitize_webhook_text(value):
+    return sanitize_error_text(value)
+
+
+@dataclass(frozen=True)
+class InstallContext:
+    install_method: str
+    operating_system: str
+    command_prefix: tuple[str, ...]
+
+
+# Detects whether the current invocation uses the packaged command or standalone script
+def detect_install_context(argv0=None, module_path=None, operating_system=None):
+    invocation = str(sys.argv[0] if argv0 is None else argv0)
+    source_path = str(Path(__file__ if module_path is None else module_path).resolve())
+    selected_system = platform.system() if operating_system is None else str(operating_system)
+    standalone = Path(invocation).suffix.casefold() == ".py"
+    prefix = (sys.executable, source_path) if standalone else ("github_monitor",)
+    return InstallContext("standalone" if standalone else "pypi", selected_system, prefix)
+
+
+# Renders one command with the correct install prefix and platform quoting
+def render_install_command(arguments, install_context=None):
+    context = detect_install_context() if install_context is None else install_context
+    parts = [*context.command_prefix, *(str(argument) for argument in arguments)]
+    if context.operating_system.casefold() == "windows":
+        return subprocess.list2cmdline(parts)
+    return shlex.join(parts)
+
+
+RECOVERY_CODES = frozenset({
+    "auth.github_token_invalid",
+    "auth.github_token_missing",
+    "config.invalid",
+    "config.missing",
+    "config.value_invalid",
+    "dependency.missing",
+    "dotenv.missing",
+    "file.unreadable",
+    "file.unwritable",
+    "github.api_error",
+    "github.forbidden",
+    "github.not_found",
+    "github.rate_limited",
+    "network.connection",
+    "network.timeout",
+    "secret.missing",
+    "smtp.authentication",
+    "smtp.configuration",
+    "smtp.delivery",
+    "target.missing",
+    "target.not_found",
+    "target.not_visible",
+    "timezone.invalid",
+    "webhook.invalid",
+    "webhook.rejected",
+    "webhook.unreachable",
+    "unknown",
+})
+
+
+@dataclass(frozen=True)
+class RecoveryAdvice:
+    code: str
+    summary: str
+    fix: str
+    retryable: bool
+    detail: str = ""
+    guide_url: str = ""
+
+
+class RecoveryError(Exception):
+    # Stores structured recovery advice with the original exception when available
+    def __init__(self, advice, cause=None):
+        self.advice = advice
+        self.cause = cause
+        super().__init__(advice.summary)
+
+
+# Constructs validated recovery advice with every user-facing field sanitized
+def make_recovery_advice(code, summary, fix, retryable=False, detail="", guide_url=""):
+    if code not in RECOVERY_CODES:
+        raise ValueError(f"Unsupported recovery code: {code}")
+    return RecoveryAdvice(code, sanitize_error_text(summary), sanitize_error_text(fix), bool(retryable), sanitize_error_text(detail), sanitize_error_text(guide_url))
+
+
+# Renders recovery advice according to the effective diagnostic modes
+def render_recovery_advice(advice, verbose=None, debug=None):
+    verbose_enabled = VERBOSE_MODE if verbose is None else bool(verbose)
+    debug_enabled = DEBUG_MODE if debug is None else bool(debug)
+    lines = [f"* Error: {sanitize_error_text(advice.summary)}", f"To fix: {sanitize_error_text(advice.fix)}"]
+    if advice.guide_url:
+        lines.append(f"Guide: {sanitize_error_text(advice.guide_url)}")
+    if verbose_enabled or debug_enabled:
+        lines.extend((f"Recovery code: {advice.code}", f"Retryable: {'Yes' if advice.retryable else 'No'}"))
+    if debug_enabled and advice.detail:
+        lines.append(f"Technical detail: {sanitize_error_text(advice.detail)}")
+    return "\n".join(lines)
+
+
+# Prints one structured recovery message
+def print_recovery_advice(advice, verbose=None, debug=None):
+    print(render_recovery_advice(advice, verbose=verbose, debug=debug))
+
+
+# Maps one exception and operation context to stable recovery advice
+def classify_recovery_error(error, context="unknown", install_context=None):
+    if isinstance(error, RecoveryError):
+        return error.advice
+    selected_context = str(context or "unknown").casefold()
+    detail = f"{type(error).__name__}: {error}"
+    token_command = render_install_command(["--set-github-token"], install_context)
+    webhook_command = render_install_command(["--set-webhook-url"], install_context)
+    config_command = render_install_command(["--generate-config", "github_monitor.conf"], install_context)
+    debug_command = render_install_command(["--debug"], install_context)
+    if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
+        return make_recovery_advice("network.timeout", "The network request timed out", "Check connectivity and increase the configured timeout before trying again", True, detail, DEBUG_GUIDE_URL)
+    if isinstance(error, (req.ConnectionError, socket.gaierror)):
+        return make_recovery_advice("network.connection", "The configured service could not be reached", "Check the network and configured service URL then try again", True, detail, DEBUG_GUIDE_URL)
+    if isinstance(error, req.RequestException):
+        return make_recovery_advice("network.connection", "The configured service request failed", "Check the network and configured service URL then try again", True, detail, DEBUG_GUIDE_URL)
+    if isinstance(error, BadCredentialsException):
+        return make_recovery_advice("auth.github_token_invalid", "GitHub rejected the configured token", f"Create or review the token then run: {token_command}", False, detail, AUTH_GUIDE_URL)
+    if isinstance(error, RateLimitExceededException):
+        return make_recovery_advice("github.rate_limited", "GitHub API rate limiting paused the request", "Wait for the reported reset time before trying again", True, detail, DEBUG_GUIDE_URL)
+    if isinstance(error, UnknownObjectException):
+        code = "target.not_found" if selected_context == "target" else "github.not_found"
+        return make_recovery_advice(code, "GitHub could not find the requested resource", "Check the target name and token access then try again", False, detail, DEBUG_GUIDE_URL)
+    if isinstance(error, GithubException):
+        status = getattr(error, "status", None)
+        if status == 403:
+            return make_recovery_advice("github.forbidden", "GitHub refused access to the requested resource", "Check token permissions and resource visibility", False, detail, AUTH_GUIDE_URL)
+        retryable = status is None or (isinstance(status, int) and status >= 500)
+        return make_recovery_advice("github.api_error", "GitHub returned an API error", f"Try again or run {debug_command} for sanitized technical detail", retryable, detail, DEBUG_GUIDE_URL)
+    if isinstance(error, smtplib.SMTPAuthenticationError):
+        return make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", "Check SMTP_USER and replace SMTP_PASSWORD before sending another test", False, detail, NOTIFICATION_GUIDE_URL)
+    if isinstance(error, PermissionError):
+        return make_recovery_advice("file.unwritable", "A required file could not be written", "Check the destination path and file permissions", False, detail, CONFIG_GUIDE_URL)
+    if isinstance(error, FileNotFoundError):
+        code = "config.missing" if selected_context == "config" else "dotenv.missing" if selected_context == "dotenv" else "file.unreadable"
+        return make_recovery_advice(code, "A required file could not be found", "Check the configured path and try again", False, detail, CONFIG_GUIDE_URL)
+    if selected_context == "github_token":
+        return make_recovery_advice("auth.github_token_invalid", "GitHub token setup could not be completed", f"Correct the problem then run: {token_command}", False, detail, AUTH_GUIDE_URL)
+    if selected_context == "webhook":
+        return make_recovery_advice("webhook.invalid", "Webhook setup could not be completed", f"Check the HTTPS destination then run: {webhook_command}", False, detail, NOTIFICATION_GUIDE_URL)
+    if selected_context == "config":
+        return make_recovery_advice("config.invalid", "The selected configuration is invalid", f"Correct the named setting or generate a fresh configuration with: {config_command}", False, detail, CONFIG_GUIDE_URL)
+    if selected_context == "timezone":
+        return make_recovery_advice("timezone.invalid", "The configured timezone is invalid", "Install tzlocal for automatic detection or set a valid pytz timezone", False, detail, CONFIG_GUIDE_URL)
+    return make_recovery_advice("unknown", "An unexpected error stopped the requested action", f"Run the command again with {debug_command} and include the recovery code when asking for help", False, detail, SUPPORT_GUIDE_URL)
 
 
 # Returns whether a webhook URL is a complete private HTTPS link
@@ -2342,7 +2531,7 @@ def init_csv_file(csv_file_name):
                 writer = csv.DictWriter(f, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
                 writer.writeheader()
     except Exception as e:
-        raise RuntimeError(f"Could not initialize CSV file '{csv_file_name}': {e}")
+        raise RuntimeError(f"Could not initialize CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
 # Writes CSV entry
@@ -2354,7 +2543,7 @@ def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new
             csvwriter.writerow({'Date': timestamp, 'Type': object_type, 'Name': object_name, 'Old': old, 'New': new})
 
     except Exception as e:
-        raise RuntimeError(f"Failed to write to CSV file '{csv_file_name}': {e}")
+        raise RuntimeError(f"Failed to write to CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
 # Converts a datetime to local timezone and removes timezone info (naive)
@@ -2716,7 +2905,7 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
                 continue
 
             except NET_ERRORS as e:
-                print(f"* {fn.__name__} error: {e} (retry {i}/{retries})")
+                print(f"* {fn.__name__} error: {sanitize_error_text(e)} (retry {i}/{retries})")
                 time.sleep(backoff * i)
         return default
     return wrapped
@@ -2752,7 +2941,7 @@ def github_print_followers_and_followings(user):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user {user} details: {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details: {sanitize_error_text(e)}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -3043,7 +3232,7 @@ def github_print_repos(user):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user {user} details: {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details: {sanitize_error_text(e)}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -3102,7 +3291,7 @@ def github_print_repos(user):
 
                 print("─" * HORIZONTAL_LINE2)
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user's repositories list: {e}")
+        raise RuntimeError(f"Cannot fetch user's repositories list: {sanitize_error_text(e)}")
 
     g.close()
 
@@ -3132,7 +3321,7 @@ def github_print_starred_repos(user):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user {user} details: {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details: {sanitize_error_text(e)}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -3149,7 +3338,7 @@ def github_print_starred_repos(user):
                     star_str += f" [ {star.html_url}/ ]"
                 print(star_str)
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user's starred list: {e}")
+        raise RuntimeError(f"Cannot fetch user's starred list: {sanitize_error_text(e)}")
 
     g.close()
 
@@ -4265,8 +4454,9 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
     except Exception as exc:
         detail = f"Config file '{config_path}' failed with {type(exc).__name__}: {exc}"
     if report_errors:
-        print(f"* Error: {detail}")
-        print("* Config files are read as data. Only documented SETTING = value lines with plain literal values are accepted.")
+        config_command = render_install_command(["--generate-config", "github_monitor.conf"])
+        advice = make_recovery_advice("config.invalid", detail, f"Keep only documented SETTING = value lines with plain literal values or regenerate with: {config_command}", False, detail, CONFIG_GUIDE_URL)
+        print_recovery_advice(advice)
     return False
 
 
@@ -4319,6 +4509,15 @@ def apply_startup_cli_overrides(args, configured_settings=None):
         GITHUB_API_URL = args.github_url
     if connectivity_follows_api:
         CHECK_INTERNET_URL = GITHUB_API_URL
+
+
+# Applies only explicitly supplied diagnostic flags without erasing saved defaults
+def apply_diagnostic_cli_overrides(args):
+    global VERBOSE_MODE, DEBUG_MODE
+    if getattr(args, "verbose", None) is True:
+        VERBOSE_MODE = True
+    if getattr(args, "debug", None) is True:
+        DEBUG_MODE = True
 
 
 # Represents a safe GitHub token setup or validation failure
@@ -4405,7 +4604,7 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
 
 
 # Validates and safely stores one privately entered GitHub token
-def run_set_github_token(env_file=None, api_url=None, interactive=None, input_func=None, getpass_func=None, config_path=None) -> str:
+def run_set_github_token(env_file=None, api_url=None, interactive=None, input_func=None, getpass_func=None, config_path=None, install_context=None) -> str:
     destination = resolve_secret_env_path(env_file, "--set-github-token")
     terminal_is_interactive = sys.stdin.isatty() if interactive is None else interactive
     if not terminal_is_interactive:
@@ -4430,7 +4629,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
         update_dotenv_value(destination, "GITHUB_TOKEN", token)
     except Exception:
         raise GitHubTokenConfigurationError(f"Could not save GITHUB_TOKEN in '{destination}'. Check the path and file permissions") from None
-    command = ["github_monitor", "GITHUB_USERNAME"]
+    command = ["GITHUB_USERNAME"]
     if config_path:
         command.extend(("--config-file", str(config_path)))
     command.extend(("--env-file", str(destination)))
@@ -4438,12 +4637,12 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
         command.extend(("--github-url", str(api_url)))
     print(f"* GitHub token validation succeeded for user: {login}")
     print(f"* Updated private settings file: {destination}")
-    print(f"* Start monitoring: {shlex.join(command)}")
+    print(f"* Start monitoring: {render_install_command(command, install_context)}")
     return str(destination)
 
 
 # Checks and safely stores one privately entered webhook URL
-def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpass_func=None, config_path=None) -> str:
+def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpass_func=None, config_path=None, install_context=None) -> str:
     destination = resolve_secret_env_path(env_file, "--set-webhook-url")
     terminal_is_interactive = sys.stdin.isatty() if interactive is None else interactive
     if not terminal_is_interactive:
@@ -4464,13 +4663,13 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
     if not validate_webhook_url(webhook_url):
         raise ValueError("That does not look like a complete HTTPS webhook URL and the dotenv file was not changed")
     update_dotenv_value(destination, "WEBHOOK_URL", webhook_url)
-    command = ["github_monitor", "--send-test-webhook"]
+    command = ["--send-test-webhook"]
     if config_path:
         command.extend(("--config-file", str(config_path)))
     command.extend(("--env-file", str(destination)))
     print("* Webhook URL looks valid")
     print(f"* Updated private settings file: {destination}")
-    print(f"* Send a test webhook: {shlex.join(command)}")
+    print(f"* Send a test webhook: {render_install_command(command, install_context)}")
     return str(destination)
 
 
@@ -4725,7 +4924,7 @@ def check_daily_contribs(username: str, token: str, state: dict, min_delta: int 
         state["last_error"] = None
     except Exception as e:
         state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-        state["last_error"] = f"{type(e).__name__}: {e}"
+        state["last_error"] = sanitize_error_text(f"{type(e).__name__}: {e}")
         error_notify = state["consecutive_failures"] >= fail_threshold
         return False, state.get("count", 0), error_notify
 
@@ -4999,7 +5198,8 @@ def github_monitor_user(user, csv_file_name):
             email_sent = False
 
         except (GithubException, Exception) as e:
-            print(f"* Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)}: {e}")
+            safe_error = sanitize_error_text(e)
+            print(f"* Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)}: {safe_error}")
 
             should_notify = False
             reason_msg = None
@@ -5017,11 +5217,11 @@ def github_monitor_user(user, csv_file_name):
 
             if should_notify and (ERROR_NOTIFICATION or webhook_event_enabled("error")) and not email_sent:
                 m_subject = f"github_monitor: session error! (user: {user})"
-                m_body = f"{reason_msg}\n{e}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
+                m_body = f"{reason_msg}\n{safe_error}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
                 m_body_html = (
                     f"<html><head></head><body>"
                     f"<b>{html.escape(reason_msg or '')}</b><br>"
-                    f"{html.escape(str(e))}{get_cur_ts('<br><br>Timestamp: ')}"
+                    f"{html.escape(safe_error)}{get_cur_ts('<br><br>Timestamp: ')}"
                     f"</body></html>"
                 )
                 send_notification_channels("error", m_subject, m_body, m_body_html, ERROR_NOTIFICATION)
@@ -5698,7 +5898,7 @@ def main():
 
     parser = argparse.ArgumentParser(
         prog="github_monitor",
-        description=("Monitor a GitHub user's profile and activity with customizable email alerts [ https://github.com/misiektoja/github_monitor/ ]"), formatter_class=argparse.RawTextHelpFormatter
+        description=(f"Monitor a GitHub user's profile and activity with customizable email alerts [ {PROJECT_URL}/ ]"), formatter_class=argparse.RawTextHelpFormatter
     )
 
     # Positional
@@ -6000,6 +6200,20 @@ def main():
         help="Track user's daily contributions count and log changes"
     )
     opts.add_argument(
+        "--verbose",
+        dest="verbose",
+        action="store_true",
+        default=None,
+        help="Show recovery codes and whether a failure is retryable"
+    )
+    opts.add_argument(
+        "--debug",
+        dest="debug",
+        action="store_true",
+        default=None,
+        help="Show sanitized technical detail for recovery errors"
+    )
+    opts.add_argument(
         "--repos",
         dest="repos",
         metavar="REPO_LIST",
@@ -6016,6 +6230,8 @@ def main():
     if args.set_github_token and args.set_webhook_url:
         parser.error("--set-github-token cannot be combined with --set-webhook-url")
 
+    apply_diagnostic_cli_overrides(args)
+
     if args.config_file:
         CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
 
@@ -6023,13 +6239,16 @@ def main():
     configured_settings = set()
 
     if not cfg_path and CLI_CONFIG_PATH:
-        print(f"* Error: Config file '{CLI_CONFIG_PATH}' does not exist")
+        config_command = render_install_command(["--generate-config", "github_monitor.conf"])
+        advice = make_recovery_advice("config.missing", f"Config file '{CLI_CONFIG_PATH}' does not exist", f"Correct --config-file or generate a new configuration with: {config_command}", False, f"FileNotFoundError: {CLI_CONFIG_PATH}", CONFIG_GUIDE_URL)
+        print_recovery_advice(advice)
         sys.exit(1)
 
     if cfg_path:
         if not load_config_file(cfg_path, loaded_names_out=configured_settings):
             sys.exit(1)
 
+    apply_diagnostic_cli_overrides(args)
     env_path = load_startup_secrets(args.env_file)
     apply_startup_cli_overrides(args, configured_settings)
 
@@ -6040,7 +6259,7 @@ def main():
         try:
             run_set_github_token(args.env_file, api_url=args.github_url, config_path=cfg_path)
         except Exception as e:
-            print(f"* Error: {sanitize_webhook_text(e)}")
+            print_recovery_advice(classify_recovery_error(e, "github_token"))
             sys.exit(1)
         sys.exit(0)
 
@@ -6048,7 +6267,7 @@ def main():
         try:
             run_set_webhook_url(args.env_file, config_path=cfg_path)
         except Exception as e:
-            print(f"* Error: {sanitize_webhook_text(e)}")
+            print_recovery_advice(classify_recovery_error(e, "webhook"))
             sys.exit(1)
         sys.exit(0)
 
@@ -6064,13 +6283,13 @@ def main():
         if local_tz:
             LOCAL_TIMEZONE = str(local_tz)
         else:
-            print("* Error: Cannot detect local timezone.")
-            print("* Hint: This can happen if the 'tzlocal' library is missing. Install it with the Python interpreter used to run this tool.")
-            print("* Or set LOCAL_TIMEZONE to your local timezone manually.")
+            advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", "Install tzlocal for automatic detection or set LOCAL_TIMEZONE to a valid pytz timezone", False, "tzlocal did not return a timezone", CONFIG_GUIDE_URL)
+            print_recovery_advice(advice)
             sys.exit(1)
     else:
         if not is_valid_timezone(LOCAL_TIMEZONE):
-            print(f"* Error: Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid. Please use a valid pytz timezone name.")
+            advice = make_recovery_advice("timezone.invalid", f"Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid", "Set LOCAL_TIMEZONE to a valid pytz timezone name", False, f"Rejected timezone: {LOCAL_TIMEZONE}", CONFIG_GUIDE_URL)
+            print_recovery_advice(advice)
             sys.exit(1)
 
     if not check_internet():
@@ -6093,15 +6312,19 @@ def main():
         sys.exit(0)
 
     if not GITHUB_TOKEN or GITHUB_TOKEN == "your_github_classic_personal_access_token":
-        print("* Error: GITHUB_TOKEN (-t / --github_token) value is empty or incorrect")
+        token_command = render_install_command(["--set-github-token"])
+        advice = make_recovery_advice("auth.github_token_missing", "No usable GitHub token is configured", f"Create a token then run: {token_command}", False, "GITHUB_TOKEN is empty or still uses the generated placeholder", AUTH_GUIDE_URL)
+        print_recovery_advice(advice)
         sys.exit(1)
 
     if not args.username:
-        print("* Error: GITHUB_USERNAME argument is required !")
+        advice = make_recovery_advice("target.missing", "A GitHub username is required", "Add GITHUB_USERNAME to the monitoring command", False, "The positional GITHUB_USERNAME argument was empty", QUICK_START_GUIDE_URL)
+        print_recovery_advice(advice)
         sys.exit(1)
 
     if not GITHUB_API_URL:
-        print("* Error: GITHUB_API_URL (-x / --github_url) value is empty")
+        advice = make_recovery_advice("config.value_invalid", "GITHUB_API_URL is empty", "Set GITHUB_API_URL in config or pass --github-url with a complete HTTPS API URL", False, "The effective GITHUB_API_URL was empty", CONFIG_GUIDE_URL)
+        print_recovery_advice(advice)
         sys.exit(1)
 
     if args.get_all_repos is True:
@@ -6111,7 +6334,7 @@ def main():
         try:
             github_print_followers_and_followings(args.username)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_recovery_advice(classify_recovery_error(e, "target"))
             sys.exit(1)
         sys.exit(0)
 
@@ -6119,7 +6342,7 @@ def main():
         try:
             github_print_repos(args.username)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_recovery_advice(classify_recovery_error(e, "target"))
             sys.exit(1)
         sys.exit(0)
 
@@ -6127,7 +6350,7 @@ def main():
         try:
             github_print_starred_repos(args.username)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_recovery_advice(classify_recovery_error(e, "target"))
             sys.exit(1)
         sys.exit(0)
 
@@ -6146,7 +6369,10 @@ def main():
             with open(CSV_FILE, 'a', newline='', buffering=1, encoding="utf-8") as _:
                 pass
         except Exception as e:
-            print(f"* Error: CSV file cannot be opened for writing: {e}")
+            advice = classify_recovery_error(e, "file")
+            if advice.code == "unknown":
+                advice = make_recovery_advice("file.unwritable", "The CSV file cannot be opened for writing", "Check CSV_FILE and its parent directory permissions", False, f"{type(e).__name__}: {e}", CONFIG_GUIDE_URL)
+            print_recovery_advice(advice)
             sys.exit(1)
 
     if args.list_recent_events:
@@ -6157,14 +6383,15 @@ def main():
         try:
             github_list_events(args.username, events_n, CSV_FILE)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_recovery_advice(classify_recovery_error(e, "target"))
             sys.exit(1)
         sys.exit(0)
 
     try:
         ascii_log_separators_enabled()
     except ValueError as e:
-        print(f"* Error: {e}")
+        advice = make_recovery_advice("config.value_invalid", "ASCII_LOG_SEPARATORS is invalid", "Set ASCII_LOG_SEPARATORS to Auto, On or Off", False, f"{type(e).__name__}: {e}", CONFIG_GUIDE_URL)
+        print_recovery_advice(advice)
         sys.exit(1)
 
     if args.disable_logging is True:
@@ -6255,6 +6482,11 @@ def main():
     print(f"* Configuration file:\t\t{cfg_path}")
     print(f"* Dotenv file:\t\t\t{env_path or 'None'}")
     print(f"* Local timezone:\t\t{LOCAL_TIMEZONE}")
+    if VERBOSE_MODE or DEBUG_MODE:
+        install_context = detect_install_context()
+        print(f"* Install method:\t\t{install_context.install_method}")
+        print(f"* Verbose mode:\t\t{VERBOSE_MODE}")
+        print(f"* Debug mode:\t\t\t{DEBUG_MODE}")
 
     out = f"\nMonitoring GitHub user {args.username}"
     print(out)

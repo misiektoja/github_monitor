@@ -30,7 +30,7 @@ body:
     id: logs
     attributes:
       label: Relevant log output
-      description: The lines around the failure, redacted. The tool writes a log file unless you pass `--disable-logging`.
+      description: The lines around the failure or sanitized output from repeating the command with `--debug`. The tool writes a log file unless you pass `--disable-logging`.
       render: shell
     validations:
       required: false
@@ -42,6 +42,14 @@ body:
       description: "Output of `github_monitor --version`."
     validations:
       required: true
+
+  - type: input
+    id: recovery-code
+    attributes:
+      label: Recovery code
+      description: The stable code printed with `--verbose` or `--debug`, when available.
+    validations:
+      required: false
 
   - type: dropdown
     id: install-method

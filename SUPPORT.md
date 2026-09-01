@@ -14,6 +14,8 @@ github_monitor --send-test-webhook
 
 Most reports come down to an expired or under-scoped GitHub token, an SMTP server that rejects the message or a webhook URL the provider no longer accepts. The test commands above tell those apart before anything else.
 
+When an error includes a recovery code, include that code in the report. Re-run the failing command with `--debug` when more context is needed. Technical detail is sanitized but you should still review copied output before posting it publicly.
+
 ## Where to ask
 
 | You want to | Go to |
@@ -26,7 +28,7 @@ Most reports come down to an expired or under-scoped GitHub token, an SMTP serve
 
 ## Before you post
 
-Include the version, how you installed it (PyPI or manual script), your operating system, the monitored user or repository form you passed and what you expected instead. Attach the relevant part of the monitoring log file, which the tool writes unless you pass `--disable-logging`.
+Include the version, recovery code, how you installed it (PyPI or manual script), your operating system, the monitored user or repository form you passed and what you expected instead. Attach the relevant part of the monitoring log file, which the tool writes unless you pass `--disable-logging`.
 
 Never post your GitHub personal access token, SMTP passwords, webhook URLs or a complete configuration file. Redact monitored usernames and private repository names if they matter to you.
 
