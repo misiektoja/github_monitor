@@ -174,7 +174,7 @@ def test_doctor_healthy_transcript_is_complete(gm_module, monkeypatch):
 
     transcript = output.getvalue()
     assert result == 0
-    assert transcript.startswith(f"GitHub Monitoring Tool v{gm_module.VERSION}\n\nRunning preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\nDoctor\n")
+    assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nRunning preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\nDoctor\n")
     sections = [transcript.index(f"\n{name}\n") for name in ("Environment", "Configuration", "Authentication", "Connectivity", "Target", "Monitoring", "Notifications", "Summary")]
     assert sections == sorted(sections)
     assert "[PASS] GitHub token was accepted" in transcript
@@ -423,6 +423,23 @@ def test_doctor_non_interactive_run_stays_message_free(gm_module, monkeypatch):
     assert output.getvalue() == ""
     assert email_sender.call_count == 0
     assert webhook_sender.call_count == 0
+
+
+# Verifies the explicit none sentinel disables Doctor configuration discovery
+def test_doctor_configuration_honours_disabled_discovery(gm_module, monkeypatch):
+    report = gm_module.DoctorReport()
+    args = doctor_args(config_file="none")
+    finder = Mock(side_effect=AssertionError("configuration discovery must stay disabled"))
+    monkeypatch.setattr(gm_module, "find_config_file", finder)
+    monkeypatch.setattr(gm_module, "load_startup_secrets", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gm_module, "apply_startup_cli_overrides", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gm_module, "apply_webhook_cli_overrides", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gm_module, "apply_monitoring_cli_overrides", lambda *_args, **_kwargs: None)
+
+    gm_module.doctor_check_configuration(report, args, Mock())
+
+    assert finder.call_count == 0
+    assert any(check.label == "Configuration discovery is disabled" and check.status == "PASS" for check in report.checks)
 
 
 # Verifies approved delivery failure changes the final healthcheck exit state

@@ -14,6 +14,8 @@ python-dateutil
 pytz
 tzlocal
 python-dotenv
+colorama (optional, improves classic Windows Command Prompt colour support)
+wcwidth (optional, needed by TRUNCATE_CHARS)
 """
 
 VERSION = "2.6.3"
@@ -326,6 +328,62 @@ VERBOSE_MODE = False
 # Can also be enabled via --debug, which turns it on regardless of this setting
 DEBUG_MODE = False
 
+# Whether to use coloured output in the terminal (auto-disabled if the terminal
+# does not appear to support colours or when output is redirected to a file)
+# Can also be disabled via the --no-color flag
+COLORED_OUTPUT = True
+
+# Colour theme used for different parts of the output
+# Keys are logical names used by the tool, values are colour/style strings
+# You can combine multiple attributes with spaces or '+', for example:
+#   "bright_cyan bold", "yellow", "red underline", "bright_magenta bold underline", "red bold blink"
+# Valid colour names: black, red, green, yellow, blue, magenta, cyan, white,
+# and their bright_ variants (bright_red, bright_green, ...).
+COLOR_THEME = {
+    # Headings and commands the wizard tells you to run
+    "header": "bright_cyan",
+    "section": "bright_white",
+    # Identity
+    "username": "blue underline",
+    "id": "bright_magenta",
+    # Presence and visibility status values
+    "status_online": "green",
+    "status_offline": "red",
+    "status_other": "white",
+    # GitHub objects
+    "repository": "green",
+    "event": "bright_green",
+    "commit": "bright_yellow",
+    "branch": "bright_magenta",
+    "duration": "green",
+    # Misc
+    "timestamp_label": "",
+    "timestamp": "cyan",
+    "info": "cyan",
+    "warning": "yellow",
+    "error": "red",
+    "signal": "yellow",
+    "email": "bright_cyan",
+    "webhook": "bright_blue",
+    # Dates
+    "date": "magenta",
+    "date_range": "magenta",
+    # Boolean values
+    "boolean_true": "green",
+    "boolean_false": "red",
+    # Counters and differences
+    "count_up": "green",
+    "count_down": "red",
+    "url": "blue underline",
+}
+
+# Max characters per line when printing to screen to avoid line wrapping
+# Does not affect log file output
+# Set to 999 to auto-detect terminal width
+# Applies only when DISABLE_LOGGING is False
+# Can also be set via the --truncate flag
+TRUNCATE_CHARS = 0
+
 # Maximum number of times to retry a failed GitHub API/network call
 NET_MAX_RETRIES = 5
 
@@ -396,6 +454,9 @@ HORIZONTAL_LINE2 = 0
 CLEAR_SCREEN = False
 VERBOSE_MODE = False
 DEBUG_MODE = False
+COLORED_OUTPUT = False
+COLOR_THEME: dict = {}
+TRUNCATE_CHARS = 0
 NET_MAX_RETRIES = 0
 NET_BASE_BACKOFF_SEC = 0
 GITHUB_CHECK_SIGNAL_VALUE = 0
@@ -537,6 +598,10 @@ except ImportError:
     get_localzone = None
 import platform
 import re
+try:
+    from colorama import init as colorama_init
+except ImportError:
+    colorama_init = None
 import ipaddress
 import html
 try:
@@ -603,11 +668,466 @@ def normalize_log_separators(message):
     return re.sub(r"(?m)^─+$", lambda match: match.group(0).replace("─", "-"), message)
 
 
+# Truncates each line to a display width after tab expansion
+def truncate_string_per_line(message, truncate_width, tabsize=8):
+    try:
+        from wcwidth import wcwidth
+    except ImportError:
+        return message
+    lines = message.split("\n")
+    truncated_lines = []
+    for line in lines:
+        expanded_line = line.expandtabs(tabsize)
+        current_width = 0
+        truncated = ""
+        for char in expanded_line:
+            char_width = wcwidth(char)
+            if char_width < 0:
+                char_width = 0
+            if current_width + char_width > truncate_width:
+                break
+            truncated += char
+            current_width += char_width
+        truncated_lines.append(truncated)
+    return "\n".join(truncated_lines)
+
+
+# Resolves CLI and configured truncation settings while expanding the terminal-width sentinel
+def resolve_truncate_chars(cli_value, configured_value, logging_disabled):
+    truncate_chars = configured_value if cli_value is None else cli_value
+    if logging_disabled:
+        return 0
+    if truncate_chars == 999:
+        terminal_size = shutil.get_terminal_size()
+        print(f"The detected terminal screen width is: {terminal_size.columns} characters\n")
+        return terminal_size.columns
+    return truncate_chars
+
+
+# Matches any ANSI escape sequence for terminal sanitizing and plain log output
+ANSI_ESCAPE_RE = re.compile(r"\x1B[@-_][0-?]*[ -/]*[@-~]")
+
+# Matches the SGR sequences emitted and preserved by the colour layer
+SGR_SEQUENCE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# Drops every remaining control character except tab and newline
+TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+# Removes terminal controls while preserving SGR colours and ordinary layout
+def sanitize_terminal_text(message):
+    if not isinstance(message, str) or not message:
+        return message
+    parts = []
+    position = 0
+    for match in SGR_SEQUENCE_RE.finditer(message):
+        parts.append(TERMINAL_CONTROL_RE.sub("", message[position:match.start()]))
+        parts.append(match.group(0))
+        position = match.end()
+    parts.append(TERMINAL_CONTROL_RE.sub("", message[position:]))
+    return "".join(parts)
+
+
+COLOR_ENABLED = False
+_COLOR_STYLES: dict = {}
+STARTUP_BANNER = "GitHub Monitoring Tool"
+
+# Default built-in colour theme. Values can be overridden via COLOR_THEME in config
+DEFAULT_COLOR_THEME = {
+    # Headings and commands the wizard tells you to run
+    "header": "bright_cyan",
+    "section": "bright_white",
+    # Identity
+    "username": "blue underline",
+    "id": "bright_magenta",
+    # Presence and visibility status values
+    "status_online": "green",
+    "status_offline": "red",
+    "status_other": "white",
+    # GitHub objects
+    "repository": "green",
+    "event": "bright_green",
+    "commit": "bright_yellow",
+    "branch": "bright_magenta",
+    "duration": "green",
+    # Misc
+    "timestamp_label": "",
+    "timestamp": "cyan",
+    "info": "cyan",
+    "warning": "yellow",
+    "error": "red",
+    "signal": "yellow",
+    "email": "bright_cyan",
+    "webhook": "bright_blue",
+    # Dates
+    "date": "magenta",
+    "date_range": "magenta",
+    # Boolean values
+    "boolean_true": "green",
+    "boolean_false": "red",
+    # Counters and differences
+    "count_up": "green",
+    "count_down": "red",
+    "url": "blue underline",
+}
+
+ANSI_RESET = "\033[0m"
+
+_STYLE_CODES = {
+    "bold": "1",
+    "dim": "2",
+    "underline": "4",
+    "blink": "5",
+    "black": "30",
+    "red": "31",
+    "green": "32",
+    "yellow": "33",
+    "blue": "34",
+    "magenta": "35",
+    "cyan": "36",
+    "white": "37",
+    "bright_black": "90",
+    "bright_red": "91",
+    "bright_green": "92",
+    "bright_yellow": "93",
+    "bright_blue": "94",
+    "bright_magenta": "95",
+    "bright_cyan": "96",
+    "bright_white": "97",
+}
+
+_LABEL_STYLES = (
+    (("Target:", "Username:", "Token belongs to:", "Event actor login:", "Event actor name:", "Published by:", "Commit author:", "Author:", "Issue author:", "Comment author:", "Discussion comment by:", "Member added:", "Assignee:", "Requested reviewer:"), "username"),
+    (("Event ID:", "Review ID:", "Commit SHA:", "Commit SHA reviewed:"), "id"),
+    (("Repo name:", "Forked to repo:"), "repository"),
+    (("Event type:", "Release name:", "Release tag name:", "Issue title:", "Discussion title:"), "event"),
+    (("Commit message:",), "commit"),
+    (("Object name:", "Target commitish:", "Branch (default):"), "branch"),
+    (("Email:",), "email"),
+)
+
+_FROM_TO_COUNT_RE = re.compile(r"(from\s+)(\d+)(\s+to\s+)(\d+)")
+_DIFF_COUNT_UP_RE = re.compile(r"(\(\+\d+\))")
+_DIFF_COUNT_DOWN_RE = re.compile(r"(\(-\d+\))")
+_USER_TAG_RE = re.compile(r"((?:GitHub user|for user|by user|of user|Monitoring GitHub user):?)([\t ]+)([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))")
+_QUOTED_CONTEXT_RE = re.compile(r"\b(repo|user)\s+$", re.IGNORECASE)
+_DURATION_RE = re.compile(r"~?\b[0-9]{1,20}[ \t]{1,20}(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b", re.IGNORECASE)
+_LONG_DATE_RE = re.compile(r"\b(?:\w{3}\s+)?\d{1,2}\s+\w{3}(?:\s+\d{2,4})?[\s,]*\d{2}:\d{2}(:\d{2})?(\s*[AP]M)?\b", re.IGNORECASE)
+_TIME_ONLY_RE = re.compile(r"(?<![\w:])(~?(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[AP]M)?)(?![\w:])", re.IGNORECASE)
+_SHORT_RANGE_DATE_RE = re.compile(r"\(\w{3}\s+\d{1,2}\s+\w{3}\s+\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\)", re.IGNORECASE)
+_DATE_RANGE_RE = re.compile(r"\b\w{3}\s+\d{1,2}\s+\w{3}\s+\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\b", re.IGNORECASE)
+_HOUR_RANGE_RE = re.compile(r"\b\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\b", re.IGNORECASE)
+_URL_RE = re.compile(r"(https?://[^\s\]]+)")
+_BOOLEAN_TRUE_RE = re.compile(r"\bTrue\b|\bEnabled\b")
+_BOOLEAN_FALSE_RE = re.compile(r"\bFalse\b|\bDisabled\b")
+_NOTIFICATION_SUMMARY_STATE_RE = re.compile(r"^(\* Notifications \((?:email|webhook)\):\s+)(On|Off)(.*)$")
+_PROFILE_VISIBILITY_CHANGE_RE = re.compile(r"(profile visibility to )(')(public|private)(')", re.IGNORECASE)
+_BLOCK_CHANGE_RE = re.compile(r"(?<= has )(blocked|unblocked)(?= you!)", re.IGNORECASE)
+_REPOSITORY_PUBLIC_RE = re.compile(r"(?<=Repository is now )(public)\b", re.IGNORECASE)
+_DEBUG_LINE_RE = re.compile(r"^\[debug \d{2}:\d{2}:\d{2}\]")
+_DOCTOR_MARK_RE = re.compile(r"^\[(PASS|WARN|FAIL|SKIP)\]")
+_DOCTOR_MARK_STYLES = {"PASS": "boolean_true", "WARN": "warning", "FAIL": "error", "SKIP": "info"}
+_QUOTED_CONTENT_RE = re.compile(r"(')([^'\n]*\w[^'\n]*)(')")
+_QUOTED_FILE_LIKE_RE = re.compile(r"^[~.]?[\\/]|^[A-Za-z]:[\\/]|\.[A-Za-z0-9]{1,8}$")
+_REPOSITORY_LIST_RE = re.compile(r"^(🔸\s+)(\S+?)(\s+\(fork\))?\s*$")
+_LINKED_LIST_ITEM_RE = re.compile(r"^(-\s+)([^\s\[]+)(\s+\[\s*)(https?://[^\s\]]+)(\s*\])$")
+_USER_LIST_RE = re.compile(r"^(-\s+)([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\s+\([^)\n]+\))?)$")
+_ERROR_LINE_RE = re.compile(r"^(?:\*\s*)?(?:error\b|cannot\b|critical:|failure\b)", re.IGNORECASE)
+_WARNING_LINE_RE = re.compile(r"^(?:\*\s*)?warning\b|^caution:", re.IGNORECASE)
+
+
+# Builds one ANSI SGR sequence from a style description
+def _build_ansi_sequence(style_str):
+    if not style_str:
+        return ""
+    codes = []
+    for part in re.split(r"[+ ]+", style_str.strip().lower()):
+        code = _STYLE_CODES.get(part)
+        if code:
+            codes.append(code)
+    return f"\033[{';'.join(codes)}m" if codes else ""
+
+
+# Detects whether one output stream supports ANSI colours
+def _stream_supports_color(stream):
+    try:
+        interactive = hasattr(stream, "isatty") and bool(stream.isatty())
+    except (OSError, ValueError):
+        interactive = False
+    if not interactive:
+        return False
+    if os.getenv("NO_COLOR"):
+        return False
+    if not (colorama_init and platform.system() == "Windows"):
+        term = os.getenv("TERM", "")
+        if term.lower() in ("", "dumb", "unknown"):
+            return False
+    if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
+        return False
+    return True
+
+
+# Initializes colour output from configuration and terminal capabilities
+def init_color_output(stream):
+    global COLOR_ENABLED, _COLOR_STYLES
+    if colorama_init and platform.system() == "Windows":
+        try:
+            colorama_init(autoreset=False)
+        except (AttributeError, OSError, RuntimeError, ValueError):
+            pass
+    COLOR_ENABLED = bool(globals().get("COLORED_OUTPUT", False)) and _stream_supports_color(stream)
+    if not COLOR_ENABLED:
+        _COLOR_STYLES = {}
+        return
+    user_theme = globals().get("COLOR_THEME") if isinstance(globals().get("COLOR_THEME"), dict) else {}
+    theme = {**DEFAULT_COLOR_THEME, **(user_theme or {})}
+    _COLOR_STYLES = {name: sequence for name, value in theme.items() if (sequence := _build_ansi_sequence(value))}
+
+
+# Applies one configured logical colour style to text
+def colorize(part, text):
+    if not COLOR_ENABLED:
+        return text
+    start = _COLOR_STYLES.get(part)
+    return f"{start}{text}{ANSI_RESET}" if start else text
+
+
+# Colours one textual presence or visibility status
+def colorize_status(status_text):
+    status = (status_text or "").strip().lower()
+    if status in ("active", "online", "available", "public", "unblocked", "yes"):
+        key = "status_online"
+    elif status in ("inactive", "offline", "invisible", "private", "blocked", "no"):
+        key = "status_offline"
+    else:
+        key = "status_other"
+    return colorize(key, status_text)
+
+
+# Splits a recognized output label from its value without backtracking
+def _split_output_label(value, labels):
+    body = value.rstrip("\n")
+    cursor = len(body) - len(body.lstrip())
+    if body[cursor:cursor + 1] == "*":
+        cursor += 1
+        cursor += len(body[cursor:]) - len(body[cursor:].lstrip())
+    for label in labels:
+        if not body.startswith(label, cursor):
+            continue
+        value_start = cursor + len(label)
+        value_start += len(body[value_start:]) - len(body[value_start:].lstrip())
+        if value_start == cursor + len(label):
+            return None
+        return body[:value_start], body[value_start:]
+    return None
+
+
+# Applies a block style while preserving internal highlights
+def _apply_style_nested(line, style_name):
+    start_style = _COLOR_STYLES.get(style_name)
+    if not start_style:
+        return line
+    line = f"{start_style}{line}{ANSI_RESET}"
+    line = line.replace(ANSI_RESET, f"{ANSI_RESET}{start_style}")
+    if line.endswith(f"{ANSI_RESET}{start_style}"):
+        line = line[:-len(start_style)]
+    return line
+
+
+# Applies one substitution only outside existing colour spans
+def _sub_outside_color(pattern, replacement, line):
+    if ANSI_RESET not in line:
+        return pattern.sub(replacement, line)
+    parts = []
+    position = 0
+    inside = False
+    for match in SGR_SEQUENCE_RE.finditer(line):
+        segment = line[position:match.start()]
+        parts.append(segment if inside else pattern.sub(replacement, segment))
+        parts.append(match.group(0))
+        inside = match.group(0) != ANSI_RESET
+        position = match.end()
+    trailing = line[position:]
+    parts.append(trailing if inside else pattern.sub(replacement, trailing))
+    return "".join(parts)
+
+
+# Colours one quoted noun value unless it is shaped like a file or path
+def _colorize_quoted_name(match, style_name=None):
+    name = match.group(2)
+    if _QUOTED_FILE_LIKE_RE.search(name):
+        return match.group(0)
+    context_match = _QUOTED_CONTEXT_RE.search(match.string[:match.start()])
+    if context_match:
+        noun = context_match.group(1).casefold()
+        style_name = {"user": "username", "repo": "repository"}[noun]
+    if not style_name:
+        return match.group(0)
+    return f"{match.group(1)}{colorize(style_name, name)}{match.group(3)}"
+
+
+# Applies the configured colour rules to one output line
+def _colorize_line(line):
+    lowered = line.lower()
+    notification_match = _NOTIFICATION_SUMMARY_STATE_RE.match(line)
+    if notification_match:
+        prefix, state, suffix = notification_match.groups()
+        return f"{prefix}{colorize('boolean_true' if state == 'On' else 'boolean_false', state)}{suffix}"
+    doctor_match = _DOCTOR_MARK_RE.match(line)
+    if doctor_match:
+        return colorize(_DOCTOR_MARK_STYLES[doctor_match.group(1)], doctor_match.group(0)) + line[doctor_match.end():]
+    repository_list_match = _REPOSITORY_LIST_RE.match(line)
+    if repository_list_match:
+        suffix = repository_list_match.group(3) or ""
+        return f"{repository_list_match.group(1)}{colorize('repository', repository_list_match.group(2))}{suffix}"
+    linked_list_match = _LINKED_LIST_ITEM_RE.match(line)
+    if linked_list_match:
+        item = linked_list_match.group(2)
+        url_parts = [part for part in urlsplit(linked_list_match.group(4)).path.split("/") if part]
+        item_style = "repository" if "/" in item or len(url_parts) >= 2 else "username"
+        return f"{linked_list_match.group(1)}{colorize(item_style, item)}{linked_list_match.group(3)}{colorize('url', linked_list_match.group(4))}{linked_list_match.group(5)}"
+    user_list_match = _USER_LIST_RE.match(line)
+    if user_list_match:
+        return f"{user_list_match.group(1)}{colorize('username', user_list_match.group(2))}"
+    labeled_value = _split_output_label(line, ("Timestamp:", "Liveness check, timestamp:"))
+    if labeled_value:
+        label, rest = labeled_value
+        colored = f"{colorize('timestamp_label', label)}{colorize('timestamp', rest)}"
+        return colored + ("\n" if line.endswith("\n") else "")
+    labeled_value = _split_output_label(line, ("Public profile:",))
+    if labeled_value:
+        label, status = labeled_value
+        status_style = "status_online" if status.strip().casefold() == "yes" else "status_offline"
+        colored = f"{label}{colorize(status_style, status)}"
+        return colored + ("\n" if line.endswith("\n") else "")
+    labeled_value = _split_output_label(line, ("Blocked by the user:",))
+    if labeled_value:
+        label, status = labeled_value
+        normalized_status = status.strip().casefold()
+        status_style = "status_offline" if normalized_status == "yes" else "status_online" if normalized_status == "no" else "status_other"
+        colored = f"{label}{colorize(status_style, status)}"
+        return colored + ("\n" if line.endswith("\n") else "")
+    if " URL:" in line or _split_output_label(line, ("URL:",)):
+        return _sub_outside_color(_URL_RE, lambda match: colorize("url", match.group(0)), line)
+    for labels, style_name in _LABEL_STYLES:
+        labeled_value = _split_output_label(line, labels)
+        if labeled_value:
+            label, rest = labeled_value
+            colored = f"{label}{colorize(style_name, rest)}"
+            return colored + ("\n" if line.endswith("\n") else "")
+    line = _sub_outside_color(_USER_TAG_RE, lambda match: f"{match.group(1)}{match.group(2)}{colorize('username', match.group(3))}", line)
+    line = _sub_outside_color(_FROM_TO_COUNT_RE, lambda match: f"{match.group(1)}{colorize('count_up' if int(match.group(4)) >= int(match.group(2)) else 'count_down', match.group(2))}{match.group(3)}{colorize('count_up' if int(match.group(4)) >= int(match.group(2)) else 'count_down', match.group(4))}", line)
+    line = _sub_outside_color(_DIFF_COUNT_UP_RE, lambda match: colorize("count_up", match.group(0)), line)
+    line = _sub_outside_color(_DIFF_COUNT_DOWN_RE, lambda match: colorize("count_down", match.group(0)), line)
+    line = _sub_outside_color(_DURATION_RE, lambda match: colorize("duration", match.group(0)), line)
+    line = _sub_outside_color(_SHORT_RANGE_DATE_RE, lambda match: colorize("date_range", match.group(0)), line)
+    line = _sub_outside_color(_DATE_RANGE_RE, lambda match: colorize("date_range", match.group(0)), line)
+    line = _sub_outside_color(_HOUR_RANGE_RE, lambda match: colorize("date_range", match.group(0)), line)
+    line = _sub_outside_color(_LONG_DATE_RE, lambda match: colorize("date", match.group(0)), line)
+    line = _sub_outside_color(_TIME_ONLY_RE, lambda match: colorize("date", match.group(0)), line)
+    line = _sub_outside_color(_URL_RE, lambda match: colorize("url", match.group(0)), line)
+    line = _sub_outside_color(_PROFILE_VISIBILITY_CHANGE_RE, lambda match: f"{match.group(1)}{match.group(2)}{colorize_status(match.group(3))}{match.group(4)}", line)
+    line = _sub_outside_color(_BLOCK_CHANGE_RE, lambda match: colorize_status(match.group(0)), line)
+    line = _sub_outside_color(_REPOSITORY_PUBLIC_RE, lambda match: colorize_status(match.group(0)), line)
+    if not line.lstrip().startswith("'"):
+        line = _sub_outside_color(_QUOTED_CONTENT_RE, lambda match: _colorize_quoted_name(match), line)
+    line = _sub_outside_color(_BOOLEAN_TRUE_RE, lambda match: colorize("boolean_true", match.group(0)), line)
+    line = _sub_outside_color(_BOOLEAN_FALSE_RE, lambda match: colorize("boolean_false", match.group(0)), line)
+    is_debug_line = bool(_DEBUG_LINE_RE.match(lowered))
+    if lowered.startswith("to fix:"):
+        line = _apply_style_nested(line, "info")
+    elif not is_debug_line and _ERROR_LINE_RE.match(lowered):
+        line = _apply_style_nested(line, "error")
+    elif _WARNING_LINE_RE.match(lowered):
+        line = _apply_style_nested(line, "warning")
+    elif "* signal" in lowered and "received" in lowered:
+        line = _apply_style_nested(line, "signal")
+    elif "sending email" in lowered:
+        line = _apply_style_nested(line, "email")
+    elif "sending webhook" in lowered:
+        line = _apply_style_nested(line, "webhook")
+    elif "* info:" in lowered:
+        line = _apply_style_nested(line, "info")
+    return line
+
+
+# Applies colour rules to multi-line text while preserving line breaks
+def apply_color_to_text(text):
+    if not COLOR_ENABLED or not isinstance(text, str):
+        return text
+    parts = []
+    for chunk in text.splitlines(keepends=True):
+        if chunk.endswith(("\n", "\r")):
+            stripped = chunk.rstrip("\r\n")
+            newline = chunk[len(stripped):]
+            parts.append(_colorize_line(stripped) + newline)
+        else:
+            parts.append(_colorize_line(chunk))
+    return "".join(parts)
+
+
+# Writes the startup name line by line with a separately styled version line
+def _write_startup_banner(destination):
+    destination.write("\n".join(colorize("header", line) if line else line for line in STARTUP_BANNER.splitlines()) + "\n")
+    destination.write(colorize("info", f"{'':21}v{VERSION}") + "\n\n")
+
+
+# Prints the startup banner through a sanitize-only terminal stream
+def print_startup_banner():
+    _write_startup_banner(terminal_surface_stream(sys.stdout))
+
+
+# Returns the real terminal behind any number of sanitizing wrappers
+def unwrap_terminal_stream(stream):
+    while isinstance(stream, TerminalStream):
+        stream = stream.terminal
+    return stream
+
+
+# Sanitizes and colours stdout before logging policy is resolved
+class TerminalStream(object):
+    # Stores the wrapped terminal stream
+    def __init__(self, stream, color_output=True):
+        self.terminal = stream
+        self.color_output = color_output
+
+    # Writes one sanitized and coloured message
+    def write(self, message):
+        safe_message = sanitize_terminal_text(message)
+        self.terminal.write(apply_color_to_text(safe_message) if self.color_output else safe_message)
+        self.terminal.flush()
+
+    # Writes one terminal-only message
+    def terminal_only(self, message):
+        self.write(message)
+
+    # Discards log-only output while logging is disabled
+    def log_only(self, message):
+        return
+
+    # Flushes the wrapped terminal
+    def flush(self):
+        self.terminal.flush()
+
+    # Forwards other stream attributes
+    def __getattr__(self, name):
+        return getattr(self.terminal, name)
+
+
+# Returns a sanitize-only stream for surfaces that apply explicit semantic styles
+def terminal_surface_stream(stream):
+    if isinstance(stream, TerminalStream) and not stream.color_output:
+        return stream
+    while isinstance(stream, (Logger, TerminalStream)):
+        stream = stream.terminal
+    return TerminalStream(stream, color_output=False)
+
+
 # Logger class to output messages to stdout and log file
 class Logger(object):
     # Opens one line-buffered UTF-8 log while preserving the real terminal stream
     def __init__(self, filename):
-        self.terminal = sys.stdout
+        self.terminal = unwrap_terminal_stream(sys.stdout)
         debug_print(f"Opening output log for append path={filename}")
         try:
             self.logfile = open(filename, "a", buffering=1, encoding="utf-8")
@@ -618,10 +1138,10 @@ class Logger(object):
 
     # Writes sanitized output to both the terminal and log
     def write(self, message):
-        safe_message = sanitize_error_text(message)
-        self.terminal.write(safe_message)
-        # Expand tabs in file output so aligned columns render consistently across viewers
-        self.logfile.write(normalize_log_separators(safe_message.expandtabs(8)))
+        safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        self.logfile.write(normalize_log_separators(ANSI_ESCAPE_RE.sub("", safe_message).expandtabs(8)))
+        terminal_message = truncate_string_per_line(safe_message, TRUNCATE_CHARS) if TRUNCATE_CHARS else safe_message
+        self.terminal.write(apply_color_to_text(terminal_message))
         self.terminal.flush()
         self.logfile.flush()
 
@@ -632,13 +1152,15 @@ class Logger(object):
 
     # Writes sanitized output only to the terminal
     def terminal_only(self, message):
-        self.terminal.write(sanitize_error_text(message))
+        safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        terminal_message = truncate_string_per_line(safe_message, TRUNCATE_CHARS) if TRUNCATE_CHARS else safe_message
+        self.terminal.write(apply_color_to_text(terminal_message))
         self.terminal.flush()
 
     # Writes sanitized normalized output only to the log
     def log_only(self, message):
-        safe_message = sanitize_error_text(message)
-        self.logfile.write(normalize_log_separators(safe_message.expandtabs(8)))
+        safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        self.logfile.write(normalize_log_separators(ANSI_ESCAPE_RE.sub("", safe_message).expandtabs(8)))
         self.logfile.flush()
 
 
@@ -2459,6 +2981,7 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("CSV output", str(CSV_FILE) if CSV_FILE else "Disabled"),
         StartupSummaryRow("Output logging", str(output_path) if output_path else "Disabled"),
         StartupSummaryRow("ASCII log separators", f"{ascii_log_separators_enabled()} (mode: {ASCII_LOG_SEPARATORS})"),
+        StartupSummaryRow("Terminal truncation", f"{TRUNCATE_CHARS} chars" if TRUNCATE_CHARS else "Disabled", concise=bool(TRUNCATE_CHARS)),
         StartupSummaryRow("Local timezone", str(LOCAL_TIMEZONE)),
         StartupSummaryRow("Install method", install_context.install_method),
         StartupSummaryRow("Secret sources", secret_sources),
@@ -3409,16 +3932,22 @@ def _display_progress(current, total, repo_name: str = "", bar_length: int = 40,
     progress_str = " ".join(parts)
 
     terminal_out = stdout_bck if stdout_bck is not None else sys.stdout
+    while isinstance(terminal_out, (Logger, TerminalStream)):
+        terminal_out = terminal_out.terminal
+    progress_str = ANSI_ESCAPE_RE.sub("", sanitize_terminal_text(progress_str))
+    previous_width = getattr(_display_progress, "width", 0)
+    padded_progress = progress_str + (" " * max(0, previous_width - len(progress_str)))
+    _display_progress.width = len(progress_str)
 
     if is_final:
-        terminal_out.write("\r\033[K" + progress_str)
+        terminal_out.write("\r" + padded_progress)
         terminal_out.flush()
 
         if stdout_bck is not None and isinstance(sys.stdout, Logger):
             sys.stdout.logfile.write(progress_str + "\n")
             sys.stdout.logfile.flush()
     else:
-        terminal_out.write("\r\033[K" + progress_str)
+        terminal_out.write("\r" + padded_progress)
         terminal_out.flush()
 
 
@@ -4778,6 +5307,37 @@ def find_config_file(cli_path=None):
             return str(p)
     debug_print("No configuration file selected")
     return None
+
+
+# Returns the raw --config-file value before argparse runs
+def early_config_file_argument(arguments=None):
+    values = list(sys.argv[1:] if arguments is None else arguments)
+    for index, argument in enumerate(values):
+        if argument == "--config-file" and index + 1 < len(values):
+            return values[index + 1]
+        if argument.startswith("--config-file="):
+            return argument.split("=", 1)[1]
+    return None
+
+
+# Applies terminal settings needed before argument parsing and leaves failures for normal config loading
+def apply_early_output_config():
+    global CLEAR_SCREEN, COLORED_OUTPUT
+    try:
+        cli_path = early_config_file_argument()
+        if cli_path is not None and cli_path.casefold() == "none":
+            return
+        expanded_path = os.path.expanduser(cli_path) if cli_path else None
+        config_path = find_config_file(expanded_path)
+        if not config_path:
+            return
+        values = parse_config_content(Path(config_path).read_text(encoding="utf-8"), str(config_path))
+    except (MemoryError, OSError, RecursionError, SyntaxError, UnicodeError, ValueError):
+        return
+    if isinstance(values.get("CLEAR_SCREEN"), bool):
+        CLEAR_SCREEN = values["CLEAR_SCREEN"]
+    if isinstance(values.get("COLORED_OUTPUT"), bool):
+        COLORED_OUTPUT = values["COLORED_OUTPUT"]
 
 
 # Settings an older version wrote that this version no longer defines, ignored instead of rejected
@@ -6557,7 +7117,9 @@ class DoctorProgress:
     # Resolves the real terminal beneath a logger wrapper
     def __init__(self, stream=None):
         self.stream = sys.stdout if stream is None else stream
-        self.terminal = getattr(self.stream, "terminal", self.stream)
+        self.terminal = self.stream
+        while isinstance(self.terminal, (Logger, TerminalStream)):
+            self.terminal = self.terminal.terminal
         self.width = 0
 
     # Writes one transient progress label only to an interactive terminal
@@ -6572,7 +7134,8 @@ class DoctorProgress:
             interactive = False
         if not interactive:
             return
-        message = f"* Checking {label} ..."
+        safe_label = ANSI_ESCAPE_RE.sub("", sanitize_terminal_text(str(label)))
+        message = f"* Checking {safe_label} ..."
         self.terminal.write(message + "\r")
         self.terminal.flush()
         self.width = len(message)
@@ -6637,13 +7200,18 @@ def validate_github_endpoint_url(value):
 # Adds configuration, dotenv, private-setting and core value checks
 def doctor_check_configuration(report, args, parser):
     global CLI_CONFIG_PATH, LOCAL_TIMEZONE
-    if args.config_file:
+    config_discovery_disabled = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
+    if args.config_file and not config_discovery_disabled:
         CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
-    cfg_path = find_config_file(CLI_CONFIG_PATH)
+    elif config_discovery_disabled:
+        CLI_CONFIG_PATH = None
+    cfg_path = None if config_discovery_disabled else find_config_file(CLI_CONFIG_PATH)
     configured_settings = set()
     config_errors = []
     retired_settings = set()
-    if CLI_CONFIG_PATH and not cfg_path:
+    if config_discovery_disabled:
+        report.add("Configuration", "PASS", "Configuration discovery is disabled", "No configuration file was requested")
+    elif CLI_CONFIG_PATH and not cfg_path:
         report.add("Configuration", "FAIL", "Configuration file was not found", f"Requested path: {CLI_CONFIG_PATH}", "Correct --config-file or generate a new configuration with --generate-config")
     elif cfg_path:
         loaded = load_config_file(cfg_path, report_errors=False, loaded_names_out=configured_settings, diagnostic_overrides=(args.verbose is True, args.debug is True), error_out=config_errors, retired_names_out=retired_settings)
@@ -6935,12 +7503,13 @@ def sanitize_doctor_text(value):
 # Renders one doctor result while sanitizing every user-visible field
 def render_doctor_check(check, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write(f"[{check.status}] {sanitize_doctor_text(check.label)}\n")
+    marker = colorize(_DOCTOR_MARK_STYLES[check.status], f"[{check.status}]")
+    destination.write(f"{marker} {sanitize_doctor_text(check.label)}\n")
     if check.detail:
         destination.write(f"  {sanitize_doctor_text(check.detail)}\n")
     if check.status != "PASS":
-        destination.write(f"To fix: {sanitize_doctor_text(check.fix)}\n")
-        destination.write(f"Guide: {sanitize_doctor_text(check.guide)}\n")
+        destination.write(colorize("info", f"To fix: {sanitize_doctor_text(check.fix)}") + "\n")
+        destination.write(f"Guide: {colorize('url', sanitize_doctor_text(check.guide))}\n")
 
 
 # Renders fixed-order report sections with exactly one blank line between them
@@ -6951,7 +7520,7 @@ def render_doctor_sections(report, stream=None):
         if check.section == "Optional delivery tests":
             continue
         if check.section != current_section:
-            destination.write(f"\n{check.section}\n")
+            destination.write(f"\n{colorize('section', check.section)}\n")
             current_section = check.section
         render_doctor_check(check, destination)
 
@@ -6980,7 +7549,7 @@ def doctor_output_is_interactive(stream=None):
 # Reads one default-no delivery approval without exposing any private setting
 def ask_doctor_approval(prompt, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write(f"{prompt} [y/N]: ")
+    destination.write(colorize("info", f"{prompt} [y/N]: "))
     destination.flush()
     try:
         answer = input_func()
@@ -6995,7 +7564,7 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
     if not (report.email_ready or report.webhook_ready) or not doctor_input_is_interactive(input_stream) or not doctor_output_is_interactive(stream):
         return
     destination = sys.stdout if stream is None else stream
-    destination.write("\nOptional delivery tests\n\n")
+    destination.write("\n" + colorize("section", "Optional delivery tests") + "\n\n")
     destination.write("Doctor will not write files. Each approved test sends one real message.\n\n")
     send_email_func = send_email if email_sender is None else email_sender
     send_webhook_func = send_webhook if webhook_sender is None else webhook_sender
@@ -7029,20 +7598,21 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
 # Renders the single actionable doctor verdict and guide URL
 def render_doctor_summary(report, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write("\nSummary\n")
+    destination.write("\n" + colorize("header", "Summary") + "\n")
     if report.failure_count:
-        destination.write(f"  {report.failure_count} check(s) failed, {report.warning_count} warning(s). Fix the failures above before relying on the tool.\n")
+        destination.write(colorize("error", f"  {report.failure_count} check(s) failed, {report.warning_count} warning(s). Fix the failures above before relying on the tool.") + "\n")
     elif report.warning_count:
-        destination.write(f"  All critical checks passed with {report.warning_count} warning(s). Review the warnings above.\n")
+        destination.write(colorize("warning", f"  All critical checks passed with {report.warning_count} warning(s). Review the warnings above.") + "\n")
     else:
-        destination.write("  All checks passed. You are good to go!\n")
-    destination.write(f"\nGuide: {DOCTOR_GUIDE_URL}\n")
+        destination.write(colorize("boolean_true", "  All checks passed. You are good to go!") + "\n")
+    destination.write(f"\nGuide: {colorize('url', DOCTOR_GUIDE_URL)}\n")
 
 
 # Runs the complete read-only preflight and returns its healthcheck exit code
-def run_doctor_preflight(args, parser, request_get=None, github_factory=None, contribution_checker=None, module_finder=None, input_func=input, input_stream=None, stream=None, email_sender=None, webhook_sender=None):
-    destination = sys.stdout if stream is None else stream
-    destination.write(f"GitHub Monitoring Tool v{VERSION}\n\n")
+def run_doctor_preflight(args, parser, request_get=None, github_factory=None, contribution_checker=None, module_finder=None, input_func=input, input_stream=None, stream=None, email_sender=None, webhook_sender=None, show_banner=True):
+    destination = terminal_surface_stream(sys.stdout if stream is None else stream)
+    if show_banner:
+        _write_startup_banner(destination)
     destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
     report = DoctorReport(target_name=str(args.username or ""))
     progress = DoctorProgress(destination)
@@ -7052,6 +7622,10 @@ def run_doctor_preflight(args, parser, request_get=None, github_factory=None, co
         progress.show("configuration")
         progress.clear()
         doctor_check_configuration(report, args, parser)
+        colour_stream = destination
+        while isinstance(colour_stream, (Logger, TerminalStream)):
+            colour_stream = colour_stream.terminal
+        init_color_output(colour_stream)
         progress.show("authentication")
         doctor_check_authentication(report, request_get)
         progress.show("connectivity")
@@ -7064,7 +7638,7 @@ def run_doctor_preflight(args, parser, request_get=None, github_factory=None, co
         doctor_check_notifications(report)
     finally:
         progress.clear()
-    destination.write("Doctor\n")
+    destination.write(colorize("header", "Doctor") + "\n")
     render_doctor_sections(report, destination)
     doctor_run_optional_delivery_tests(report, input_func, input_stream, destination, email_sender, webhook_sender)
     render_doctor_summary(report, destination)
@@ -7082,6 +7656,42 @@ WIZARD_SECTION_KEYS = {
 }
 WIZARD_SECRET_KEYS = {"Authentication": ("GITHUB_TOKEN",), "Email": ("SMTP_PASSWORD",), "Webhook": ("WEBHOOK_URL", "NTFY_ACCESS_TOKEN")}
 WIZARD_CONFIG_ORDER = tuple(name for names in WIZARD_SECTION_KEYS.values() for name in names)
+
+
+# Writes one coloured wizard heading at the requested level
+def _wizard_heading(destination, text, part="section"):
+    destination.write("\n" + colorize(part, text) + "\n")
+
+
+# Writes one copyable wizard command with an optional numbered label
+def _wizard_print_command(destination, label, command, number=None):
+    prefix = f"  {number}. " if number is not None else "    "
+    destination.write(f"{prefix}{label}: {colorize('section', command)}\n")
+
+
+# Writes the detected installation method and selected setup files
+def _wizard_print_setup_destinations(destination, context, state):
+    labels = ("Detected install method:", "Configuration:", "Dotenv:")
+    width = max(len(label) for label in labels)
+    destination.write(f"{labels[0]:<{width}} {colorize('username', context.install_method)}\n")
+    destination.write(f"{labels[1]:<{width}} {state.config_path}\n")
+    destination.write(f"{labels[2]:<{width}} {state.dotenv_path}\n")
+
+
+# Colours one setup summary value from its row label
+def _wizard_summary_value(label, value):
+    text = str(value)
+    if label == "Target":
+        return colorize("username", text)
+    if label == "Polling interval":
+        return colorize("duration", text)
+    if label in ("GitHub API",):
+        return colorize("url", text)
+    if text.startswith("Enabled"):
+        return colorize("boolean_true", text)
+    if text == "Disabled":
+        return colorize("boolean_false", text)
+    return text
 
 
 # Signals a clean interactive cancellation before any wizard files are written
@@ -7151,7 +7761,7 @@ def wizard_parse_duration(value):
 # Reads one wizard answer after rendering its prompt to the selected stream
 def wizard_read_answer(prompt, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write(prompt)
+    destination.write(colorize("info", prompt))
     destination.flush()
     try:
         return str(input_func()).strip()
@@ -7164,7 +7774,7 @@ def wizard_read_answer(prompt, input_func=input, stream=None):
 def wizard_read_secret(prompt, getpass_func=None, stream=None):
     global DEBUG_MODE
     destination = sys.stdout if stream is None else stream
-    destination.write(prompt)
+    destination.write(colorize("info", prompt))
     destination.flush()
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
     previous_debug_mode = DEBUG_MODE
@@ -7190,23 +7800,23 @@ def wizard_ask_yes_no(prompt, default=False, input_func=input, stream=None):
             return True
         if answer in {"n", "no"}:
             return False
-        destination.write("Please answer yes or no.\n")
+        destination.write(colorize("warning", "Please answer yes or no.") + "\n")
 
 
 # Reads one numbered choice and returns its stable value
 def wizard_ask_choice(prompt, choices, default, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write(prompt + "\n")
+    destination.write(colorize("section", prompt) + "\n")
     for index, (_, label) in enumerate(choices, 1):
         marker = " (default)" if choices[index - 1][0] == default else ""
-        destination.write(f"  {index}. {label}{marker}\n")
+        destination.write(f"  {colorize('username', str(index))}. {label}{colorize('info', marker)}\n")
     while True:
         answer = wizard_read_answer("Choice: ", input_func, destination)
         if not answer:
             return default
         if answer.isdigit() and 1 <= int(answer) <= len(choices):
             return choices[int(answer) - 1][0]
-        destination.write(f"Enter a number from 1 through {len(choices)}.\n")
+        destination.write(colorize("warning", f"Enter a number from 1 through {len(choices)}.") + "\n")
 
 
 # Reads one text value with a shown default and optional validation
@@ -7221,7 +7831,7 @@ def wizard_ask_text(label, default="", validator=None, input_func=input, stream=
         error = validator(selected)
         if not error:
             return selected
-        destination.write(f"That value is not valid: {error}\n")
+        destination.write(colorize("warning", f"That value is not valid: {error}") + "\n")
 
 
 # Returns a concise validation error for one general HTTPS service endpoint
@@ -7308,7 +7918,7 @@ def wizard_reset_section(state, section):
 # Collects the target and core monitoring feature choices
 def wizard_collect_target(state, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write("\nTarget\n")
+    _wizard_heading(destination, "Target")
     while True:
         entered = wizard_ask_text("GitHub username or profile URL", state.target, input_func=input_func, stream=destination)
         normalized = wizard_normalize_target(entered)
@@ -7317,7 +7927,7 @@ def wizard_collect_target(state, input_func=input, stream=None):
             if normalized != entered:
                 destination.write(f"Using normalized GitHub username: {normalized}\n")
             break
-        destination.write("That target is not valid. Enter a GitHub username or full profile URL.\n")
+        destination.write(colorize("warning", "That target is not valid. Enter a GitHub username or full profile URL.") + "\n")
     state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] = not wizard_ask_yes_no("Monitor public GitHub events?", not bool(state.values["DO_NOT_MONITOR_GITHUB_EVENTS"]), input_func, destination)
     state.values["TRACK_REPOS_CHANGES"] = wizard_ask_yes_no("Track detailed repository changes?", bool(state.values["TRACK_REPOS_CHANGES"]), input_func, destination)
     state.values["TRACK_CONTRIB_CHANGES"] = wizard_ask_yes_no("Track daily contribution changes?", bool(state.values["TRACK_CONTRIB_CHANGES"]), input_func, destination)
@@ -7326,7 +7936,7 @@ def wizard_collect_target(state, input_func=input, stream=None):
 # Collects a human polling interval and timezone
 def wizard_collect_polling(state, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write("\nPolling\n")
+    _wizard_heading(destination, "Polling")
     seconds = int(state.values["GITHUB_CHECK_INTERVAL"])
     default_duration = f"{seconds // 86400}d" if seconds % 86400 == 0 else f"{seconds // 3600}h" if seconds % 3600 == 0 else f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s"
     while True:
@@ -7335,7 +7945,7 @@ def wizard_collect_polling(state, input_func=input, stream=None):
             state.values["GITHUB_CHECK_INTERVAL"] = wizard_parse_duration(entered)
             break
         except ValueError as exc:
-            destination.write(f"That duration is not valid: {exc}\n")
+            destination.write(colorize("warning", f"That duration is not valid: {exc}") + "\n")
     timezone_default = str(state.values["LOCAL_TIMEZONE"])
     state.values["LOCAL_TIMEZONE"] = wizard_ask_text("Local timezone", timezone_default, lambda value: "" if value == "Auto" or is_valid_timezone(value) else "use Auto or a valid IANA timezone such as Europe/Warsaw", input_func, destination)
 
@@ -7343,7 +7953,7 @@ def wizard_collect_polling(state, input_func=input, stream=None):
 # Collects GitHub endpoints and optionally validates a hidden token
 def wizard_collect_authentication(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
     destination = sys.stdout if stream is None else stream
-    destination.write("\nAuthentication\n")
+    _wizard_heading(destination, "Authentication")
     state.values["GITHUB_API_URL"] = wizard_ask_text("GitHub API URL", str(state.values["GITHUB_API_URL"]), lambda value: "" if validate_github_endpoint_url(value) else "enter a complete HTTPS GitHub API URL", input_func, destination)
     state.values["GITHUB_HTML_URL"] = wizard_ask_text("GitHub web URL", str(state.values["GITHUB_HTML_URL"]), wizard_https_url_error, input_func, destination)
     existing = bool(state.secrets.get("GITHUB_TOKEN") or state.environment_token_available)
@@ -7353,17 +7963,17 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
     while True:
         token = wizard_read_secret("GitHub token: ", getpass_func, destination)
         if not token:
-            destination.write("No token was entered. Authentication will remain incomplete.\n")
+            destination.write(colorize("warning", "No token was entered. Authentication will remain incomplete.") + "\n")
             if "GITHUB_TOKEN" in state.baseline_secrets:
                 state.secrets["GITHUB_TOKEN"] = state.baseline_secrets["GITHUB_TOKEN"]
             else:
                 state.secrets.pop("GITHUB_TOKEN", None)
             return
-        destination.write("Validating the GitHub token before saving ...\n")
+        destination.write(colorize("info", "Validating the GitHub token before saving ...") + "\n")
         try:
             login = validator(token, state.values["GITHUB_API_URL"])
         except Exception as exc:
-            destination.write(f"Token validation failed: {sanitize_error_text(exc)}\n")
+            destination.write(colorize("error", f"Token validation failed: {sanitize_error_text(exc)}") + "\n")
             if not wizard_ask_yes_no("Try another token?", True, input_func, destination):
                 if "GITHUB_TOKEN" in state.baseline_secrets:
                     state.secrets["GITHUB_TOKEN"] = state.baseline_secrets["GITHUB_TOKEN"]
@@ -7373,14 +7983,14 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
             continue
         state.secrets["GITHUB_TOKEN"] = token
         state.authenticated_login = str(login)
-        destination.write(f"GitHub token is valid for user: {state.authenticated_login}\n")
+        destination.write(f"GitHub token is valid for user: {colorize('username', state.authenticated_login)}\n")
         return
 
 
 # Collects optional email delivery settings and alert choices
 def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write("\nEmail\n")
+    _wizard_heading(destination, "Email")
     configured_destination = not str(state.values["SMTP_HOST"]).startswith("your_smtp_server_")
     enabled_default = any(bool(state.values[name]) for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION")) or bool(state.values["ERROR_NOTIFICATION"] and configured_destination)
     if not wizard_ask_yes_no("Configure email alerts?", enabled_default, input_func, destination):
@@ -7399,8 +8009,8 @@ def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None
     state.values["RECEIVER_EMAIL"] = wizard_ask_text("Receiver email", "" if str(state.values["RECEIVER_EMAIL"]).startswith("your_") else state.values["RECEIVER_EMAIL"], input_func=input_func, stream=destination)
     validation_error = wizard_email_settings_error(state.values, state.secrets)
     if validation_error:
-        destination.write(f"Email settings are incomplete: {validation_error}\n")
-        destination.write("Email alerts will stay disabled. Review this section to correct them.\n")
+        destination.write(colorize("warning", f"Email settings are incomplete: {validation_error}") + "\n")
+        destination.write(colorize("warning", "Email alerts will stay disabled. Review this section to correct them.") + "\n")
         for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"):
             state.values[name] = False
         return
@@ -7415,7 +8025,7 @@ def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None
 # Collects optional Discord or ntfy delivery settings and alert choices
 def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write("\nWebhook\n")
+    _wizard_heading(destination, "Webhook")
     if not wizard_ask_yes_no("Configure webhook alerts?", bool(state.values["WEBHOOK_ENABLED"]), input_func, destination):
         state.values["WEBHOOK_ENABLED"] = False
         return
@@ -7430,16 +8040,16 @@ def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=No
             if valid:
                 state.secrets["WEBHOOK_URL"] = normalized
                 break
-            destination.write(f"That is not a valid {'Discord webhook URL' if provider == 'discord' else 'ntfy topic or HTTPS topic URL'}.\n")
+            destination.write(colorize("warning", f"That is not a valid {'Discord webhook URL' if provider == 'discord' else 'ntfy topic or HTTPS topic URL'}.") + "\n")
     if provider == "ntfy" and wizard_ask_yes_no("Set or replace an optional ntfy access token?", False, input_func, destination):
         access_token = wizard_read_secret("ntfy access token: ", getpass_func, destination)
         if "\r" in access_token or "\n" in access_token or access_token.casefold().startswith(("bearer ", "basic ")):
-            destination.write("The ntfy token was ignored because it contains an authorization scheme or line break.\n")
+            destination.write(colorize("warning", "The ntfy token was ignored because it contains an authorization scheme or line break.") + "\n")
         elif access_token:
             state.secrets["NTFY_ACCESS_TOKEN"] = access_token
     if not state.secrets.get("WEBHOOK_URL"):
         state.values["WEBHOOK_ENABLED"] = False
-        destination.write("Webhook alerts will stay disabled until a destination is saved.\n")
+        destination.write(colorize("warning", "Webhook alerts will stay disabled until a destination is saved.") + "\n")
         return
     state.values["WEBHOOK_ENABLED"] = True
     state.values["WEBHOOK_PROFILE_NOTIFICATION"] = wizard_ask_yes_no("Webhook profile changes?", bool(state.values["WEBHOOK_PROFILE_NOTIFICATION"]), input_func, destination)
@@ -7453,7 +8063,7 @@ def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=No
 # Collects log and CSV output destinations
 def wizard_collect_destinations(state, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write("\nDestinations\n")
+    _wizard_heading(destination, "Destinations")
     state.values["DISABLE_LOGGING"] = not wizard_ask_yes_no("Write the normal per-target log file?", not bool(state.values["DISABLE_LOGGING"]), input_func, destination)
     csv_default = str(state.values["CSV_FILE"] or "")
     state.values["CSV_FILE"] = wizard_ask_text("Optional CSV output path (blank disables it)", csv_default, input_func=input_func, stream=destination)
@@ -7475,7 +8085,7 @@ def wizard_render_summary(state, stream=None):
     destination = sys.stdout if stream is None else stream
     email_enabled = any(state.values[name] for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"))
     webhook_enabled = bool(state.values["WEBHOOK_ENABLED"])
-    destination.write("\nSetup summary\n")
+    _wizard_heading(destination, "Setup summary", "header")
     rows = (
         ("Target", state.target),
         ("Polling interval", display_time(state.values["GITHUB_CHECK_INTERVAL"])),
@@ -7493,7 +8103,7 @@ def wizard_render_summary(state, stream=None):
     )
     width = max(len(label) for label, _ in rows) + 1
     for label, value in rows:
-        destination.write(f"  {(label + ':'):<{width}} {value}\n")
+        destination.write(f"  {(label + ':'):<{width}} {_wizard_summary_value(label, value)}\n")
 
 
 # Recollects one selected section while preserving every other answer
@@ -7681,7 +8291,7 @@ def wizard_monitor_arguments(state):
 
 # Runs the complete buffered setup interaction and optional doctor handoff
 def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, getpass_func=None, input_stream=None, stream=None, interactive=None, install_context=None, token_validator=None, doctor_runner=None, monitor_launcher=None, show_banner=True):
-    destination = sys.stdout if stream is None else stream
+    destination = terminal_surface_stream(sys.stdout if stream is None else stream)
     source = sys.stdin if input_stream is None else input_stream
     try:
         terminal_is_interactive = bool(source.isatty()) if interactive is None else bool(interactive)
@@ -7692,37 +8302,33 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     selected_config = Path(config_path or (Path.cwd() / DEFAULT_CONFIG_FILENAME)).expanduser().resolve()
     selected_dotenv = Path(env_file or (Path.cwd() / ".env")).expanduser().resolve()
     if show_banner:
-        destination.write(f"GitHub Monitoring Tool v{VERSION}\n\n")
+        _write_startup_banner(destination)
     if not terminal_is_interactive:
         generate_command = render_install_command(["--generate-config", str(selected_config)], context)
-        destination.write("Setup Wizard\n\n")
-        destination.write("Guided setup requires an interactive terminal so private values can be entered safely.\n")
-        destination.write(f"Generate a config manually with: {generate_command}\n")
-        destination.write(f"Then edit it and store secrets in a dotenv file. Guide: {QUICK_START_GUIDE_URL}\n")
+        destination.write(colorize("header", "Setup Wizard") + "\n\n")
+        destination.write(colorize("warning", "Guided setup requires an interactive terminal so private values can be entered safely.") + "\n")
+        _wizard_print_command(destination, "Generate a config manually with", generate_command)
+        destination.write(f"Then edit it and store secrets in a dotenv file. Guide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
         return 1
     try:
         state = build_wizard_state(selected_config, selected_dotenv, context)
-        destination.write("Setup Wizard\n\n")
+        destination.write(colorize("header", "Setup Wizard") + "\n\n")
         destination.write("This asks a few questions and writes a ready-to-run configuration.\n")
         destination.write("Press Enter to accept the shown default. Ctrl+C cancels.\n\n")
         destination.write("Recommended setup monitors public events every 30 minutes. Secrets go to the dotenv file. Non-secret settings go to the config file.\n\n")
-        labels = ("Detected install method:", "Configuration:", "Dotenv:")
-        width = max(len(label) for label in labels) + 1
-        destination.write(f"{labels[0]:<{width}} {context.install_method}\n")
-        destination.write(f"{labels[1]:<{width}} {state.config_path}\n")
-        destination.write(f"{labels[2]:<{width}} {state.dotenv_path}\n")
+        _wizard_print_setup_destinations(destination, context, state)
         wizard_collect_all(state, input_func, getpass_func, destination, token_validator)
         if not wizard_review_setup(state, input_func, getpass_func, destination, token_validator):
-            destination.write("\nSetup discarded. No files were written.\n")
+            destination.write("\n" + colorize("warning", "Setup discarded. No files were written.") + "\n")
             return 1
         backups = save_wizard_files(state)
     except WizardCancelled:
-        destination.write("Setup cancelled. No files were written.\n")
+        destination.write(colorize("warning", "Setup cancelled. No files were written.") + "\n")
         return 1
     except Exception as exc:
         advice = classify_recovery_error(exc, "config")
         destination.write("\n")
-        destination.write(render_recovery_advice(advice) + "\n")
+        destination.write(apply_color_to_text(render_recovery_advice(advice)) + "\n")
         return 1
     config_backup, dotenv_backup = backups
     saved_rows = [("Configuration:", state.config_path), ("Dotenv:", state.dotenv_path)]
@@ -7731,7 +8337,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     if dotenv_backup is not None:
         saved_rows.append(("Dotenv backup:", dotenv_backup))
     saved_width = max(len(label) for label, _ in saved_rows) + 1
-    destination.write("\nSaved files\n")
+    _wizard_heading(destination, "Saved files", "header")
     for label, path in saved_rows:
         destination.write(f"  {label:<{saved_width}}{path}\n")
     monitor_arguments = wizard_monitor_arguments(state)
@@ -7744,33 +8350,35 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
                 destination.write("\n")
                 doctor_args = parser.parse_args(doctor_arguments)
                 runner = run_doctor_preflight if doctor_runner is None else doctor_runner
-                doctor_exit = runner(doctor_args, parser, input_func=input_func, input_stream=source, stream=destination)
+                doctor_exit = runner(doctor_args, parser, input_func=input_func, input_stream=source, stream=destination, show_banner=False)
     except WizardCancelled:
-        destination.write("Setup is saved. Use the commands below when ready.\n")
-    destination.write("\nNext steps\n")
+        destination.write(colorize("warning", "Setup is saved. Use the commands below when ready.") + "\n")
+    _wizard_heading(destination, "Next steps", "header")
     if doctor_exit is None:
-        destination.write(f"  1. Check setup: {render_install_command(doctor_arguments, context)}\n")
-        destination.write(f"  2. Start monitoring: {render_install_command(monitor_arguments, context)}\n")
+        _wizard_print_command(destination, "Check setup", render_install_command(doctor_arguments, context), 1)
+        _wizard_print_command(destination, "Start monitoring", render_install_command(monitor_arguments, context), 2)
     else:
-        destination.write(f"  1. Start monitoring: {render_install_command(monitor_arguments, context)}\n")
-    destination.write(f"  Guide: {QUICK_START_GUIDE_URL}\n")
+        _wizard_print_command(destination, "Start monitoring", render_install_command(monitor_arguments, context), 1)
+    destination.write(f"  Guide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
     if doctor_exit == 0:
         try:
             start_now = wizard_ask_yes_no("Start monitoring now? Monitoring will continue until Ctrl+C.", False, input_func, destination)
         except WizardCancelled:
             start_now = False
-            destination.write("Setup is saved. Start monitoring with the command above when ready.\n")
+            destination.write(colorize("warning", "Setup is saved. Start monitoring with the command above when ready.") + "\n")
         if start_now and monitor_launcher is not None:
             return int(monitor_launcher(monitor_arguments) or 0)
     return 0
 
 
 # Prints the four next actions for an empty invocation and optionally launches setup
-def run_zero_argument_welcome(parser, input_func=input, input_stream=None, stream=None, install_context=None, setup_runner=None):
-    destination = sys.stdout if stream is None else stream
+def run_zero_argument_welcome(parser, input_func=input, input_stream=None, stream=None, install_context=None, setup_runner=None, show_banner=True):
+    destination = terminal_surface_stream(sys.stdout if stream is None else stream)
     source = sys.stdin if input_stream is None else input_stream
     context = detect_install_context() if install_context is None else install_context
-    destination.write(f"GitHub Monitoring Tool v{VERSION}\n\nWelcome\n\n")
+    if show_banner:
+        _write_startup_banner(destination)
+    destination.write(colorize("header", "Welcome") + "\n\n")
     commands = (
         ("Quickest start", ["GITHUB_USERNAME"]),
         ("Guided setup", ["--setup"]),
@@ -7779,8 +8387,9 @@ def run_zero_argument_welcome(parser, input_func=input, input_stream=None, strea
     )
     width = max(len(label) for label, _ in commands) + 1
     for label, arguments in commands:
-        destination.write(f"{(label + ':'):<{width}} {render_install_command(arguments, context)}\n")
-    destination.write(f"\nGuide: {QUICK_START_GUIDE_URL}\n")
+        command = render_install_command(arguments, context)
+        destination.write(f"{(label + ':'):<{width}} {colorize('section', command)}\n")
+    destination.write(f"\nGuide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
     try:
         interactive = bool(source.isatty())
     except Exception as exc:
@@ -7809,7 +8418,7 @@ def launch_wizard_monitoring(arguments):
 
 # Parses command-line settings and starts the requested GitHub Monitor action
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE
+    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS
 
     if "--verbose" in sys.argv:
         VERBOSE_MODE = True
@@ -7856,9 +8465,24 @@ def main():
 
     stdout_bck = sys.stdout
 
+    # Screen clearing and the startup banner happen before argparse, so their output settings are resolved first
+    apply_early_output_config()
+    if "--no-color" in sys.argv:
+        COLORED_OUTPUT = False
+    init_color_output(stdout_bck)
+    if not isinstance(sys.stdout, TerminalStream):
+        sys.stdout = TerminalStream(sys.stdout)
+
     if len(sys.argv) > 1 and "--setup" not in sys.argv:
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
+
+    keep_cli_history = any(flag in sys.argv for flag in ("--setup", "--doctor", "--set-github-token", "--set-webhook-url"))
+    if CLEAR_SCREEN and (VERBOSE_MODE or DEBUG_MODE):
+        verbose_print("Terminal clearing was skipped so diagnostic output remains visible")
+        debug_print("Terminal screen clear skipped because diagnostic mode is active")
+    clear_screen(CLEAR_SCREEN and sys.stdout.isatty() and not (VERBOSE_MODE or DEBUG_MODE) and not keep_cli_history)
+    print_startup_banner()
 
     parser = argparse.ArgumentParser(
         prog="github_monitor",
@@ -8175,6 +8799,20 @@ def main():
         help="Disable logging to github_monitor_<username>.log"
     )
     opts.add_argument(
+        "--no-color",
+        dest="no_color",
+        action="store_true",
+        default=None,
+        help="Disable coloured output in the terminal"
+    )
+    opts.add_argument(
+        "--truncate",
+        dest="truncate",
+        metavar="N",
+        type=int,
+        help="Max characters per screen line (not log), use 999 to auto-detect terminal width, ignored if -d is set"
+    )
+    opts.add_argument(
         "-m", "--track-contribs-changes",
         dest="track_contribs_changes",
         action="store_true",
@@ -8209,16 +8847,17 @@ def main():
         discovered_config = find_config_file()
         if discovered_config and not load_config_file(discovered_config):
             sys.exit(1)
-        sys.exit(run_zero_argument_welcome(parser))
+        init_color_output(stdout_bck)
+        sys.exit(run_zero_argument_welcome(parser, show_banner=False))
 
     if args.setup:
-        allowed = {"setup", "config_file", "env_file", "verbose", "debug"}
+        allowed = {"setup", "config_file", "env_file", "verbose", "debug", "no_color"}
         incompatible = [name for name, value in vars(args).items() if name not in allowed and value not in (None, False)]
         if incompatible:
             parser.error("--setup can only be combined with --config-file, --env-file, --verbose or --debug")
         if isinstance(args.env_file, str) and args.env_file.casefold() == "none":
             parser.error("--setup requires a dotenv destination and cannot use --env-file none")
-        sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, monitor_launcher=launch_wizard_monitoring))
+        sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, monitor_launcher=launch_wizard_monitoring, show_banner=False))
 
     if args.set_github_token and args.set_webhook_url:
         parser.error("--set-github-token cannot be combined with --set-webhook-url")
@@ -8233,12 +8872,15 @@ def main():
         incompatible = (args.setup, args.generate_config, args.set_github_token, args.set_webhook_url, args.send_test_email, args.send_test_webhook, args.list_repos, args.list_starred_repos, args.list_followers_and_followings, args.list_recent_events)
         if any(incompatible):
             parser.error("--doctor cannot be combined with setup, listing or one-shot delivery commands")
-        sys.exit(run_doctor_preflight(args, parser))
+        sys.exit(run_doctor_preflight(args, parser, show_banner=False))
 
-    if args.config_file:
+    config_discovery_disabled = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
+    if args.config_file and not config_discovery_disabled:
         CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
+    elif config_discovery_disabled:
+        CLI_CONFIG_PATH = None
 
-    cfg_path = find_config_file(CLI_CONFIG_PATH)
+    cfg_path = None if config_discovery_disabled else find_config_file(CLI_CONFIG_PATH)
     configured_settings = set()
 
     if not cfg_path and CLI_CONFIG_PATH:
@@ -8254,13 +8896,9 @@ def main():
     apply_diagnostic_cli_overrides(args)
     env_path = load_startup_secrets(args.env_file, configured_settings)
     apply_startup_cli_overrides(args, configured_settings)
-
-    if CLEAR_SCREEN and (VERBOSE_MODE or DEBUG_MODE):
-        verbose_print("Terminal clearing was skipped so diagnostic output remains visible")
-        debug_print("Terminal screen clear skipped because diagnostic mode is active")
-    else:
-        clear_screen(CLEAR_SCREEN)
-    print(f"GitHub Monitoring Tool v{VERSION}\n")
+    if args.no_color is True:
+        COLORED_OUTPUT = False
+    init_color_output(stdout_bck)
 
     if args.set_github_token:
         try:
@@ -8280,6 +8918,12 @@ def main():
 
     apply_webhook_cli_overrides(args, parser)
     apply_monitoring_cli_overrides(args, parser)
+
+    try:
+        TRUNCATE_CHARS = resolve_truncate_chars(args.truncate, TRUNCATE_CHARS, DISABLE_LOGGING)
+    except OSError as exc:
+        print_recovery_advice(classify_recovery_error(exc, "terminal"))
+        sys.exit(1)
 
     if type(GITHUB_CHECK_INTERVAL) is not int or GITHUB_CHECK_INTERVAL <= 0:
         advice = make_recovery_advice("config.value_invalid", "The GitHub polling interval is invalid", "Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds", False, f"GITHUB_CHECK_INTERVAL={GITHUB_CHECK_INTERVAL}", CONFIG_GUIDE_URL)

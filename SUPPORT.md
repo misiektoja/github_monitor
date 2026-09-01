@@ -21,6 +21,14 @@ When an error includes a recovery code, include that code in the report. Re-run 
 
 Doctor checks Environment, Configuration, Authentication, Connectivity, Target, Monitoring and Notifications in a fixed order. It writes no files. Each check has a stable `[PASS]`, `[WARN]`, `[FAIL]` or `[SKIP]` marker plus a fix and guide for every non-pass result.
 
+## Terminal output
+
+Live colour is enabled by `COLORED_OUTPUT` and can be disabled with `--no-color` or `NO_COLOR=1`. It is also disabled for redirected output, piped stdin and terminals with an unset or `dumb` `TERM`. Saved log files never contain ANSI colour sequences.
+
+The terminal sanitizer preserves SGR colour sequences so the tool's own styles survive the output wrapper. It removes cursor movement, screen clearing, title changes, carriage returns and other controls. A remote string that contains a bare SGR sequence may still affect styling until the next reset, but it cannot move the cursor or change terminal state outside SGR styling. Use `--no-color` when collecting output for a parser that rejects every escape byte.
+
+`TRUNCATE_CHARS` and `--truncate` measure plain visible text before colour is added. Install `wcwidth` when exact width matters for emoji or other wide Unicode characters.
+
 A normal non-interactive run sends no messages. When a configured channel is ready and stdin is interactive, doctor offers a separate default-no prompt for one real email and one real webhook. Declining records `[SKIP]`. An approved delivery failure records `[FAIL]` and makes the command exit with status `1`.
 
 Include the complete sanitized doctor report in a bug report. Review target names, paths and recipient addresses before posting even though credential values are redacted.

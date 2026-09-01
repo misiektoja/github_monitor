@@ -128,7 +128,7 @@ def test_setup_wizard_writes_reviewed_config_and_secrets(gm_module, request):
 
     assert exit_code == 0
     transcript = output.getvalue()
-    assert transcript.startswith(f"GitHub Monitoring Tool v{gm_module.VERSION}\n\nSetup Wizard\n\n")
+    assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nSetup Wizard\n\n")
     assert transcript.index("Target\n") < transcript.index("Polling\n") < transcript.index("Authentication\n")
     assert transcript.index("Setup summary\n") < transcript.index("Saved files\n") < transcript.index("Next steps\n")
     assert "Using normalized GitHub username: octocat" in transcript
@@ -286,7 +286,7 @@ def test_zero_argument_welcome_offers_guided_setup_on_a_tty(gm_module):
 
     transcript = output.getvalue()
     assert exit_code == 7
-    assert transcript.startswith(f"GitHub Monitoring Tool v{gm_module.VERSION}\n\nWelcome\n\n")
+    assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nWelcome\n\n")
     assert all(label in transcript for label in ("Quickest start:", "Guided setup:", "Check setup:", "Full options:"))
     assert gm_module.QUICK_START_GUIDE_URL in transcript
     assert calls[0]["show_banner"] is False

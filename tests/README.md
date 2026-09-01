@@ -43,6 +43,7 @@ and again before anything is published to PyPI.
 | `test_repository_monitoring.py` | Discussion collection, repository snapshots, open and closed notifications, event formatting |
 | `test_setup_wizard.py` | Buffered setup, section editing, target and duration normalization, config and dotenv separation, backups, doctor and monitoring handoffs, non-interactive fallback and pseudo-terminal transcripts |
 | `test_startup_configuration.py` | Config, dotenv, exported environment and two-phase CLI precedence at startup consumer boundaries |
+| `test_terminal_color.py` | Theme parity, token colours, wrapper order, ANSI-free logs, terminal sanitizing, truncation, progress redraws, setup, Doctor and recovery surfaces |
 | `test_webhook_notifications.py` | Webhook URL validation, provider detection and per-event notification switches |
 
 ## Conventions

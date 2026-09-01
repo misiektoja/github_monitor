@@ -53,6 +53,7 @@ pip install github_monitor
 3. [Quick Start](#quick-start)
 4. [Configuration](#configuration)
    * [Configuration File](#configuration-file)
+   * [Terminal Colours](#terminal-colours)
    * [GitHub Personal Access Token](#github-personal-access-token)
    * [GitHub API URL](#github-api-url)
    * [Events to Monitor](#events-to-monitor)
@@ -83,6 +84,7 @@ pip install github_monitor
 
 * Python 3.10 or higher
 * Libraries: [PyGithub](https://github.com/PyGithub/PyGithub) (2.8 or newer), `requests`, `urllib3`, `python-dateutil`, `pytz`, `tzlocal`, `python-dotenv`
+* Optional terminal libraries: `colorama` for classic Windows Command Prompt colours and `wcwidth` for display-width-aware `TRUNCATE_CHARS`
 
 Tested on:
 
@@ -205,6 +207,61 @@ Startup resolves values in this order:
 5. Explicit command-line options
 
 An exported secret overrides the same key from a dotenv file. An explicit command-line option overrides every saved source. Startup checks use these effective values instead of the defaults that existed when the module was imported.
+
+Use `--config-file none` to disable automatic config discovery for one run.
+
+<a id="terminal-colours"></a>
+### Terminal Colours
+
+`COLORED_OUTPUT` controls whether live terminal output is coloured. It defaults to `True` and is read before the startup banner is printed, so a configured value applies to the first line. `--no-color` disables colour for one run. Colour also switches itself off when output is redirected or piped, when `TERM` is unset or `dumb` and when the standard [`NO_COLOR`](https://no-color.org/) environment variable is set. Log files always remain plain text with ANSI escape sequences stripped.
+
+`COLOR_THEME` overrides individual colours. It is merged over the built-in theme, so name only the parts you want to change:
+
+```ini
+COLOR_THEME = { "repository": "bright_magenta bold", "username": "green" }
+```
+
+A value combines one colour with any number of style attributes separated by spaces or `+`. Examples include `"bright_cyan bold"`, `"red underline"` and `"bright_magenta bold underline"`. An empty string leaves that part uncoloured.
+
+| Colours | Styles |
+| --- | --- |
+| `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white` and the matching `bright_` variants such as `bright_red` | `bold`, `dim`, `underline`, `blink` |
+
+| Theme key | Colours |
+| --- | --- |
+| `header` | The startup banner plus Setup Wizard and Doctor headings |
+| `section` | Commands the wizard tells you to run and Doctor section names |
+| `username` | GitHub usernames, display names and user context values |
+| `id` | Event, review and commit identifiers |
+| `status_online` | Public, online, available and unblocked states, including `Public profile: Yes` and `Blocked by the user: No` |
+| `status_offline` | Private, blocked and offline states, including `Public profile: No` and `Blocked by the user: Yes` |
+| `status_other` | Unknown or any other reported status value |
+| `repository` | Repository names |
+| `event` | Event types plus release, issue and discussion titles |
+| `commit` | Commit messages |
+| `branch` | Branches, refs and target commitish values |
+| `duration` | Polling intervals and elapsed times |
+| `timestamp_label` | The `Timestamp:` label. Empty by default so the label stays plain |
+| `timestamp` | Timestamp values |
+| `info` | Informational lines, prompts and recovery actions |
+| `warning` | Warning lines and wizard validation notices |
+| `error` | Error lines and failed verdicts |
+| `signal` | Received-signal lines |
+| `email` | Email addresses and email delivery lines |
+| `webhook` | Webhook delivery lines |
+| `date` | Single dates and times |
+| `date_range` | Date and hour ranges |
+| `boolean_true` | `True`, `Enabled`, `On` and Doctor PASS values |
+| `boolean_false` | `False`, `Disabled`, `Off` and Doctor FAIL values |
+| `count_up` | Values in reported increases such as `from 10 to 12` and `(+2)` |
+| `count_down` | Values in reported decreases such as `from 12 to 10` and `(-2)` |
+| `url` | HTTP and HTTPS links |
+
+Static counts stay plain. Only values that report a change receive `count_up` or `count_down`.
+
+`TRUNCATE_CHARS` limits visible terminal width without shortening log lines. `--truncate N` overrides it for one run. Use `999` to detect the current terminal width. Truncation is ignored when logging is disabled. Install the optional `wcwidth` package for correct display widths with wide Unicode characters.
+
+On Windows install the optional `colorama` package for the best results in classic Command Prompt. Windows Terminal needs no additional package.
 
 <a id="github-personal-access-token"></a>
 ### GitHub Personal Access Token
