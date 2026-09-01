@@ -47,14 +47,13 @@ def test_citation_metadata_describes_this_project():
     assert author["given-names"] and author["family-names"] and author["alias"] == "misiektoja"
 
 
-# Each install method surfaces a different one of these, so a release that bumps only some of them misreports its version
+# Confirms the runtime and packaged command report the same unreleased version
 def test_declared_versions_agree():
     module = re.search(r'^VERSION = "([^"]+)"', read_asset("github_monitor.py"), re.M)
     packaged = re.search(r'^version = "([^"]+)"', read_asset("pyproject.toml"), re.M)
-    cited = re.search(r'^version: "([^"]+)"', read_asset("CITATION.cff"), re.M)
 
-    assert module is not None and packaged is not None and cited is not None
-    assert module.group(1) == packaged.group(1) == cited.group(1)
+    assert module is not None and packaged is not None
+    assert module.group(1) == packaged.group(1)
 
 
 # Confirms the citation names a version somebody can cite, so it tracks the newest dated release notes section

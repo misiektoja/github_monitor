@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.6.3
+v2.7
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -18,7 +18,7 @@ colorama (optional, improves classic Windows Command Prompt colour support)
 wcwidth (optional, needed by TRUNCATE_CHARS)
 """
 
-VERSION = "2.6.3"
+VERSION = "2.7"
 
 PROJECT_URL = "https://github.com/misiektoja/github_monitor"
 README_URL = f"{PROJECT_URL}/blob/main/README.md"
@@ -616,7 +616,7 @@ import urllib3
 import socket
 from typing import Any, Callable, cast
 import shutil
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Optional
 import datetime as dt
 import requests
@@ -2729,20 +2729,31 @@ class InstallContext:
     command_prefix: tuple[str, ...]
 
 
-# Detects whether the current invocation uses the packaged command or standalone script
+# Detects whether the current invocation uses the PyPI command or downloaded script
 def detect_install_context(argv0=None, module_path=None, operating_system=None):
     invocation = str(sys.argv[0] if argv0 is None else argv0)
     source_path = str(Path(__file__ if module_path is None else module_path).resolve())
     selected_system = platform.system() if operating_system is None else str(operating_system)
-    standalone = Path(invocation).suffix.casefold() == ".py"
-    prefix = (sys.executable, source_path) if standalone else ("github_monitor",)
-    return InstallContext("standalone" if standalone else "pypi", selected_system, prefix)
+    manual = Path(invocation).suffix.casefold() == ".py"
+    prefix = (sys.executable, source_path) if manual else ("github_monitor",)
+    return InstallContext("manual" if manual else "pip", selected_system, prefix)
 
 
-# Renders one command with the correct install prefix and platform quoting
-def render_install_command(arguments, install_context=None):
+# Returns a readable name for the detected install method
+def install_method_display_name(method=None):
+    selected = detect_install_context().install_method if method is None else str(method)
+    return {"pip": "PyPI install", "manual": "downloaded script"}.get(selected, selected)
+
+
+# Renders one exact or portable install-aware command with platform quoting
+def render_install_command(arguments, install_context=None, exact=True):
     context = detect_install_context() if install_context is None else install_context
-    parts = [*context.command_prefix, *(str(argument) for argument in arguments)]
+    prefix = context.command_prefix
+    if not exact:
+        executable = "python" if context.operating_system.casefold() == "windows" else "python3"
+        path_class = PureWindowsPath if context.operating_system.casefold() == "windows" else Path
+        prefix = (executable, path_class(context.command_prefix[-1]).name) if context.install_method == "manual" else ("github_monitor",)
+    parts = [*prefix, *(str(argument) for argument in arguments)]
     if context.operating_system.casefold() == "windows":
         return subprocess.list2cmdline(parts)
     return shlex.join(parts)
@@ -2983,7 +2994,7 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("ASCII log separators", f"{ascii_log_separators_enabled()} (mode: {ASCII_LOG_SEPARATORS})"),
         StartupSummaryRow("Terminal truncation", f"{TRUNCATE_CHARS} chars" if TRUNCATE_CHARS else "Disabled", concise=bool(TRUNCATE_CHARS)),
         StartupSummaryRow("Local timezone", str(LOCAL_TIMEZONE)),
-        StartupSummaryRow("Install method", install_context.install_method),
+        StartupSummaryRow("Install method", install_method_display_name(install_context.install_method)),
         StartupSummaryRow("Secret sources", secret_sources),
         StartupSummaryRow("Verbose mode", str(VERBOSE_MODE)),
         StartupSummaryRow("Debug mode", str(DEBUG_MODE)),
@@ -7182,7 +7193,7 @@ def doctor_check_environment(report, module_finder=None):
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
             report.add("Environment", "WARN", f"Optional dependency {package_name} is not installed", f"{feature.capitalize()} will not work while other features remain available", f"Install it with: {install_command}")
     install_context = detect_install_context()
-    report.add("Environment", "PASS", f"Install method is {install_context.install_method}", f"Command: {render_install_command([], install_context)}")
+    report.add("Environment", "PASS", f"Install method is {install_method_display_name(install_context.install_method)}", f"Command: {render_install_command([], install_context)}")
 
 
 # Returns whether a URL is a complete credential-free HTTPS endpoint
@@ -7663,19 +7674,17 @@ def _wizard_heading(destination, text, part="section"):
     destination.write("\n" + colorize(part, text) + "\n")
 
 
-# Writes one copyable wizard command with an optional numbered label
-def _wizard_print_command(destination, label, command, number=None):
-    prefix = f"  {number}. " if number is not None else "    "
-    destination.write(f"{prefix}{label}: {colorize('section', command)}\n")
+# Writes one labelled command with sibling-style indentation and spacing
+def _wizard_print_command(destination, label, command, suffix=""):
+    destination.write(f"{label}\n")
+    destination.write(f"    {colorize('section', command)}{colorize('info', suffix) if suffix else ''}\n\n")
 
 
 # Writes the detected installation method and selected setup files
 def _wizard_print_setup_destinations(destination, context, state):
-    labels = ("Detected install method:", "Configuration:", "Dotenv:")
-    width = max(len(label) for label in labels)
-    destination.write(f"{labels[0]:<{width}} {colorize('username', context.install_method)}\n")
-    destination.write(f"{labels[1]:<{width}} {state.config_path}\n")
-    destination.write(f"{labels[2]:<{width}} {state.dotenv_path}\n")
+    destination.write(f"Detected install method: {colorize('username', context.install_method)}\n")
+    destination.write(f"Configuration:          {state.config_path}\n")
+    destination.write(f"Dotenv:                 {state.dotenv_path}\n")
 
 
 # Colours one setup summary value from its row label
@@ -8092,14 +8101,15 @@ def wizard_render_summary(state, stream=None):
         ("Timezone", state.values["LOCAL_TIMEZONE"]),
         ("GitHub API", state.values["GITHUB_API_URL"]),
         ("GitHub token", mask_secret(state.secrets.get("GITHUB_TOKEN") or ("environment" if state.environment_token_available else ""))),
-        ("Email alerts", "Enabled" if email_enabled else "Disabled"),
+        ("Email", "Enabled" if email_enabled else "Disabled"),
         ("SMTP password", mask_secret(state.secrets.get("SMTP_PASSWORD"))),
-        ("Webhook alerts", f"Enabled through {'Discord' if state.values['WEBHOOK_PROVIDER'] == 'discord' else 'ntfy'}" if webhook_enabled else "Disabled"),
+        ("Webhook", f"Enabled through {'Discord' if state.values['WEBHOOK_PROVIDER'] == 'discord' else 'ntfy'}" if webhook_enabled else "Disabled"),
         ("Webhook URL", mask_secret(state.secrets.get("WEBHOOK_URL"))),
         ("Output log", "Enabled" if not state.values["DISABLE_LOGGING"] else "Disabled"),
         ("CSV output", state.values["CSV_FILE"] or "Disabled"),
-        ("Configuration", state.config_path),
-        ("Dotenv", state.dotenv_path),
+        ("Config destination", state.config_path),
+        ("Dotenv destination", state.dotenv_path),
+        ("Install method", state.install_context.install_method),
     )
     width = max(len(label) for label, _ in rows) + 1
     for label, value in rows:
@@ -8306,16 +8316,17 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     if not terminal_is_interactive:
         generate_command = render_install_command(["--generate-config", str(selected_config)], context)
         destination.write(colorize("header", "Setup Wizard") + "\n\n")
-        destination.write(colorize("warning", "Guided setup requires an interactive terminal so private values can be entered safely.") + "\n")
-        _wizard_print_command(destination, "Generate a config manually with", generate_command)
-        destination.write(f"Then edit it and store secrets in a dotenv file. Guide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
+        destination.write(colorize("warning", "The setup wizard needs an interactive terminal (TTY).") + "\n")
+        destination.write("Run --setup from an interactive shell or use --generate-config and edit the files manually.\n")
+        _wizard_print_command(destination, "Generate a config manually with:", generate_command)
+        destination.write(f"Guide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
         return 1
     try:
         state = build_wizard_state(selected_config, selected_dotenv, context)
         destination.write(colorize("header", "Setup Wizard") + "\n\n")
         destination.write("This asks a few questions and writes a ready-to-run configuration.\n")
         destination.write("Press Enter to accept the shown default. Ctrl+C cancels.\n\n")
-        destination.write("Recommended setup monitors public events every 30 minutes. Secrets go to the dotenv file. Non-secret settings go to the config file.\n\n")
+        destination.write("Secrets go to the dotenv file. Non-secret settings go to the config file.\n\n")
         _wizard_print_setup_destinations(destination, context, state)
         wizard_collect_all(state, input_func, getpass_func, destination, token_validator)
         if not wizard_review_setup(state, input_func, getpass_func, destination, token_validator):
@@ -8341,12 +8352,12 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     for label, path in saved_rows:
         destination.write(f"  {label:<{saved_width}}{path}\n")
     monitor_arguments = wizard_monitor_arguments(state)
-    doctor_arguments = [*monitor_arguments, "--doctor"]
+    doctor_arguments = ["--doctor", *monitor_arguments]
     doctor_exit = None
     try:
         if state.authentication_complete:
             destination.write("\n")
-            if wizard_ask_yes_no("Run doctor now? It writes no files and offers real delivery tests only with separate approval.", False, input_func, destination):
+            if wizard_ask_yes_no("Run doctor now? It writes no files and offers real delivery tests only with separate approval.", True, input_func, destination):
                 destination.write("\n")
                 doctor_args = parser.parse_args(doctor_arguments)
                 runner = run_doctor_preflight if doctor_runner is None else doctor_runner
@@ -8354,15 +8365,13 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     except WizardCancelled:
         destination.write(colorize("warning", "Setup is saved. Use the commands below when ready.") + "\n")
     _wizard_heading(destination, "Next steps", "header")
-    if doctor_exit is None:
-        _wizard_print_command(destination, "Check setup", render_install_command(doctor_arguments, context), 1)
-        _wizard_print_command(destination, "Start monitoring", render_install_command(monitor_arguments, context), 2)
-    else:
-        _wizard_print_command(destination, "Start monitoring", render_install_command(monitor_arguments, context), 1)
-    destination.write(f"  Guide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
+    _wizard_print_command(destination, "Check setup again:", render_install_command(doctor_arguments, context))
+    start_label = "After Doctor passes, start monitoring:" if doctor_exit not in (None, 0) else "Start monitoring:"
+    _wizard_print_command(destination, start_label, render_install_command(monitor_arguments, context))
+    destination.write(f"Guide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
     if doctor_exit == 0:
         try:
-            start_now = wizard_ask_yes_no("Start monitoring now? Monitoring will continue until Ctrl+C.", False, input_func, destination)
+            start_now = wizard_ask_yes_no("Start monitoring now? Monitoring will continue until Ctrl+C.", True, input_func, destination)
         except WizardCancelled:
             start_now = False
             destination.write(colorize("warning", "Setup is saved. Start monitoring with the command above when ready.") + "\n")
@@ -8371,34 +8380,30 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     return 0
 
 
-# Prints the four next actions for an empty invocation and optionally launches setup
+# Prints the sibling-style first-run actions and optionally launches guided setup
 def run_zero_argument_welcome(parser, input_func=input, input_stream=None, stream=None, install_context=None, setup_runner=None, show_banner=True):
     destination = terminal_surface_stream(sys.stdout if stream is None else stream)
     source = sys.stdin if input_stream is None else input_stream
     context = detect_install_context() if install_context is None else install_context
     if show_banner:
         _write_startup_banner(destination)
-    destination.write(colorize("header", "Welcome") + "\n\n")
-    commands = (
-        ("Quickest start", ["GITHUB_USERNAME"]),
-        ("Guided setup", ["--setup"]),
-        ("Check setup", ["GITHUB_USERNAME", "--doctor"]),
-        ("Full options", ["--help"]),
-    )
-    width = max(len(label) for label, _ in commands) + 1
-    for label, arguments in commands:
-        command = render_install_command(arguments, context)
-        destination.write(f"{(label + ':'):<{width}} {colorize('section', command)}\n")
-    destination.write(f"\nGuide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
     try:
         interactive = bool(source.isatty())
     except Exception as exc:
         debug_swallowed_exception("Welcome input terminal detection", exc)
         interactive = False
+    prefix = render_install_command([], context, exact=False)
+    destination.write("For <github_target>, use a GitHub username or complete profile URL.\n\n")
+    _wizard_print_command(destination, "Quickest start (already configured):", f"{prefix} <github_target>")
+    setup_suffix = "   (or just answer Y below)" if interactive else ""
+    _wizard_print_command(destination, "Easiest start (guided setup wizard):", f"{prefix} --setup", setup_suffix)
+    _wizard_print_command(destination, "Check setup before monitoring:", f"{prefix} --doctor <github_target>")
+    destination.write(f"Full options: {colorize('section', prefix + ' --help')}\n")
+    destination.write(f"\nGuide:        {colorize('url', QUICK_START_GUIDE_URL)}\n")
     if not interactive:
-        return 0
+        return 1
     destination.write("\n")
-    if not wizard_ask_yes_no("Run guided setup now?", False, input_func, destination):
+    if not wizard_ask_yes_no("Run the guided setup wizard now?", True, input_func, destination):
         return 0
     destination.write("\n")
     runner = run_setup_wizard if setup_runner is None else setup_runner
@@ -8849,6 +8854,12 @@ def main():
             sys.exit(1)
         init_color_output(stdout_bck)
         sys.exit(run_zero_argument_welcome(parser, show_banner=False))
+
+    if args.username:
+        normalized_target = wizard_normalize_target(args.username)
+        if not normalized_target:
+            parser.error("GITHUB_USERNAME must be a GitHub username or complete profile URL")
+        args.username = normalized_target
 
     if args.setup:
         allowed = {"setup", "config_file", "env_file", "verbose", "debug", "no_color"}

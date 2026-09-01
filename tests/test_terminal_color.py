@@ -354,8 +354,8 @@ def test_quoted_file_and_path_values_stay_plain(colored, value):
     assert monitor._colorize_line(line) == line
 
 
-# Verifies standalone descriptions stay plain
-def test_standalone_quoted_description_stays_plain(colored):
+# Verifies downloaded-script descriptions stay plain
+def test_downloaded_script_quoted_description_stays_plain(colored):
     line = "'A repository description with spaces / punctuation.'"
     assert monitor._colorize_line(line) == line
 
@@ -414,12 +414,12 @@ def test_display_name_still_uses_the_name_colour(colored):
 # Verifies setup destinations and commands are coloured
 def test_setup_surface_is_coloured(colored):
     output = io.StringIO()
-    context = SimpleNamespace(install_method="pypi")
+    context = SimpleNamespace(install_method="pip")
     state = SimpleNamespace(config_path=Path("monitor.conf"), dotenv_path=Path(".env"))
     monitor._wizard_print_setup_destinations(output, context, state)
-    monitor._wizard_print_command(output, "Check setup", "github_monitor --doctor GITHUB_USERNAME", 1)
+    monitor._wizard_print_command(output, "Check setup again:", "github_monitor --doctor GITHUB_USERNAME")
     rendered = output.getvalue()
-    assert f"Detected install method: {colored['username']}pypi{monitor.ANSI_RESET}" in rendered
+    assert f"Detected install method: {colored['username']}pip{monitor.ANSI_RESET}" in rendered
     assert f"{colored['section']}github_monitor --doctor GITHUB_USERNAME{monitor.ANSI_RESET}" in rendered
 
 

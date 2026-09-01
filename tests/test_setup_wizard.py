@@ -131,6 +131,10 @@ def test_setup_wizard_writes_reviewed_config_and_secrets(gm_module, request):
     assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nSetup Wizard\n\n")
     assert transcript.index("Target\n") < transcript.index("Polling\n") < transcript.index("Authentication\n")
     assert transcript.index("Setup summary\n") < transcript.index("Saved files\n") < transcript.index("Next steps\n")
+    assert "Detected install method: manual" in transcript
+    assert transcript.count("Install method:") == 1
+    assert transcript.count("manual") >= 2
+    assert "Recommended setup monitors" not in transcript
     assert "Using normalized GitHub username: octocat" in transcript
     assert "<redacted>" in transcript
     assert token not in transcript
@@ -251,6 +255,7 @@ def test_setup_wizard_hands_off_to_doctor_then_monitoring(gm_module, request):
     assert monitor_calls == [["octocat", "--config-file", str(config_path), "--env-file", str(dotenv_path)]]
     assert "Run doctor now? It writes no files and offers real delivery tests only with separate approval." in output.getvalue()
     assert "Start monitoring now? Monitoring will continue until Ctrl+C." in output.getvalue()
+    assert output.getvalue().count("[Y/n]: ") >= 2
 
 
 # Verifies non-interactive setup explains the safe manual alternative and writes nothing
@@ -264,14 +269,15 @@ def test_setup_wizard_non_interactive_fallback_is_explicit(gm_module, request):
     exit_code = gm_module.run_setup_wizard(wizard_parser(), config_path, dotenv_path, stream=output, interactive=False)
 
     assert exit_code == 1
-    assert "Guided setup requires an interactive terminal" in output.getvalue()
+    assert "The setup wizard needs an interactive terminal (TTY)." in output.getvalue()
+    assert "Run --setup from an interactive shell or use --generate-config and edit the files manually." in output.getvalue()
     assert "--generate-config" in output.getvalue()
     assert gm_module.QUICK_START_GUIDE_URL in output.getvalue()
     assert not config_path.exists()
     assert not dotenv_path.exists()
 
 
-# Verifies the welcome prints four labelled next actions and launches setup only after approval
+# Verifies the welcome matches the sibling-style transcript and launches setup after approval
 def test_zero_argument_welcome_offers_guided_setup_on_a_tty(gm_module):
     output = io.StringIO()
     input_stream = FakeTTY()
@@ -282,12 +288,18 @@ def test_zero_argument_welcome_offers_guided_setup_on_a_tty(gm_module):
         calls.append(kwargs)
         return 7
 
-    exit_code = gm_module.run_zero_argument_welcome(wizard_parser(), scripted_reader(["y"]), input_stream, output, setup_runner=setup_runner)
+    context = gm_module.InstallContext("manual", "Linux", ("/private/runtime/python3", "/private/install/github_monitor.py"))
+    exit_code = gm_module.run_zero_argument_welcome(wizard_parser(), scripted_reader(["y"]), input_stream, output, install_context=context, setup_runner=setup_runner)
 
     transcript = output.getvalue()
     assert exit_code == 7
-    assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nWelcome\n\n")
-    assert all(label in transcript for label in ("Quickest start:", "Guided setup:", "Check setup:", "Full options:"))
+    assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nFor <github_target>, use a GitHub username or complete profile URL.\n\n")
+    assert "Quickest start (already configured):\n    python3 github_monitor.py <github_target>\n\n" in transcript
+    assert "Easiest start (guided setup wizard):\n    python3 github_monitor.py --setup   (or just answer Y below)\n\n" in transcript
+    assert "Check setup before monitoring:\n    python3 github_monitor.py --doctor <github_target>\n\n" in transcript
+    assert "Full options: python3 github_monitor.py --help" in transcript
+    assert "/private/" not in transcript
+    assert "Run the guided setup wizard now? [Y/n]: " in transcript
     assert gm_module.QUICK_START_GUIDE_URL in transcript
     assert calls[0]["show_banner"] is False
     assert calls[0]["interactive"] is True
@@ -299,8 +311,10 @@ def test_zero_argument_welcome_non_interactive_has_no_prompt(gm_module):
 
     exit_code = gm_module.run_zero_argument_welcome(wizard_parser(), stream=output, input_stream=io.StringIO())
 
-    assert exit_code == 0
-    assert "Run guided setup now?" not in output.getvalue()
+    assert exit_code == 1
+    assert "Run the guided setup wizard now?" not in output.getvalue()
+    assert "python3 github_monitor.py" in output.getvalue()
+    assert str(PROJECT_ROOT) not in output.getvalue()
 
 
 # Verifies the empty CLI path reaches the welcome instead of argparse help
@@ -315,10 +329,24 @@ def test_zero_argument_cli_prints_welcome(gm_module, monkeypatch, capsys, reques
         gm_module.main()
 
     transcript = capsys.readouterr().out
-    assert exit_error.value.code == 0
-    assert "Welcome" in transcript
-    assert "Guided setup:" in transcript
+    assert exit_error.value.code == 1
+    assert "For <github_target>, use a GitHub username or complete profile URL." in transcript
+    assert "Easiest start (guided setup wizard):" in transcript
     assert "usage:" not in transcript
+
+
+# Verifies regular CLI actions accept the same complete profile URL advertised by setup
+def test_doctor_cli_normalizes_complete_profile_url(gm_module, monkeypatch):
+    captured = []
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", "--doctor", "https://github.com/octocat/"])
+    monkeypatch.setattr(gm_module, "run_doctor_preflight", lambda args, _parser, **_kwargs: captured.append(args.username) or 0)
+
+    with pytest.raises(SystemExit) as exit_error:
+        gm_module.main()
+
+    assert exit_error.value.code == 0
+    assert captured == ["octocat"]
 
 
 # Verifies an invalid discovered config remains visible before the welcome can replace it
@@ -336,7 +364,7 @@ def test_zero_argument_cli_reports_invalid_discovered_config_first(gm_module, mo
     transcript = capsys.readouterr().out
     assert exit_error.value.code == 1
     assert "unsupported configuration setting 'UNKNOWN_SETTING'" in transcript
-    assert "Welcome" not in transcript
+    assert "For <github_target>" not in transcript
 
 
 # Verifies help exposes setup and main uses the non-interactive fallback before monitoring
@@ -352,7 +380,7 @@ def test_setup_cli_path_is_exposed_and_does_not_start_monitoring(gm_module, monk
         gm_module.main()
 
     assert exit_error.value.code == 1
-    assert "Guided setup requires an interactive terminal" in capsys.readouterr().out
+    assert "The setup wizard needs an interactive terminal (TTY)." in capsys.readouterr().out
     assert not config_path.exists()
     assert not dotenv_path.exists()
 
