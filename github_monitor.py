@@ -25,6 +25,7 @@ README_URL = f"{PROJECT_URL}/blob/main/README.md"
 QUICK_START_GUIDE_URL = f"{README_URL}#quick-start"
 CONFIG_GUIDE_URL = f"{README_URL}#configuration"
 AUTH_GUIDE_URL = f"{README_URL}#github-personal-access-token"
+GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
 NOTIFICATION_GUIDE_URL = f"{README_URL}#email-notifications"
 DEBUG_GUIDE_URL = f"{README_URL}#debugging-and-recovery"
 SUPPORT_GUIDE_URL = f"{PROJECT_URL}/blob/main/SUPPORT.md"
@@ -36,6 +37,10 @@ MIN_PYTHON_VERSION = (3, 10)
 # ---------------------------
 
 CONFIG_BLOCK = """
+# Optional saved target used when no positional GitHub username is supplied
+# A positional target always overrides this value
+TARGET_GITHUB_USERNAME = ""
+
 # Create or review your GitHub personal access tokens at:
 # https://github.com/settings/tokens
 #
@@ -400,6 +405,7 @@ GITHUB_CHECK_SIGNAL_VALUE = 60  # 1 minute
 
 # Default dummy values so linters shut up
 # Do not change values below - modify them in the configuration section or config file instead
+TARGET_GITHUB_USERNAME = ""
 GITHUB_TOKEN = ""
 GITHUB_API_URL = ""
 GITHUB_HTML_URL = ""
@@ -7291,6 +7297,12 @@ def doctor_check_configuration(report, args, parser):
         report.add("Configuration", "PASS", "Polling interval is valid", display_time(GITHUB_CHECK_INTERVAL))
     else:
         report.add("Configuration", "FAIL", "Polling interval is invalid", str(GITHUB_CHECK_INTERVAL), "Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds")
+    if TARGET_GITHUB_USERNAME:
+        saved_target = wizard_normalize_target(TARGET_GITHUB_USERNAME)
+        if saved_target:
+            report.add("Configuration", "PASS", "Saved GitHub target is valid", saved_target)
+        else:
+            report.add("Configuration", "FAIL", "Saved GitHub target is invalid", sanitize_error_text(TARGET_GITHUB_USERNAME), "Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL")
     if isinstance(CHECK_INTERNET_TIMEOUT, (int, float)) and not isinstance(CHECK_INTERNET_TIMEOUT, bool) and CHECK_INTERNET_TIMEOUT > 0:
         report.add("Configuration", "PASS", "Connectivity timeout is valid", f"{CHECK_INTERNET_TIMEOUT} seconds")
     else:
@@ -7633,6 +7645,8 @@ def run_doctor_preflight(args, parser, request_get=None, github_factory=None, co
         progress.show("configuration")
         progress.clear()
         doctor_check_configuration(report, args, parser)
+        if not report.target_name:
+            report.target_name = wizard_normalize_target(TARGET_GITHUB_USERNAME)
         colour_stream = destination
         while isinstance(colour_stream, (Logger, TerminalStream)):
             colour_stream = colour_stream.terminal
@@ -7658,8 +7672,8 @@ def run_doctor_preflight(args, parser, request_get=None, github_factory=None, co
 
 
 WIZARD_SECTION_KEYS = {
-    "Target": ("DO_NOT_MONITOR_GITHUB_EVENTS", "TRACK_REPOS_CHANGES", "TRACK_CONTRIB_CHANGES"),
-    "Polling": ("GITHUB_CHECK_INTERVAL", "LOCAL_TIMEZONE"),
+    "Target": ("TARGET_GITHUB_USERNAME", "DO_NOT_MONITOR_GITHUB_EVENTS", "TRACK_REPOS_CHANGES", "TRACK_CONTRIB_CHANGES"),
+    "Polling": ("GITHUB_CHECK_INTERVAL",),
     "Authentication": ("GITHUB_API_URL", "GITHUB_HTML_URL"),
     "Email": ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_SSL", "SENDER_EMAIL", "RECEIVER_EMAIL", "PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"),
     "Webhook": ("WEBHOOK_ENABLED", "WEBHOOK_PROVIDER", "WEBHOOK_PROFILE_NOTIFICATION", "WEBHOOK_EVENT_NOTIFICATION", "WEBHOOK_REPO_NOTIFICATION", "WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION", "WEBHOOK_CONTRIB_NOTIFICATION", "WEBHOOK_ERROR_NOTIFICATION"),
@@ -7721,6 +7735,7 @@ class WizardSetupState:
     preserved_values: dict[str, Any] = field(default_factory=dict)
     authenticated_login: str = ""
     environment_token_available: bool = False
+    persist_target: bool = True
 
     # Reports whether doctor can exercise an authenticated real path
     @property
@@ -7749,7 +7764,14 @@ def wizard_normalize_target(value):
 def wizard_parse_duration(value):
     selected = str(value).strip().casefold()
     if not selected:
-        raise ValueError("Enter a duration such as 30s, 2m, 1.5h, 1h 30m or 1d")
+        raise ValueError("Enter a duration such as 120, 2m, 1.5h, 1h 30m or 1d")
+    if selected.isdigit():
+        seconds = int(selected)
+        if seconds <= 0:
+            raise ValueError("The duration must be at least one second")
+        if seconds > 31536000:
+            raise ValueError("Use a positive duration no longer than one year")
+        return seconds
     position = 0
     total = 0.0
     matches = list(re.finditer(r"\s*(\d+(?:\.\d+)?)\s*([smhd])", selected))
@@ -7765,6 +7787,32 @@ def wizard_parse_duration(value):
     if seconds <= 0:
         raise ValueError("The duration must be at least one second")
     return seconds
+
+
+# Renders raw seconds plus a compact readable duration for wizard defaults and summaries
+def wizard_format_duration(seconds):
+    remaining = int(seconds)
+    parts = []
+    for suffix, count in (("d", 86400), ("h", 3600), ("m", 60), ("s", 1)):
+        value, remaining = divmod(remaining, count)
+        if value:
+            parts.append(f"{value}{suffix}")
+    raw = f"{seconds}s"
+    readable = " ".join(parts) or raw
+    return raw if readable == raw else f"{raw} - {readable}"
+
+
+# Prompts until the user enters a positive duration or accepts the readable default
+def wizard_ask_duration(label, default, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    while True:
+        answer = wizard_read_answer(f"{label} [{wizard_format_duration(default)}]: ", input_func, destination)
+        if not answer:
+            return int(default)
+        try:
+            return wizard_parse_duration(answer)
+        except ValueError:
+            destination.write(colorize("warning", "  Enter a positive duration such as 120, 2m, 1.5h, 1h 30m or 1d.") + "\n")
 
 
 # Reads one wizard answer after rendering its prompt to the selected stream
@@ -7816,7 +7864,7 @@ def wizard_ask_yes_no(prompt, default=False, input_func=input, stream=None):
 def wizard_ask_choice(prompt, choices, default, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
     destination.write("\n")
-    destination.write(colorize("section", prompt) + "\n")
+    destination.write(colorize("info", prompt) + "\n")
     for index, (_, label, description) in enumerate(choices, 1):
         marker = " (default)" if choices[index - 1][0] == default else ""
         destination.write(f"  {colorize('username', str(index))}. {label}{colorize('info', marker)}\n")
@@ -7908,7 +7956,8 @@ def build_wizard_state(config_path, dotenv_path, install_context=None):
     baseline_secrets = dict(secrets)
     preserved = {name: value for name, value in existing_values.items() if name not in SECRET_KEYS}
     context = detect_install_context() if install_context is None else install_context
-    return WizardSetupState("", selected_config, selected_dotenv, context, values, secrets, baseline_values, baseline_secrets, preserved, environment_token_available=bool(os.environ.get("GITHUB_TOKEN")))
+    target = wizard_normalize_target(values.get("TARGET_GITHUB_USERNAME", ""))
+    return WizardSetupState(target, selected_config, selected_dotenv, context, values, secrets, baseline_values, baseline_secrets, preserved, environment_token_available=bool(os.environ.get("GITHUB_TOKEN")), persist_target=bool(target) if target else True)
 
 
 # Restores one wizard section to its pre-wizard values before recollecting it
@@ -7921,7 +7970,8 @@ def wizard_reset_section(state, section):
         else:
             state.secrets.pop(name, None)
     if section == "Target":
-        state.target = ""
+        state.target = wizard_normalize_target(state.values.get("TARGET_GITHUB_USERNAME", ""))
+        state.persist_target = bool(state.target) if state.target else True
     if section == "Authentication":
         state.authenticated_login = ""
 
@@ -7929,7 +7979,6 @@ def wizard_reset_section(state, section):
 # Collects the target and core monitoring feature choices
 def wizard_collect_target(state, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
-    _wizard_heading(destination, "Target")
     while True:
         entered = wizard_ask_text("GitHub username or profile URL", state.target, input_func=input_func, stream=destination)
         normalized = wizard_normalize_target(entered)
@@ -7939,58 +7988,44 @@ def wizard_collect_target(state, input_func=input, stream=None):
                 destination.write(f"Using normalized GitHub username: {normalized}\n")
             break
         destination.write(colorize("warning", "That target is not valid. Enter a GitHub username or full profile URL.") + "\n")
+    state.persist_target = wizard_ask_yes_no("Persist this target in the generated config?", state.persist_target, input_func, destination)
+    state.values["TARGET_GITHUB_USERNAME"] = state.target if state.persist_target else ""
     state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] = not wizard_ask_yes_no("Monitor public GitHub events?", not bool(state.values["DO_NOT_MONITOR_GITHUB_EVENTS"]), input_func, destination)
     state.values["TRACK_REPOS_CHANGES"] = wizard_ask_yes_no("Track detailed repository changes?", bool(state.values["TRACK_REPOS_CHANGES"]), input_func, destination)
     state.values["TRACK_CONTRIB_CHANGES"] = wizard_ask_yes_no("Track daily contribution changes?", bool(state.values["TRACK_CONTRIB_CHANGES"]), input_func, destination)
 
 
-# Collects a human polling interval and timezone
+# Collects a human polling interval while retaining the existing automatic timezone setting
 def wizard_collect_polling(state, input_func=input, stream=None):
-    destination = sys.stdout if stream is None else stream
-    _wizard_heading(destination, "Polling")
     seconds = int(state.values["GITHUB_CHECK_INTERVAL"])
-    default_duration = f"{seconds // 86400}d" if seconds % 86400 == 0 else f"{seconds // 3600}h" if seconds % 3600 == 0 else f"{seconds // 60}m" if seconds % 60 == 0 else f"{seconds}s"
-    while True:
-        entered = wizard_ask_text("Polling interval", default_duration, input_func=input_func, stream=destination)
-        try:
-            state.values["GITHUB_CHECK_INTERVAL"] = wizard_parse_duration(entered)
-            break
-        except ValueError as exc:
-            destination.write(colorize("warning", f"That duration is not valid: {exc}") + "\n")
-    timezone_default = str(state.values["LOCAL_TIMEZONE"])
-    state.values["LOCAL_TIMEZONE"] = wizard_ask_text("Local timezone", timezone_default, lambda value: "" if value == "Auto" or is_valid_timezone(value) else "use Auto or a valid IANA timezone such as Europe/Warsaw", input_func, destination)
+    state.values["GITHUB_CHECK_INTERVAL"] = wizard_ask_duration("GitHub polling interval (seconds or use s/m/h/d)", seconds, input_func, stream)
 
 
 # Collects GitHub endpoints and optionally validates a hidden token
 def wizard_collect_authentication(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
     destination = sys.stdout if stream is None else stream
-    _wizard_heading(destination, "Authentication")
     state.values["GITHUB_API_URL"] = wizard_ask_text("GitHub API URL", str(state.values["GITHUB_API_URL"]), lambda value: "" if validate_github_endpoint_url(value) else "enter a complete HTTPS GitHub API URL", input_func, destination)
     state.values["GITHUB_HTML_URL"] = wizard_ask_text("GitHub web URL", str(state.values["GITHUB_HTML_URL"]), wizard_https_url_error, input_func, destination)
+    destination.write(f"Create or view your GitHub personal access token: {colorize('url', GITHUB_TOKEN_SETTINGS_URL)}\n")
     existing = bool(state.secrets.get("GITHUB_TOKEN") or state.environment_token_available)
-    if not wizard_ask_yes_no("Set or replace the GitHub token now?", not existing, input_func, destination):
+    if existing and not wizard_ask_yes_no("Replace the GitHub token already configured?", False, input_func, destination):
         return
     validator = validate_github_token if token_validator is None else token_validator
     while True:
         token = wizard_read_secret("GitHub token: ", getpass_func, destination)
         if not token:
-            destination.write(colorize("warning", "No token was entered. Authentication will remain incomplete.") + "\n")
-            if "GITHUB_TOKEN" in state.baseline_secrets:
-                state.secrets["GITHUB_TOKEN"] = state.baseline_secrets["GITHUB_TOKEN"]
-            else:
-                state.secrets.pop("GITHUB_TOKEN", None)
-            return
-        destination.write(colorize("info", "Validating the GitHub token before saving ...") + "\n")
-        try:
-            login = validator(token, state.values["GITHUB_API_URL"])
-        except Exception as exc:
-            destination.write(colorize("error", f"Token validation failed: {sanitize_error_text(exc)}") + "\n")
-            if not wizard_ask_yes_no("Try another token?", True, input_func, destination):
+            if wizard_ask_yes_no("Continue without a token? Nothing can be monitored until one is set", False, input_func, destination):
                 if "GITHUB_TOKEN" in state.baseline_secrets:
                     state.secrets["GITHUB_TOKEN"] = state.baseline_secrets["GITHUB_TOKEN"]
                 else:
                     state.secrets.pop("GITHUB_TOKEN", None)
                 return
+            continue
+        destination.write(colorize("info", "Validating the GitHub token before saving ...") + "\n")
+        try:
+            login = validator(token, state.values["GITHUB_API_URL"])
+        except Exception as exc:
+            destination.write(colorize("error", f"Token validation failed: {sanitize_error_text(exc)}") + "\n")
             continue
         state.secrets["GITHUB_TOKEN"] = token
         state.authenticated_login = str(login)
@@ -8001,10 +8036,9 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
 # Collects optional email delivery settings and alert choices
 def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None):
     destination = sys.stdout if stream is None else stream
-    _wizard_heading(destination, "Email")
     configured_destination = not str(state.values["SMTP_HOST"]).startswith("your_smtp_server_")
     enabled_default = any(bool(state.values[name]) for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION")) or bool(state.values["ERROR_NOTIFICATION"] and configured_destination)
-    if not wizard_ask_yes_no("Configure email alerts?", enabled_default, input_func, destination):
+    if not wizard_ask_yes_no("Configure email notifications?", enabled_default, input_func, destination):
         for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"):
             state.values[name] = False
         return
@@ -8036,8 +8070,7 @@ def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None
 # Collects optional Discord or ntfy delivery settings and alert choices
 def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=None):
     destination = sys.stdout if stream is None else stream
-    _wizard_heading(destination, "Webhook")
-    if not wizard_ask_yes_no("Configure webhook alerts?", bool(state.values["WEBHOOK_ENABLED"]), input_func, destination):
+    if not wizard_ask_yes_no("Set up webhook alerts (Discord, ntfy etc.)?", bool(state.values["WEBHOOK_ENABLED"]), input_func, destination):
         state.values["WEBHOOK_ENABLED"] = False
         return
     provider = wizard_ask_choice("Webhook provider", (("discord", "Discord", "Send alerts to a Discord webhook URL."), ("ntfy", "ntfy", "Send alerts to an ntfy topic URL.")), normalized_webhook_provider(state.values["WEBHOOK_PROVIDER"]) or "discord", input_func, destination)
@@ -8074,7 +8107,6 @@ def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=No
 # Collects log and CSV output destinations
 def wizard_collect_destinations(state, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
-    _wizard_heading(destination, "Destinations")
     state.values["DISABLE_LOGGING"] = not wizard_ask_yes_no("Write the normal per-target log file?", not bool(state.values["DISABLE_LOGGING"]), input_func, destination)
     csv_default = str(state.values["CSV_FILE"] or "")
     state.values["CSV_FILE"] = wizard_ask_text("Optional CSV output path (blank disables it)", csv_default, input_func=input_func, stream=destination)
@@ -8083,11 +8115,17 @@ def wizard_collect_destinations(state, input_func=input, stream=None):
 
 # Collects every wizard section in the shared output order
 def wizard_collect_all(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
     wizard_collect_target(state, input_func, stream)
+    destination.write("\n")
     wizard_collect_polling(state, input_func, stream)
+    destination.write("\n")
     wizard_collect_authentication(state, input_func, getpass_func, stream, token_validator)
+    destination.write("\n")
     wizard_collect_email(state, input_func, getpass_func, stream)
+    destination.write("\n")
     wizard_collect_webhook(state, input_func, getpass_func, stream)
+    destination.write("\n")
     wizard_collect_destinations(state, input_func, stream)
 
 
@@ -8097,22 +8135,22 @@ def wizard_render_summary(state, stream=None):
     email_enabled = any(state.values[name] for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"))
     webhook_enabled = bool(state.values["WEBHOOK_ENABLED"])
     _wizard_heading(destination, "Setup summary", "header")
-    rows = (
+    rows = [
         ("Target", state.target),
-        ("Polling interval", display_time(state.values["GITHUB_CHECK_INTERVAL"])),
-        ("Timezone", state.values["LOCAL_TIMEZONE"]),
+        ("Persist target", "yes" if state.persist_target else "no"),
+        ("Polling interval", wizard_format_duration(state.values["GITHUB_CHECK_INTERVAL"])),
         ("GitHub API", state.values["GITHUB_API_URL"]),
-        ("GitHub token", mask_secret(state.secrets.get("GITHUB_TOKEN") or ("environment" if state.environment_token_available else ""))),
+        ("Authentication status", "complete" if state.authentication_complete else "incomplete"),
         ("Email", "Enabled" if email_enabled else "Disabled"),
-        ("SMTP password", mask_secret(state.secrets.get("SMTP_PASSWORD"))),
         ("Webhook", f"Enabled through {'Discord' if state.values['WEBHOOK_PROVIDER'] == 'discord' else 'ntfy'}" if webhook_enabled else "Disabled"),
-        ("Webhook URL", mask_secret(state.secrets.get("WEBHOOK_URL"))),
         ("Output log", "Enabled" if not state.values["DISABLE_LOGGING"] else "Disabled"),
         ("CSV output", state.values["CSV_FILE"] or "Disabled"),
         ("Config destination", state.config_path),
         ("Dotenv destination", state.dotenv_path),
         ("Install method", state.install_context.install_method),
-    )
+    ]
+    if state.authenticated_login:
+        rows.insert(5, ("Authenticated user", state.authenticated_login))
     width = max(len(label) for label, _ in rows) + 1
     for label, value in rows:
         destination.write(f"  {(label + ':'):<{width}} {_wizard_summary_value(label, value)}\n")
@@ -8122,12 +8160,12 @@ def wizard_render_summary(state, stream=None):
 def wizard_edit_section(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
     destination = sys.stdout if stream is None else stream
     sections = (
-        ("Target", "Target", "Change the GitHub profile and monitoring feature choices."),
-        ("Polling", "Polling", "Change the polling interval and local timezone."),
+        ("Target", "Target and persistence", "Change the GitHub profile, whether it is saved and monitoring feature choices."),
+        ("Polling", "Polling interval", "Change how often GitHub is checked."),
         ("Authentication", "Authentication", "Change GitHub endpoints or the access token."),
-        ("Email", "Email alerts", "Change email delivery and alert choices."),
+        ("Email", "Email notifications", "Change email delivery and alert choices."),
         ("Webhook", "Webhook alerts", "Change Discord or ntfy delivery and alert choices."),
-        ("Destinations", "File destinations", "Change log and CSV output settings."),
+        ("Destinations", "Output files", "Change log and CSV output settings."),
         ("return", "Return to summary", "Keep every current answer and show the summary again."),
     )
     selected = wizard_ask_choice("Which setup section should be changed?", sections, "Target", input_func, destination)
@@ -8314,7 +8352,8 @@ def save_wizard_files(state):
 
 # Builds the exact install-aware argument list used after setup
 def wizard_monitor_arguments(state):
-    return [state.target, "--config-file", str(state.config_path), "--env-file", str(state.dotenv_path)]
+    arguments = [] if state.persist_target else [state.target]
+    return [*arguments, "--config-file", str(state.config_path), "--env-file", str(state.dotenv_path)]
 
 
 # Runs the complete buffered setup interaction and optional doctor handoff
@@ -8346,6 +8385,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         destination.write("Press Enter to accept the shown default. Ctrl+C cancels.\n\n")
         destination.write("Secrets go to the dotenv file. Non-secret settings go to the config file.\n\n")
         _wizard_print_setup_destinations(destination, context, state)
+        destination.write("\n")
         wizard_collect_all(state, input_func, getpass_func, destination, token_validator)
         if not wizard_review_setup(state, input_func, getpass_func, destination, token_validator):
             destination.write("\n" + colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
@@ -8442,7 +8482,7 @@ def launch_wizard_monitoring(arguments):
 
 # Parses command-line settings and starts the requested GitHub Monitor action
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS
+    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS, TARGET_GITHUB_USERNAME
 
     if "--verbose" in sys.argv:
         VERBOSE_MODE = True
@@ -8867,13 +8907,6 @@ def main():
 
     args = parser.parse_args()
 
-    if len(sys.argv) == 1:
-        discovered_config = find_config_file()
-        if discovered_config and not load_config_file(discovered_config):
-            sys.exit(1)
-        init_color_output(stdout_bck)
-        sys.exit(run_zero_argument_welcome(parser, show_banner=False))
-
     if args.username:
         normalized_target = wizard_normalize_target(args.username)
         if not normalized_target:
@@ -8929,6 +8962,17 @@ def main():
     if args.no_color is True:
         COLORED_OUTPUT = False
     init_color_output(stdout_bck)
+
+    if not args.username and TARGET_GITHUB_USERNAME:
+        saved_target = wizard_normalize_target(TARGET_GITHUB_USERNAME)
+        if not saved_target:
+            advice = make_recovery_advice("config.value_invalid", "The saved GitHub target is invalid", "Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL", False, f"Rejected target: {TARGET_GITHUB_USERNAME}", CONFIG_GUIDE_URL)
+            print_recovery_advice(advice)
+            sys.exit(1)
+        args.username = saved_target
+
+    if len(sys.argv) == 1 and not args.username:
+        sys.exit(run_zero_argument_welcome(parser, show_banner=False))
 
     if args.set_github_token:
         try:
