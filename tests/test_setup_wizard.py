@@ -137,7 +137,7 @@ def test_setup_wizard_writes_reviewed_config_and_secrets(gm_module, request):
     assert "\nAuthentication\n" not in transcript
     assert "Detected install method: manual" in transcript
     assert transcript.count("Install method:") == 1
-    assert transcript.count("manual") >= 2
+    assert "downloaded script" in transcript.split("Setup summary")[1]
     assert "Recommended setup monitors" not in transcript
     assert "Using normalized GitHub username: octocat" in transcript
     assert "Persist target:" in transcript

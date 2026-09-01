@@ -3029,6 +3029,19 @@ class StartupSummaryRow:
     log: bool = True
 
 
+# Groups every resolved secret name into the dotenv, environment and configuration buckets the summary prints
+def startup_secret_buckets():
+    from_dotenv, from_environment, from_config = [], [], []
+    for name, source in sorted(SECRET_SOURCES.items()):
+        if str(source).startswith("dotenv file"):
+            from_dotenv.append(name)
+        elif source == "environment":
+            from_environment.append(name)
+        else:
+            from_config.append(name)
+    return from_dotenv, from_environment, from_config
+
+
 # Builds concise and complete startup rows without exposing private values
 def build_startup_summary(target, config_path, env_path, output_path):
     install_context = detect_install_context()
@@ -3036,31 +3049,34 @@ def build_startup_summary(target, config_path, env_path, output_path):
     webhook_categories = _startup_webhook_notification_categories()
     email_state = "On (" + ", ".join(email_categories) + ")" if email_categories else "Off"
     webhook_state = "On (" + ", ".join(webhook_categories) + ")" if webhook_categories else "Off"
-    secret_sources = ", ".join(f"{name}: {source}" for name, source in sorted(SECRET_SOURCES.items())) or "None"
+    from_dotenv, from_environment, from_config = startup_secret_buckets()
     return [
         StartupSummaryRow("Target", str(target), concise=True),
         StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
-        StartupSummaryRow("TLS verification", "On" if VERIFY_SSL else "Off, server certificates are not checked", concise=not VERIFY_SSL),
         StartupSummaryRow("Notifications (email)", email_state, concise=True),
         StartupSummaryRow("Notifications (webhook)", webhook_state, concise=True),
-        StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only", concise=True, full=False, log=False),
-        StartupSummaryRow("Configuration", str(config_path) if config_path else "None", concise=True),
+        StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only (logging disabled)", concise=True, full=False, log=False),
+        StartupSummaryRow("Output logging", str(output_path) if output_path else "Disabled"),
+        StartupSummaryRow("Config", str(config_path) if config_path else "None", concise=True),
         StartupSummaryRow("Dotenv", str(env_path) if env_path else "None", concise=True),
         StartupSummaryRow("GitHub API URL", str(GITHUB_API_URL)),
         StartupSummaryRow("Track repository changes", str(TRACK_REPOS_CHANGES)),
         StartupSummaryRow("Track contribution changes", str(TRACK_CONTRIB_CHANGES)),
         StartupSummaryRow("Monitor GitHub events", str(not DO_NOT_MONITOR_GITHUB_EVENTS)),
         StartupSummaryRow("Owned repositories only", str(not GET_ALL_REPOS)),
-        StartupSummaryRow("Liveness output", display_time(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_INTERVAL else "Disabled"),
-        StartupSummaryRow("CSV output", str(CSV_FILE) if CSV_FILE else "Disabled"),
-        StartupSummaryRow("Output logging", str(output_path) if output_path else "Disabled"),
-        StartupSummaryRow("ASCII log separators", f"{ascii_log_separators_enabled()} (mode: {ASCII_LOG_SEPARATORS})"),
+        StartupSummaryRow("Liveness output", display_time(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_INTERVAL else "Disabled", concise=bool(LIVENESS_CHECK_INTERVAL)),
+        StartupSummaryRow("CSV output", str(CSV_FILE) if CSV_FILE else "Disabled", concise=bool(CSV_FILE)),
         StartupSummaryRow("Terminal truncation", f"{TRUNCATE_CHARS} chars" if TRUNCATE_CHARS else "Disabled", concise=bool(TRUNCATE_CHARS)),
         StartupSummaryRow("Local timezone", str(LOCAL_TIMEZONE)),
         StartupSummaryRow("Install method", install_method_display_name(install_context.install_method)),
-        StartupSummaryRow("Secret sources", secret_sources),
-        StartupSummaryRow("Verbose mode", str(VERBOSE_MODE)),
-        StartupSummaryRow("Debug mode", str(DEBUG_MODE)),
+        StartupSummaryRow("Secrets from dotenv", ", ".join(from_dotenv) if from_dotenv else "None"),
+        StartupSummaryRow("Secrets from environment", ", ".join(from_environment) if from_environment else "None"),
+        StartupSummaryRow("Secrets from config file", ", ".join(from_config) if from_config else "None"),
+        StartupSummaryRow("TLS verification", "On" if VERIFY_SSL else "Off, server certificates are not checked", concise=not VERIFY_SSL),
+        StartupSummaryRow("ASCII log separators", f"{ascii_log_separators_enabled()} (mode: {ASCII_LOG_SEPARATORS})"),
+        StartupSummaryRow("Coloured output", f"{COLOR_ENABLED} (setting: {COLORED_OUTPUT})"),
+        StartupSummaryRow("Verbose mode", str(VERBOSE_MODE), concise=bool(VERBOSE_MODE)),
+        StartupSummaryRow("Debug mode", str(DEBUG_MODE), concise=bool(DEBUG_MODE)),
         StartupSummaryRow("More details", "use --verbose or --debug", concise=True, full=False, log=False),
     ]
 
@@ -8268,7 +8284,7 @@ def wizard_render_summary(state, stream=None):
         ("CSV output", state.values["CSV_FILE"] or "disabled"),
         ("Config destination", state.config_path),
         ("Dotenv destination", state.dotenv_path),
-        ("Install method", state.install_context.install_method),
+        ("Install method", install_method_display_name(state.install_context.install_method)),
     ]
     if state.authenticated_login:
         rows.insert(5, ("Authenticated user", state.authenticated_login))

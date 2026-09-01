@@ -261,3 +261,16 @@ def test_broken_target_transcript_exercises_real_cli_path(gm_module, monkeypatch
     else:
         assert "Loaded 9 settings from the configuration file" in output
         assert "[DEBUG " not in output
+
+
+# The rows shared with the sibling monitors, in the order every one of them prints
+SHARED_ROW_ORDER = ("Target", "Polling interval", "Notifications (email)", "Notifications (webhook)", "Output", "Output logging", "Config", "Dotenv", "Liveness output", "CSV output", "Terminal truncation", "Local timezone", "Install method", "Secrets from dotenv", "Secrets from environment", "Secrets from config file", "TLS verification", "ASCII log separators", "Coloured output", "Verbose mode", "Debug mode", "More details")
+
+
+# Verifies the shared rows keep the order and the label column width every sibling monitor prints
+def test_the_shared_summary_rows_match_the_sibling_tools(gm_module):
+    rows = gm_module.build_startup_summary("octocat", "github_monitor.conf", ".env", "github_monitor_octocat.log")
+
+    assert [row.label for row in rows if row.label in SHARED_ROW_ORDER] == list(SHARED_ROW_ORDER)
+    # The renderer pads "<label>:" into a 30-character column, so a longer label swallows the separating space
+    assert max(len(row.label) for row in rows) <= 28
