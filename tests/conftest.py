@@ -40,6 +40,9 @@ def gm_module():
 def deterministic_globals(monkeypatch):
     monkeypatch.setattr(gm, "LOCAL_TIMEZONE", "UTC", raising=False)
     monkeypatch.setattr(gm, "GITHUB_CHECK_INTERVAL", 60, raising=False)
+    monkeypatch.setattr(gm, "VERBOSE_MODE", False, raising=False)
+    monkeypatch.setattr(gm, "DEBUG_MODE", False, raising=False)
+    monkeypatch.setattr(gm, "SECRET_SOURCES", {}, raising=False)
     monkeypatch.setattr(gm, "REPO_NOTIFICATION", False, raising=False)
     monkeypatch.setattr(gm, "PROFILE_NOTIFICATION", False, raising=False)
     monkeypatch.setattr(gm, "RECEIVER_EMAIL", "alerts@example.test", raising=False)

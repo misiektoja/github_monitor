@@ -314,11 +314,11 @@ HORIZONTAL_LINE2 = 80
 # Whether to clear the terminal screen after starting the tool
 CLEAR_SCREEN = True
 
-# Whether recovery output includes stable codes and retryability
+# Whether output includes user-facing decisions, degraded features and complete startup settings
 # Can also be enabled via --verbose
 VERBOSE_MODE = False
 
-# Whether recovery output includes sanitized technical detail
+# Whether output includes sanitized operations, requests, files, retries and poll timing
 # Can also be enabled via --debug
 DEBUG_MODE = False
 
@@ -403,6 +403,9 @@ DEFAULT_CONFIG_FILENAME = "github_monitor.conf"
 
 # List of secret keys to load from env/config
 SECRET_KEYS = ("GITHUB_TOKEN", "SMTP_PASSWORD", "WEBHOOK_URL", "NTFY_ACCESS_TOKEN")
+
+# Effective source name for each configured secret without storing another copy of its value
+SECRET_SOURCES = {}
 
 # Version incremented when SIGHUP reloads the GitHub token
 GITHUB_AUTH_REFRESH_VERSION = 0
@@ -497,6 +500,7 @@ WEBHOOK_EMBED_TITLE_LIMIT = 256
 WEBHOOK_EMBED_DESCRIPTION_LIMIT = 4096
 NTFY_MESSAGE_LIMIT_BYTES = 4095
 NTFY_TRUNCATION_SUFFIX = "\n\n[Notification truncated to fit ntfy's 4 KB message limit]"
+PYGITHUB_TIMEOUT_SECONDS = 15
 
 # Calendar days requested to stabilize one-day contribution count lookups
 DAILY_CONTRIBUTION_LOOKBACK_DAYS = 30
@@ -519,10 +523,18 @@ def normalize_log_separators(message):
 
 # Logger class to output messages to stdout and log file
 class Logger(object):
+    # Opens one line-buffered UTF-8 log while preserving the real terminal stream
     def __init__(self, filename):
         self.terminal = sys.stdout
-        self.logfile = open(filename, "a", buffering=1, encoding="utf-8")
+        debug_print(f"Opening output log for append path={filename}")
+        try:
+            self.logfile = open(filename, "a", buffering=1, encoding="utf-8")
+        except Exception as exc:
+            debug_print(f"Opening output log failed path={filename} error={type(exc).__name__}: {exc}")
+            raise
+        debug_print(f"Output log opened path={filename}")
 
+    # Writes sanitized output to both the terminal and log
     def write(self, message):
         safe_message = sanitize_error_text(message)
         self.terminal.write(safe_message)
@@ -531,8 +543,21 @@ class Logger(object):
         self.terminal.flush()
         self.logfile.flush()
 
+    # Flushes both destinations through their line-buffered writes
     def flush(self):
-        pass
+        self.terminal.flush()
+        self.logfile.flush()
+
+    # Writes sanitized output only to the terminal
+    def terminal_only(self, message):
+        self.terminal.write(sanitize_error_text(message))
+        self.terminal.flush()
+
+    # Writes sanitized normalized output only to the log
+    def log_only(self, message):
+        safe_message = sanitize_error_text(message)
+        self.logfile.write(normalize_log_separators(safe_message.expandtabs(8)))
+        self.logfile.flush()
 
 
 # Signal handler when user presses Ctrl+C
@@ -547,9 +572,12 @@ def check_internet(url=None, timeout=None):
     selected_url = CHECK_INTERNET_URL if url is None else url
     selected_timeout = CHECK_INTERNET_TIMEOUT if timeout is None else timeout
     try:
-        _ = req.get(selected_url, timeout=selected_timeout)
+        debug_http_request("GET", selected_url, "startup connectivity", selected_timeout)
+        response = req.get(selected_url, timeout=selected_timeout)
+        debug_http_response("GET", selected_url, "startup connectivity", getattr(response, "status_code", "unknown"))
         return True
     except req.RequestException as e:
+        debug_swallowed_exception("Startup connectivity request", e)
         print_recovery_advice(classify_recovery_error(e, "network"))
         return False
 
@@ -563,7 +591,8 @@ def clear_screen(enabled=True):
             os.system('cls')
         else:
             os.system('clear')
-    except Exception:
+    except Exception as exc:
+        debug_swallowed_exception("Terminal screen clear", exc)
         print("* Cannot clear the screen contents")
 
 
@@ -603,7 +632,8 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
     if isinstance(timestamp1, str):
         try:
             timestamp1 = isoparse(timestamp1)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("First timespan timestamp parsing", exc)
             return ""
 
     if isinstance(timestamp1, int):
@@ -624,7 +654,8 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
     if isinstance(timestamp2, str):
         try:
             timestamp2 = isoparse(timestamp2)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("Second timespan timestamp parsing", exc)
             return ""
 
     if isinstance(timestamp2, int):
@@ -1916,13 +1947,16 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
         return 1
 
     try:
+        debug_print(f"SMTP delivery attempt=1/1 host={SMTP_HOST} port={SMTP_PORT} timeout={smtp_timeout}s tls={bool(use_ssl)} user={mask_secret(SMTP_USER)} password={mask_secret(SMTP_PASSWORD)}")
         if use_ssl:
             ssl_context = ssl.create_default_context()
             smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
             smtpObj.starttls(context=ssl_context)
         else:
             smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
+        debug_print(f"SMTP connection established host={SMTP_HOST} port={SMTP_PORT}")
         smtpObj.login(SMTP_USER, SMTP_PASSWORD)
+        debug_print(f"SMTP authentication succeeded host={SMTP_HOST}")
         email_msg = MIMEMultipart('alternative')
         email_msg["From"] = SENDER_EMAIL
         email_msg["To"] = RECEIVER_EMAIL
@@ -1940,7 +1974,11 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
 
         smtpObj.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, email_msg.as_string())
         smtpObj.quit()
+        debug_print(f"SMTP delivery outcome=success host={SMTP_HOST} attempt=1/1")
+        verbose_print("Email delivery succeeded")
     except Exception as e:
+        debug_print(f"SMTP delivery outcome=failed host={SMTP_HOST} attempt=1/1 error={type(e).__name__}: {e}")
+        verbose_print("Email delivery failed")
         print(f"Error sending email: {sanitize_error_text(e)}")
         return 1
     return 0
@@ -1992,6 +2030,99 @@ def sanitize_error_text(value):
 # Preserves the original webhook sanitizer name for existing callers
 def sanitize_webhook_text(value):
     return sanitize_error_text(value)
+
+
+# Prints one sanitized user-facing decision only when verbose mode is enabled
+def verbose_print(message):
+    if VERBOSE_MODE:
+        print(f"* {sanitize_error_text(message)}")
+
+
+# Prints one timestamped sanitized operation only when debug mode is enabled
+def debug_print(message):
+    if DEBUG_MODE:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[DEBUG {timestamp}] {sanitize_error_text(message)}")
+
+
+# Redacts credential-bearing request headers before diagnostic output
+def sanitize_debug_headers(headers):
+    if not isinstance(headers, dict):
+        return headers
+    sensitive_names = {"authorization", "cookie", "proxy-authorization", "x-api-key"}
+    return {name: mask_secret(value) if str(name).casefold() in sensitive_names else sanitize_error_text(value) for name, value in headers.items()}
+
+
+# Redacts credential-bearing request parameters before diagnostic output
+def sanitize_debug_params(params):
+    if not isinstance(params, dict):
+        return params
+    sensitive_names = {"access_token", "auth", "key", "password", "refresh_token", "token"}
+    return {name: mask_secret(value) if str(name).casefold() in sensitive_names else sanitize_error_text(value) for name, value in params.items()}
+
+
+# Returns a diagnostic URL with credentials and optionally its private path removed
+def diagnostic_endpoint(url, host_only=False):
+    try:
+        parsed = urlsplit(str(url or "").strip())
+    except ValueError as exc:
+        debug_print(f"Could not parse diagnostic endpoint: {type(exc).__name__}: {exc}")
+        return "<invalid endpoint>"
+    if not parsed.scheme or not parsed.hostname:
+        return sanitize_error_text(url)
+    port = f":{parsed.port}" if parsed.port else ""
+    endpoint = f"{parsed.scheme}://{parsed.hostname}{port}"
+    if not host_only:
+        endpoint += parsed.path or ""
+    return sanitize_error_text(endpoint)
+
+
+# Logs one outbound HTTP request without exposing private request values
+def debug_http_request(method, url, operation, timeout, headers=None, params=None, token=None, host_only=False):
+    details = [f"HTTP {str(method).upper()} {diagnostic_endpoint(url, host_only=host_only)}", f"operation={operation}", f"timeout={timeout}s"]
+    if headers:
+        details.append(f"headers={sanitize_debug_headers(headers)}")
+    if params:
+        details.append(f"params={sanitize_debug_params(params)}")
+    if token is not None:
+        details.append(f"token={mask_secret(token)}")
+    debug_print(" ".join(details))
+
+
+# Logs one HTTP response status for a named operation
+def debug_http_response(method, url, operation, status):
+    debug_print(f"HTTP {str(method).upper()} {diagnostic_endpoint(url)} operation={operation} status={status}")
+
+
+# Logs one swallowed exception and the feature that degraded because of it
+def debug_swallowed_exception(operation, error):
+    debug_print(f"{operation} degraded: {type(error).__name__}: {error}")
+
+
+# Reports a tracked feature that cannot produce its alert during the current cycle
+def verbose_degraded_feature(feature, alert, error=None):
+    verbose_print(f"{feature} is unavailable, so {alert} cannot fire this cycle")
+    if error is not None:
+        debug_swallowed_exception(feature, error)
+
+
+# Logs the start of one monitoring poll and returns its monotonic start time
+def debug_monitor_check_start(check_number, user):
+    debug_print(f"Starting monitoring check #{check_number} for {user}")
+    return time.monotonic()
+
+
+# Logs one completed monitoring poll with its duration and schedule
+def debug_monitor_check_timing(check_number, user, started_at, interval):
+    duration = max(0.0, time.monotonic() - started_at)
+    next_check = datetime.now() + dt.timedelta(seconds=interval)
+    debug_print(f"Completed monitoring check #{check_number} for {user} duration={duration:.3f}s next={next_check.astimezone().isoformat()} interval={display_time(interval)}")
+
+
+# Logs one scheduled wait with its reason and next timestamp
+def debug_monitor_wait_timing(reason, interval):
+    next_check = datetime.now() + dt.timedelta(seconds=interval)
+    debug_print(f"Waiting {display_time(interval)} reason={reason} next={next_check.astimezone().isoformat()}")
 
 
 @dataclass(frozen=True)
@@ -2215,6 +2346,78 @@ def _startup_notification_summary_lines():
     return [_format_startup_notification_line("Notifications (email):", enabled_email), _format_startup_notification_line("Notifications (webhook):", enabled_webhook)]
 
 
+@dataclass(frozen=True)
+class StartupSummaryRow:
+    label: str
+    value: str
+    concise: bool = False
+    full: bool = True
+    log: bool = True
+
+
+# Builds concise and complete startup rows without exposing private values
+def build_startup_summary(target, config_path, env_path, output_path):
+    install_context = detect_install_context()
+    email_categories = _startup_email_notification_categories()
+    webhook_categories = _startup_webhook_notification_categories()
+    email_state = "On (" + ", ".join(email_categories) + ")" if email_categories else "Off"
+    webhook_state = "On (" + ", ".join(webhook_categories) + ")" if webhook_categories else "Off"
+    secret_sources = ", ".join(f"{name}: {source}" for name, source in sorted(SECRET_SOURCES.items())) or "None"
+    return [
+        StartupSummaryRow("Target", str(target), concise=True),
+        StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
+        StartupSummaryRow("Notifications (email)", email_state, concise=True),
+        StartupSummaryRow("Notifications (webhook)", webhook_state, concise=True),
+        StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only", concise=True),
+        StartupSummaryRow("Configuration", str(config_path) if config_path else "None", concise=True),
+        StartupSummaryRow("Dotenv", str(env_path) if env_path else "None", concise=True),
+        StartupSummaryRow("GitHub API URL", str(GITHUB_API_URL)),
+        StartupSummaryRow("Track repository changes", str(TRACK_REPOS_CHANGES)),
+        StartupSummaryRow("Track contribution changes", str(TRACK_CONTRIB_CHANGES)),
+        StartupSummaryRow("Monitor GitHub events", str(not DO_NOT_MONITOR_GITHUB_EVENTS)),
+        StartupSummaryRow("Owned repositories only", str(not GET_ALL_REPOS)),
+        StartupSummaryRow("Liveness output", display_time(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_INTERVAL else "Disabled"),
+        StartupSummaryRow("CSV output", str(CSV_FILE) if CSV_FILE else "Disabled"),
+        StartupSummaryRow("Output logging", str(output_path) if output_path else "Disabled"),
+        StartupSummaryRow("ASCII log separators", f"{ascii_log_separators_enabled()} (mode: {ASCII_LOG_SEPARATORS})"),
+        StartupSummaryRow("Local timezone", str(LOCAL_TIMEZONE)),
+        StartupSummaryRow("Install method", install_context.install_method),
+        StartupSummaryRow("Secret sources", secret_sources),
+        StartupSummaryRow("Verbose mode", str(VERBOSE_MODE)),
+        StartupSummaryRow("Debug mode", str(DEBUG_MODE)),
+        StartupSummaryRow("More details", "use --verbose or --debug", concise=True, full=False, log=False),
+    ]
+
+
+# Formats one startup summary row with aligned plain ASCII columns
+def format_startup_summary_row(row):
+    prefix = f"* {(row.label + ':'):<30}"
+    if row.label in ("Notifications (email)", "Notifications (webhook)"):
+        return textwrap.fill(row.value, width=100, initial_indent=prefix, subsequent_indent=" " * len(prefix), break_long_words=False, break_on_hyphens=False) + "\n"
+    return f"{prefix}{row.value}\n"
+
+
+# Routes concise or complete startup rows independently to terminal and log destinations
+def emit_startup_summary(rows, show_full, stream=None):
+    destination = sys.stdout if stream is None else stream
+    routed = hasattr(destination, "terminal_only") and hasattr(destination, "log_only")
+    for row in rows:
+        line = format_startup_summary_row(row)
+        if routed and row.full and row.log:
+            destination.log_only(line)
+        if row.full if show_full else row.concise:
+            if routed:
+                destination.terminal_only(line)
+            else:
+                destination.write(line)
+    if routed:
+        destination.log_only("\n")
+        destination.terminal_only("\n")
+    else:
+        destination.write("\n")
+        destination.flush()
+
+
 # Detects Discord and public ntfy webhook providers from distinctive URL shapes
 def detect_webhook_provider(url: Any) -> str:
     if not validate_webhook_url(url):
@@ -2258,7 +2461,8 @@ def webhook_retry_after_seconds(response: Any) -> float:
         candidates.append(headers.get("Retry-After"))
     try:
         payload = response.json()
-    except Exception:
+    except Exception as exc:
+        debug_swallowed_exception("Webhook retry response parsing", exc)
         payload = None
     if isinstance(payload, dict):
         candidates.append(payload.get("retry_after"))
@@ -2271,7 +2475,8 @@ def webhook_retry_after_seconds(response: Any) -> float:
             try:
                 retry_at = parsedate_to_datetime(str(candidate))
                 seconds = (retry_at - datetime.now(retry_at.tzinfo)).total_seconds()
-            except Exception:
+            except Exception as exc:
+                debug_swallowed_exception("Webhook retry timestamp parsing", exc)
                 continue
         return max(0.0, min(seconds, WEBHOOK_MAX_RETRY_AFTER_SECONDS))
     return WEBHOOK_FALLBACK_RETRY_SECONDS
@@ -2451,12 +2656,14 @@ def post_webhook_request(**request_kwargs: Any) -> Any:
     # Revalidated here because a dotenv reload can replace the destination after the delivery started
     if not validate_webhook_url(destination):
         raise req.exceptions.InvalidURL("WEBHOOK_URL must contain a complete HTTPS link")
+    debug_http_request("POST", destination, "webhook delivery", WEBHOOK_TIMEOUT_SECONDS, headers=request_kwargs.get("headers"), params=request_kwargs.get("params"), token=NTFY_ACCESS_TOKEN or None, host_only=True)
     return WEBHOOK_SESSION.post(destination, timeout=WEBHOOK_TIMEOUT_SECONDS, allow_redirects=False, **request_kwargs)
 
 
 # Sends one webhook through an isolated bounded retry path that never uses GitHub retries
 def send_webhook(title: str, description: str, notification_type: str = "event", force: bool = False, sleeper: Optional[Callable[[float], None]] = None, image_url: str = "") -> int:
     if not force and not webhook_event_enabled(notification_type):
+        verbose_print(f"Webhook delivery skipped because {notification_type} alerts are disabled")
         return 1
     if not validate_webhook_url():
         print_webhook_error("WEBHOOK_URL must contain a complete HTTPS link")
@@ -2485,27 +2692,42 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
     last_error: Any = None
     for attempt in range(WEBHOOK_MAX_ATTEMPTS):
         try:
+            attempt_number = attempt + 1
+            debug_print(f"Webhook delivery channel={provider} host={diagnostic_endpoint(WEBHOOK_URL, host_only=True)} attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS} timeout={WEBHOOK_TIMEOUT_SECONDS}s")
             if provider == "ntfy":
                 response = post_webhook_request(data=ntfy_message.encode("utf-8"), params={"title": ntfy_title}, headers=request_headers)
             elif isinstance(discord_payload, str):
                 response = post_webhook_request(data=discord_payload, headers=request_headers)
             else:
                 response = post_webhook_request(json=discord_payload, headers=request_headers)
+            retryable = response.status_code == 429 or 500 <= response.status_code <= 599
+            debug_print(f"Webhook delivery channel={provider} attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS} status={response.status_code} retryable={retryable}")
             if 200 <= response.status_code <= 299:
+                verbose_print(f"Webhook delivery through {provider} succeeded")
+                debug_print(f"Webhook delivery channel={provider} outcome=success attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 return 0
             last_error = response
-            retryable = response.status_code == 429 or 500 <= response.status_code <= 599
             if not retryable or attempt == WEBHOOK_MAX_ATTEMPTS - 1:
+                verbose_print(f"Webhook delivery through {provider} failed")
+                debug_print(f"Webhook delivery channel={provider} outcome=failed attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 print_webhook_error(f"HTTP {response.status_code}: {getattr(response, 'text', '')[:200]}")
                 return 1
             delay = webhook_retry_after_seconds(response) if response.status_code == 429 else WEBHOOK_FALLBACK_RETRY_SECONDS
+            debug_monitor_wait_timing(f"webhook HTTP {response.status_code} retry attempt {attempt_number + 1}/{WEBHOOK_MAX_ATTEMPTS}", delay)
             sleep_func(delay)
         except req.RequestException as exc:
             last_error = exc
+            attempt_number = attempt + 1
+            debug_print(f"Webhook delivery channel={provider} attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS} error={type(exc).__name__}: {exc} retryable={attempt < WEBHOOK_MAX_ATTEMPTS - 1}")
             if attempt == WEBHOOK_MAX_ATTEMPTS - 1:
+                verbose_print(f"Webhook delivery through {provider} failed")
+                debug_print(f"Webhook delivery channel={provider} outcome=failed attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 print_webhook_error(exc)
                 return 1
+            debug_monitor_wait_timing(f"webhook request retry attempt {attempt_number + 1}/{WEBHOOK_MAX_ATTEMPTS}", WEBHOOK_FALLBACK_RETRY_SECONDS)
             sleep_func(WEBHOOK_FALLBACK_RETRY_SECONDS)
+    verbose_print(f"Webhook delivery through {provider} failed")
+    debug_print(f"Webhook delivery channel={provider} outcome=failed after={WEBHOOK_MAX_ATTEMPTS} attempts")
     print_webhook_error(last_error)
     return 1
 
@@ -2526,23 +2748,28 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
 # Initializes the CSV file
 def init_csv_file(csv_file_name):
     try:
+        debug_print(f"Checking CSV output file path={csv_file_name}")
         if not os.path.isfile(csv_file_name) or os.path.getsize(csv_file_name) == 0:
+            debug_print(f"Opening CSV output for header write path={csv_file_name}")
             with open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
                 writer.writeheader()
+            debug_print(f"CSV header write succeeded path={csv_file_name}")
     except Exception as e:
+        debug_print(f"CSV initialization failed path={csv_file_name} error={type(e).__name__}: {e}")
         raise RuntimeError(f"Could not initialize CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
 # Writes CSV entry
 def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new):
     try:
-
+        debug_print(f"Opening CSV output for append path={csv_file_name} record_type={object_type}")
         with open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8") as csv_file:
             csvwriter = csv.DictWriter(csv_file, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
             csvwriter.writerow({'Date': timestamp, 'Type': object_type, 'Name': object_name, 'Old': old, 'New': new})
-
+        debug_print(f"CSV append succeeded path={csv_file_name} record_type={object_type}")
     except Exception as e:
+        debug_print(f"CSV append failed path={csv_file_name} record_type={object_type} error={type(e).__name__}: {e}")
         raise RuntimeError(f"Failed to write to CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
@@ -2589,7 +2816,8 @@ def get_date_from_ts(ts):
     if isinstance(ts, str):
         try:
             ts = isoparse(ts)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("Long timestamp parsing", exc)
             return ""
 
     if isinstance(ts, datetime):
@@ -2625,7 +2853,8 @@ def get_short_date_from_ts(ts, show_year=False, show_hour=True, show_weekday=Tru
     if isinstance(ts, str):
         try:
             ts = isoparse(ts)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("Short timestamp parsing", exc)
             return ""
 
     if isinstance(ts, datetime):
@@ -2669,7 +2898,8 @@ def get_hour_min_from_ts(ts, show_seconds=False):
     if isinstance(ts, str):
         try:
             ts = isoparse(ts)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("Hour timestamp parsing", exc)
             return ""
 
     if isinstance(ts, datetime):
@@ -2814,7 +3044,7 @@ def decrease_check_signal_handler(sig, frame):
 
 # Signal handler for SIGHUP allowing to reload secrets from .env
 def reload_secrets_signal_handler(sig, frame):
-    global GITHUB_AUTH_REFRESH_VERSION, WEBHOOK_PROVIDER
+    global GITHUB_AUTH_REFRESH_VERSION, WEBHOOK_PROVIDER, SECRET_SOURCES
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
 
@@ -2830,12 +3060,19 @@ def reload_secrets_signal_handler(sig, frame):
             else:
                 env_path = find_dotenv()
             if env_path:
+                debug_print(f"Reading dotenv file for signal reload path={env_path}")
                 load_dotenv(env_path, override=True)
+                debug_print(f"Dotenv signal reload succeeded path={env_path}")
             else:
                 print("* No .env file found, skipping env-var reload")
-        except ImportError:
+        except ImportError as exc:
+            debug_swallowed_exception("Dotenv signal reload dependency import", exc)
             env_path = None
             print("* python-dotenv not installed, skipping env-var reload")
+        except Exception as exc:
+            env_path = None
+            verbose_degraded_feature("Private setting reload", "credential refresh", exc)
+            print(f"* Dotenv reload failed: {sanitize_error_text(exc)}")
 
     github_token_changed = False
     webhook_url_changed = False
@@ -2845,6 +3082,8 @@ def reload_secrets_signal_handler(sig, frame):
             val = os.getenv(secret)
             if val is not None and val != old_val:
                 globals()[secret] = val
+                SECRET_SOURCES[secret] = "dotenv file reload"
+                debug_print(f"Secret resolution name={secret} source=dotenv file reload")
                 if secret == "GITHUB_TOKEN":
                     github_token_changed = True
                 if secret == "WEBHOOK_URL":
@@ -2868,6 +3107,23 @@ class EmptyPaginatedList(list):
         self.totalCount = 0
 
 
+# Creates one timed PyGithub client and records its sanitized connection settings
+def create_github_client(operation):
+    debug_print(f"PyGithub client operation={operation} endpoint={diagnostic_endpoint(GITHUB_API_URL)} timeout={PYGITHUB_TIMEOUT_SECONDS}s token={mask_secret(GITHUB_TOKEN)}")
+    return Github(base_url=GITHUB_API_URL, auth=Auth.Token(GITHUB_TOKEN), timeout=PYGITHUB_TIMEOUT_SECONDS)
+
+
+# Logs one named PyGithub operation before its lazy network request is consumed
+def debug_github_operation(operation, target=""):
+    suffix = f" target={target}" if target else ""
+    debug_print(f"PyGithub operation={operation} endpoint={diagnostic_endpoint(GITHUB_API_URL)} timeout={PYGITHUB_TIMEOUT_SECONDS}s token={mask_secret(GITHUB_TOKEN)}{suffix}")
+
+
+# Returns a stable display name for a partially populated PyGithub object
+def github_object_name(value):
+    return str(getattr(value, "full_name", getattr(value, "name", "resource")))
+
+
 # Callers wrap a lambda and invoke the result immediately, so a lambda that reads a loop variable is
 # evaluated inside the same iteration. Those call sites carry a noqa marker for the loop-binding rule
 # Wraps GitHub API call with retry and linear back-off, returning a specified default on failure
@@ -2875,7 +3131,10 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         for i in range(1, retries + 1):
             try:
-                return fn(*args, **kwargs)
+                debug_print(f"PyGithub retry wrapper operation={fn.__name__} attempt={i}/{retries}")
+                result = fn(*args, **kwargs)
+                debug_print(f"PyGithub retry wrapper operation={fn.__name__} outcome=success attempt={i}/{retries}")
+                return result
             except RateLimitExceededException as e:
                 headers = getattr(e, "headers", None)
 
@@ -2900,13 +3159,24 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
                     else:
                         sleep_for = int(backoff * i)
 
-                print(f"* {fn.__name__} rate limited, sleeping {sleep_for}s (retry {i}/{retries})")
-                time.sleep(sleep_for)
+                retryable = i < retries
+                debug_print(f"PyGithub retry wrapper operation={fn.__name__} error={type(e).__name__}: {e} retryable={retryable} attempt={i}/{retries}")
+                if retryable:
+                    print(f"* {fn.__name__} rate limited, sleeping {sleep_for}s (retry {i}/{retries})")
+                    debug_monitor_wait_timing(f"GitHub rate limit before attempt {i + 1}/{retries}", sleep_for)
+                    time.sleep(sleep_for)
                 continue
 
             except NET_ERRORS as e:
-                print(f"* {fn.__name__} error: {sanitize_error_text(e)} (retry {i}/{retries})")
-                time.sleep(backoff * i)
+                retryable = i < retries
+                delay = backoff * i
+                debug_print(f"PyGithub retry wrapper operation={fn.__name__} error={type(e).__name__}: {e} retryable={retryable} attempt={i}/{retries}")
+                if retryable:
+                    print(f"* {fn.__name__} error: {sanitize_error_text(e)} (retry {i}/{retries})")
+                    debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{retries}", delay)
+                    time.sleep(delay)
+        verbose_degraded_feature(f"GitHub operation {fn.__name__}", "its dependent alerts")
+        debug_print(f"PyGithub retry wrapper operation={fn.__name__} outcome=default after={retries} attempts")
         return default
     return wrapped
 
@@ -2923,9 +3193,9 @@ def github_print_followers_and_followings(user):
     print(f"* Getting followers & followings for user '{user}' ...")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("followers and followings listing")
 
+        debug_github_operation("user profile lookup", user)
         g_user = g.get_user(user)
         user_login = g_user.login
         user_name = g_user.name
@@ -2934,12 +3204,16 @@ def github_print_followers_and_followings(user):
         followers_count = g_user.followers
         followings_count = g_user.following
 
+        debug_github_operation("followers listing", user)
         followers_list = g_user.get_followers()
+        debug_github_operation("followings listing", user)
         followings_list = g_user.get_following()
 
         user_name_str = user_login
         if user_name:
             user_name_str += f" ({user_name})"
+    except (UnknownObjectException, BadCredentialsException, RateLimitExceededException):
+        raise
     except Exception as e:
         raise RuntimeError(f"Cannot fetch user {user} details: {sanitize_error_text(e)}")
 
@@ -2961,7 +3235,8 @@ def github_print_followers_and_followings(user):
                     follower_str += f"\n[ {follower.html_url}/ ]"
                 print(follower_str)
     except Exception as e:
-        print(f"* Cannot fetch user's followers list: {e}")
+        verbose_degraded_feature("Follower listing", "complete follower output", e)
+        print(f"* Cannot fetch user's followers list: {sanitize_error_text(e)}")
 
     print(f"\nFollowings:\t\t{followings_count}")
 
@@ -2976,7 +3251,8 @@ def github_print_followers_and_followings(user):
                     following_str += f"\n[ {following.html_url}/ ]"
                 print(following_str)
     except Exception as e:
-        print(f"* Cannot fetch user's followings list: {e}")
+        verbose_degraded_feature("Following listing", "complete following output", e)
+        print(f"* Cannot fetch user's followings list: {sanitize_error_text(e)}")
 
     g.close()
 
@@ -2989,7 +3265,8 @@ def _display_progress(current, total, repo_name: str = "", bar_length: int = 40,
     # Defensive fallback for environments without a real TTY
     try:
         term_width = shutil.get_terminal_size(fallback=(80, 20)).columns
-    except Exception:
+    except Exception as exc:
+        debug_swallowed_exception("Terminal width detection", exc)
         term_width = 80
 
     # Keep a sane minimum – very tiny terminals may still wrap, but that's acceptable
@@ -3072,6 +3349,7 @@ def github_get_repo_discussions(repo):
         return 0, []
 
     discussion_schema = "id number title createdAt updatedAt author { login } category { name }"
+    debug_github_operation("repository discussions listing", getattr(repo, "full_name", getattr(repo, "name", "repository")))
     discussions = list(repo.get_discussions(discussion_schema, states=["OPEN"]))
     discussions_list = [f"#{discussion.number} {discussion.title} ({discussion.author.login if discussion.author else 'ghost'}) [ {repo.html_url}/discussions/{discussion.number} ]" for discussion in discussions]
     return len(discussions), discussions_list
@@ -3113,20 +3391,24 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
 
                 try:
                     if fetch_identity_lists:
+                        debug_github_operation("repository stargazers listing", github_object_name(repo))
                         stargazers_list = [star.login for star in repo.get_stargazers()]
                         if show_progress:
                             _display_progress(idx, total_repos, repo.name)  # Refresh after stargazers
+                        debug_github_operation("repository subscribers listing", github_object_name(repo))
                         subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
                         identity_lists_fetched += 1
                         if show_progress:
                             _display_progress(idx, total_repos, repo.name)  # Refresh after subscribers
+                    debug_github_operation("repository forks listing", github_object_name(repo))
                     forked_repos = [fork.full_name for fork in repo.get_forks()]
                     if show_progress:
                         _display_progress(idx, total_repos, repo.name)  # Refresh after forks
                 except GithubException as e:
                     if e.status in [403, 451]:
+                        verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
                         if BLOCKED_REPOS:
-                            print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {e}")
+                            print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {sanitize_error_text(e)}")
                             print_cur_ts("Timestamp:\t\t\t")
                         if show_progress:
                             _display_progress(idx, total_repos, repo.name)
@@ -3135,16 +3417,19 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                 finally:
                     github_logger.setLevel(original_level)
 
+                debug_github_operation("repository open issues listing", github_object_name(repo))
                 issues = list(repo.get_issues(state='open'))
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name)  # Refresh after issues
+                debug_github_operation("repository open pull requests listing", github_object_name(repo))
                 pulls = list(repo.get_pulls(state='open'))
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name)  # Refresh after pulls
                 try:
                     discussion_count, discussions_list = github_get_repo_discussions(repo)
                 except Exception as e:
-                    print(f"\n* Cannot fetch discussions for repo '{repo.name}', skipping discussions for now: {e}")
+                    verbose_degraded_feature(f"Discussions for {repo.name}", "discussion change alerts", e)
+                    print(f"\n* Cannot fetch discussions for repo '{repo.name}', skipping discussions for now: {sanitize_error_text(e)}")
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name)  # Refresh after discussions
 
@@ -3162,20 +3447,23 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
             except GithubException as e:
                 # Skip TOS-blocked (403) and legally blocked (451) repositories
                 if e.status in [403, 451]:
+                    verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
                     if BLOCKED_REPOS:
-                        print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {e}")
+                        print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {sanitize_error_text(e)}")
                         print_cur_ts("Timestamp:\t\t\t")
                     if show_progress:
                         _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
                 else:
-                    print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
+                    verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
+                    print(f"\n* Cannot process repo '{repo.name}', skipping for now: {sanitize_error_text(e)}")
                     print_cur_ts("Timestamp:\t\t\t")
                     if show_progress:
                         _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
             except Exception as e:
-                print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
+                verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
+                print(f"\n* Cannot process repo '{repo.name}', skipping for now: {sanitize_error_text(e)}")
                 print_cur_ts("Timestamp:\t\t\t")
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
@@ -3213,24 +3501,28 @@ def github_print_repos(user):
     print(f"* Getting public repositories for user '{user}' ...")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("repository listing")
 
+        debug_github_operation("user profile lookup", user)
         g_user = g.get_user(user)
         user_login = g_user.login
         user_name = g_user.name
         user_url = g_user.html_url
 
         if GET_ALL_REPOS:
+            debug_github_operation("all repository listing", user)
             repos_list = g_user.get_repos()
             repos_count = g_user.public_repos
         else:
+            debug_github_operation("owned repository listing", user)
             repos_list = [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login]
             repos_count = len(repos_list)
 
         user_name_str = user_login
         if user_name:
             user_name_str += f" ({user_name})"
+    except (UnknownObjectException, BadCredentialsException, RateLimitExceededException):
+        raise
     except Exception as e:
         raise RuntimeError(f"Cannot fetch user {user} details: {sanitize_error_text(e)}")
 
@@ -3253,9 +3545,11 @@ def github_print_repos(user):
                 github_logger.setLevel(logging.ERROR)
 
                 try:
+                    debug_github_operation("repository open pull request count", github_object_name(repo))
                     pr_count = repo.get_pulls(state='open').totalCount
                     issue_count = repo.open_issues_count - pr_count
-                except Exception:
+                except Exception as exc:
+                    verbose_degraded_feature(f"Repository counts for {repo.name}", "repository count details", exc)
                     pr_count = "?"
                     issue_count = "?"
 
@@ -3283,7 +3577,8 @@ def github_print_repos(user):
                 except GithubException as e:
                     # Inform about TOS-blocked (403) and legally blocked (451) repositories
                     if e.status in [403, 451]:
-                        print(f"\n* Repo '{repo.name}' is blocked: {e}")
+                        verbose_degraded_feature(f"Repository details for {repo.name}", "complete repository output", e)
+                        print(f"\n* Repo '{repo.name}' is blocked: {sanitize_error_text(e)}")
                         print("─" * HORIZONTAL_LINE2)
                         continue
                 finally:
@@ -3306,20 +3601,23 @@ def github_print_starred_repos(user):
     print(f"* Getting repositories starred by user '{user}' ...")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("starred repository listing")
 
+        debug_github_operation("user profile lookup", user)
         g_user = g.get_user(user)
         user_login = g_user.login
         user_name = g_user.name
         user_url = g_user.html_url
 
+        debug_github_operation("starred repository listing", user)
         starred_list = g_user.get_starred()
         starred_count = starred_list.totalCount
 
         user_name_str = user_login
         if user_name:
             user_name_str += f" ({user_name})"
+    except (UnknownObjectException, BadCredentialsException, RateLimitExceededException):
+        raise
     except Exception as e:
         raise RuntimeError(f"Cannot fetch user {user} details: {sanitize_error_text(e)}")
 
@@ -3448,6 +3746,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     if event.repo.id:
         try:
             desc_len = 80
+            debug_github_operation("event repository lookup", event.repo.name)
             repo = g.get_repo(event.repo.name)
 
             # For ForkEvent, prefer the source repo if available
@@ -3456,8 +3755,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     parent = gh_call(lambda: getattr(repo, "parent", None))()
                     if parent:
                         repo = parent
-                except Exception:
-                    pass
+                except Exception as exc:
+                    verbose_degraded_feature("Fork source repository metadata", "complete fork event details", exc)
 
             repo_name = getattr(repo, "full_name", event.repo.name)
 
@@ -3473,12 +3772,14 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             if short_desc:
                 st += print_v(f"Repo description:\t\t{short_desc}")
 
-        except UnknownObjectException:
+        except UnknownObjectException as exc:
+            debug_swallowed_exception("Event repository lookup", exc)
             repo = None
             st += print_v("\nRepository not found or has been removed")
         except GithubException as e:
+            debug_swallowed_exception("Event repository lookup", e)
             repo = None
-            st += print_v(f"\n* Error occurred while getting repo details: {e}")
+            st += print_v(f"\n* Error occurred while getting repo details: {sanitize_error_text(e)}")
 
     if hasattr(event.actor, 'login'):
         if event.actor.login:
@@ -3519,6 +3820,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
             commit_details = None
             if repo:
+                debug_github_operation("event commit lookup", commit["sha"])
                 commit_details = gh_call(lambda: repo.get_commit(commit["sha"]))()  # noqa: B023
 
             if commit_details:
@@ -3544,7 +3846,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             if commit_details:
                 try:
                     file_count = sum(1 for _ in commit_details.files)
-                except Exception:
+                except Exception as exc:
+                    verbose_degraded_feature("Commit file list", "complete push event details", exc)
                     file_count = "N/A"
                 st += print_v(f" - Files changed:\t\t{file_count}")
                 if file_count:
@@ -3575,8 +3878,9 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             try:
                 compare = gh_call(lambda: repo.compare(before_sha, head_sha))()
             except Exception as e:
+                verbose_degraded_feature("Push comparison", "complete push event details", e)
                 compare = None
-                st += print_v(f"* Error using compare({before_sha[:12]}...{head_sha[:12]}): {e}")
+                st += print_v(f"* Error using compare({before_sha[:12]}...{head_sha[:12]}): {sanitize_error_text(e)}")
 
             if compare:
                 commits = list(compare.commits)
@@ -3591,6 +3895,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     st += print_v("." * HORIZONTAL_LINE1)
 
                     commit_sha = getattr(c, "sha", None) or getattr(c, "id", None)
+                    if repo and commit_sha:
+                        debug_github_operation("event commit lookup", commit_sha)
                     commit_details = gh_call(lambda: repo.get_commit(commit_sha))() if (repo and commit_sha) else None  # noqa: B023
 
                     commit_message = commit_details.commit.message if commit_details and commit_details.commit else ""
@@ -3629,7 +3935,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
                         try:
                             file_count = sum(1 for _ in commit_details.files)
-                        except Exception:
+                        except Exception as exc:
+                            verbose_degraded_feature("Commit file list", "complete push event details", exc)
                             file_count = "N/A"
                         st += print_v(f" - Files changed:\t\t{file_count}")
                         if file_count and file_count != "N/A":
@@ -3679,6 +3986,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
     if repo and event.payload.get("pull_request"):
         pr_number = event.payload["pull_request"]["number"]
+        debug_github_operation("event pull request lookup", f"{github_object_name(repo)}#{pr_number}")
         pr = repo.get_pull(pr_number)
 
         st += print_v(f"\n=== PR #{pr.number}: {pr.title} ===")
@@ -3749,11 +4057,13 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         if repo:
             try:
                 pr_number = event.payload["pull_request"]["number"]
+                debug_github_operation("event pull request review lookup", f"{github_object_name(repo)}#{pr_number}")
                 pr_obj = repo.get_pull(pr_number)
+                debug_github_operation("event pull request review comments listing", f"{github_object_name(repo)}#{pr_number}")
                 count = sum(1 for _ in pr_obj.get_single_review_comments(event.payload["review"].get("id")))
                 st += print_v(f"Comments in this review:\t{count}")
-            except Exception:
-                pass
+            except Exception as exc:
+                verbose_degraded_feature("Pull request review comment count", "complete review event details", exc)
 
     if event.payload.get("issue"):
         st += print_v(f"\nIssue title:\t\t\t{event.payload['issue'].get('title')}")
@@ -3847,8 +4157,10 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             if parent_id and repo:
                 try:
                     pr_number = event.payload["pull_request"]["number"]
+                    debug_github_operation("event pull request comment lookup", f"{github_object_name(repo)}#{pr_number}")
                     pr = repo.get_pull(pr_number)
 
+                    debug_github_operation("event pull request parent comment lookup", parent_id)
                     parent = pr.get_review_comment(parent_id)
                     parent_date = get_date_from_ts(parent.created_at)
 
@@ -3861,7 +4173,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
                     st += print_v(f"\nPrevious comment URL:\t\t{parent.html_url}")
                 except Exception as e:
-                    st += print_v(f"\n* Could not fetch parent comment (ID {parent_id}): {e}")
+                    verbose_degraded_feature("Parent pull request comment", "complete comment event details", e)
+                    st += print_v(f"\n* Could not fetch parent comment (ID {parent_id}): {sanitize_error_text(e)}")
             else:
                 st += print_v("\n(This is the first comment in its thread)")
         elif event.type in ("IssueCommentEvent", "CommitCommentEvent"):
@@ -3873,6 +4186,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                 if event.type == "IssueCommentEvent":
 
                     issue_number = event.payload["issue"]["number"]
+                    debug_github_operation("event issue lookup", f"{github_object_name(repo)}#{issue_number}")
                     issue = repo.get_issue(issue_number)
 
                     virtual_comment_list = []
@@ -3886,6 +4200,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                             "html_url": issue.html_url
                         })
 
+                    debug_github_operation("event issue comments listing", f"{github_object_name(repo)}#{issue_number}")
                     for c in issue.get_comments():
                         virtual_comment_list.append({
                             "id": c.id,
@@ -3919,6 +4234,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
                 elif event.type == "CommitCommentEvent":
                     commit_sha = comment["commit_id"]
+                    debug_github_operation("event commit comments listing", commit_sha)
                     comments = list(repo.get_commit(commit_sha).get_comments())
 
                     previous = None
@@ -3994,17 +4310,19 @@ def github_list_events(user, number, csv_file_name):
         if csv_file_name:
             init_csv_file(csv_file_name)
     except Exception as e:
-        print(f"* Error: {e}")
+        verbose_degraded_feature("Recent event CSV initialization", "event CSV records", e)
+        print(f"* Error: {sanitize_error_text(e)}")
 
     list_operation = "* Listing & saving" if csv_file_name else "* Listing"
 
     print(f"{list_operation} {number} recent events for '{user}' ...\n")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("recent event listing")
 
+        debug_github_operation("user profile lookup", user)
         g_user = g.get_user(user)
+        debug_github_operation("recent event listing", user)
         all_events = list(g_user.get_events())
         total_available = len(all_events)
         events = all_events[:number]
@@ -4018,7 +4336,8 @@ def github_list_events(user, number, csv_file_name):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        print(f"* Cannot fetch user details: {e}")
+        verbose_degraded_feature("Recent event listing", "recent event output", e)
+        print(f"* Cannot fetch user details: {sanitize_error_text(e)}")
         return
 
     print(f"Username:\t\t\t{user_name_str}")
@@ -4044,17 +4363,19 @@ def github_list_events(user, number, csv_file_name):
                     try:
                         event_date, repo_name, repo_url, event_text = github_print_event(event, g)
                     except Exception as e:
-                        print(f"\n* Warning, cannot fetch all event details, skipping: {e}")
+                        verbose_degraded_feature("Event detail rendering", "complete event output", e)
+                        print(f"\n* Warning, cannot fetch all event details, skipping: {sanitize_error_text(e)}")
                         print_cur_ts("\nTimestamp:\t\t\t")
                         continue
                     try:
                         if csv_file_name:
                             write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                     except Exception as e:
-                        print(f"* Error: {e}")
+                        print(f"* Error: {sanitize_error_text(e)}")
                     print_cur_ts("\nTimestamp:\t\t\t")
         except Exception as e:
-            print(f"* Cannot fetch events: {e}")
+            verbose_degraded_feature("Recent event iteration", "recent event output", e)
+            print(f"* Cannot fetch events: {sanitize_error_text(e)}")
 
 
 # Detects and reports changes in a user's profile-level entities (followers, followings, public repos, starred repos)
@@ -4063,9 +4384,11 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
         list_new = []
         list_new = [getattr(item, field) for item in raw_list]
         if not list_new and count_new > 0:
+            verbose_degraded_feature(f"{label} identities", f"{label.lower()} membership alerts")
             return list_old, count_old
     except Exception as e:
-        print(f"* Error while trying to get the list of {label.lower()}: {e}")
+        verbose_degraded_feature(f"{label} list", f"{label.lower()} change alerts", e)
+        print(f"* Error while trying to get the list of {label.lower()}: {sanitize_error_text(e)}")
         print_cur_ts("Timestamp:\t\t\t")
         return list_old, count_old
 
@@ -4089,7 +4412,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"{label} Count", user, old_count, new_count)
         except Exception as e:
-            print(f"* Error: {e}")
+            print(f"* Error: {sanitize_error_text(e)}")
 
     added_list_str = ""
     removed_list_str = ""
@@ -4120,7 +4443,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Removed {label[:-1]}", user, item, "")
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
         print()
 
     if added_items:
@@ -4138,7 +4461,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", user, "", item)
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
         print()
 
     if diff == 0:
@@ -4179,6 +4502,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
 def check_repo_list_changes(count_old, count_new, list_old, list_new, label, repo_name, repo_url, user, csv_file_name):
     if list_old is None or list_new is None:
         if count_old == count_new:
+            verbose_degraded_feature(f"{label} identities for {repo_name}", f"{label.lower()} membership alerts")
             return
 
         diff = count_new - count_old
@@ -4188,7 +4512,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"Repo {label} Count", repo_name, count_old, count_new)
         except Exception as e:
-            print(f"* Error: {e}")
+            print(f"* Error: {sanitize_error_text(e)}")
 
         m_subject = f"GitHub user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {count_old} -> {count_new})"
         m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {count_old} to {count_new} ({diff_str})\n"
@@ -4208,6 +4532,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
         return
 
     if not list_new and count_new > 0:
+        verbose_degraded_feature(f"{label} identities for {repo_name}", f"{label.lower()} membership alerts")
         return
 
     old_count = len(list_old)
@@ -4228,7 +4553,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"Repo {label} Count", repo_name, old_count, new_count)
         except Exception as e:
-            print(f"* Error: {e}")
+            print(f"* Error: {sanitize_error_text(e)}")
 
     added_list_str = ""
     removed_list_str = ""
@@ -4279,7 +4604,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests", "Discussions"] else item
                         write_csv_entry(csv_file_name, now_local_naive(), f"{removal_text} {label[:-1]}", repo_name, value, "")
                 except Exception as e:
-                    print(f"* Error: {e}")
+                    print(f"* Error: {sanitize_error_text(e)}")
             print()
 
         if added_items:
@@ -4309,7 +4634,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests", "Discussions"] else item
                         write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", repo_name, "", value)
                 except Exception as e:
-                    print(f"* Error: {e}")
+                    print(f"* Error: {sanitize_error_text(e)}")
             print()
 
     if diff == 0:
@@ -4358,6 +4683,7 @@ def find_config_file(cli_path=None):
 
     if cli_path:
         p = Path(os.path.expanduser(cli_path))
+        debug_print(f"Checking explicit configuration path={p}")
         return str(p) if p.is_file() else None
 
     candidates = [
@@ -4367,8 +4693,11 @@ def find_config_file(cli_path=None):
     ]
 
     for p in candidates:
+        debug_print(f"Checking discovered configuration path={p}")
         if p.is_file():
+            debug_print(f"Selected discovered configuration path={p}")
             return str(p)
+    debug_print("No configuration file selected")
     return None
 
 
@@ -4426,18 +4755,28 @@ def describe_retired_settings(names, quoted_path):
 
 
 # Loads a config file as data and applies only recognized literal settings
-def load_config_file(config_path, namespace=None, report_errors=True, loaded_names_out=None):
+def load_config_file(config_path, namespace=None, report_errors=True, loaded_names_out=None, diagnostic_overrides=None):
     selected_namespace = globals() if namespace is None else namespace
     retired_settings = []
     try:
+        debug_print(f"Reading configuration file path={config_path}")
         content = Path(config_path).read_text(encoding="utf-8")
+        debug_print(f"Configuration file read succeeded path={config_path} bytes={len(content.encode('utf-8'))}")
         # Parsed as data rather than executed, so a config file picked up from the working directory cannot run code
         parsed_values = parse_config_content(content, str(config_path), retired_settings)
         selected_namespace.update(parsed_values)
+        if diagnostic_overrides is not None:
+            verbose_override, debug_override = diagnostic_overrides
+            if verbose_override:
+                selected_namespace["VERBOSE_MODE"] = True
+            if debug_override:
+                selected_namespace["DEBUG_MODE"] = True
         if loaded_names_out is not None:
             loaded_names_out.update(parsed_values)
         if retired_settings and report_errors:
             print(f"* Note: {describe_retired_settings(retired_settings, chr(39) + str(config_path) + chr(39))}")
+        debug_print(f"Configuration applied path={config_path} settings={len(parsed_values)} retired={len(retired_settings)}")
+        verbose_print(f"Loaded {len(parsed_values)} settings from the configuration file")
         return True
     except SyntaxError as exc:
         detail = f"Config file '{config_path}' has invalid Python syntax"
@@ -4453,6 +4792,7 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
         detail = f"Config file '{config_path}' contains unsupported content: {exc}"
     except Exception as exc:
         detail = f"Config file '{config_path}' failed with {type(exc).__name__}: {exc}"
+    debug_print(f"Configuration load failed path={config_path} detail={detail}")
     if report_errors:
         config_command = render_install_command(["--generate-config", "github_monitor.conf"])
         advice = make_recovery_advice("config.invalid", detail, f"Keep only documented SETTING = value lines with plain literal values or regenerate with: {config_command}", False, detail, CONFIG_GUIDE_URL)
@@ -4461,50 +4801,84 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
 
 
 # Loads the selected dotenv file then applies every exported secret independently of that file
-def load_startup_secrets(env_file=None):
-    global DOTENV_FILE
+def load_startup_secrets(env_file=None, configured_settings=None):
+    global DOTENV_FILE, SECRET_SOURCES
     if env_file is not None:
         DOTENV_FILE = os.path.expanduser(env_file)
     elif DOTENV_FILE:
         DOTENV_FILE = os.path.expanduser(DOTENV_FILE)
 
+    configured_names = set(configured_settings or ())
+    environment_values = {secret: os.environ[secret] for secret in SECRET_KEYS if secret in os.environ}
+    dotenv_keys = set()
     if DOTENV_FILE and DOTENV_FILE.casefold() == "none":
         env_path = None
+        debug_print("Dotenv loading disabled by configuration or command line")
     else:
         try:
-            from dotenv import load_dotenv, find_dotenv
+            from dotenv import dotenv_values, find_dotenv, load_dotenv
 
             if DOTENV_FILE:
                 env_path = DOTENV_FILE
                 if not os.path.isfile(env_path):
+                    debug_print(f"Dotenv file not found path={env_path}")
                     print(f"* Warning: dotenv file '{env_path}' does not exist\n")
                 else:
+                    debug_print(f"Reading dotenv file path={env_path}")
+                    dotenv_keys = {str(name) for name in dotenv_values(env_path) if name in SECRET_KEYS}
                     load_dotenv(env_path, override=False)
+                    debug_print(f"Dotenv file loaded path={env_path} secret_names={sorted(dotenv_keys)}")
             else:
                 env_path = find_dotenv() or None
                 if env_path:
+                    debug_print(f"Reading discovered dotenv file path={env_path}")
+                    dotenv_keys = {str(name) for name in dotenv_values(env_path) if name in SECRET_KEYS}
                     load_dotenv(env_path, override=False)
-        except ImportError:
+                    debug_print(f"Discovered dotenv file loaded path={env_path} secret_names={sorted(dotenv_keys)}")
+                else:
+                    debug_print("No dotenv file discovered")
+        except ImportError as exc:
+            debug_swallowed_exception("Dotenv dependency import", exc)
             env_path = DOTENV_FILE if DOTENV_FILE else None
             if env_path:
                 install_command = shlex.join([sys.executable, "-m", "pip", "install", "python-dotenv"])
                 print(f"* Warning: Cannot load dotenv file '{env_path}' because 'python-dotenv' is not installed\n\nTo install it, run:\n    {install_command}\n\nOnce installed, re-run this tool\n")
+        except Exception as exc:
+            env_path = DOTENV_FILE if DOTENV_FILE else None
+            verbose_degraded_feature("Dotenv loading", "dotenv-based private settings", exc)
+            advice = make_recovery_advice("file.unreadable", "The dotenv file could not be read", "Check DOTENV_FILE and its permissions or disable it with --env-file none", False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
+            print_recovery_advice(advice)
 
+    SECRET_SOURCES = {}
     for secret in SECRET_KEYS:
         value = os.getenv(secret)
         if value is not None:
             globals()[secret] = value
+        if secret in environment_values:
+            SECRET_SOURCES[secret] = "environment"
+        elif secret in dotenv_keys and value is not None:
+            SECRET_SOURCES[secret] = "dotenv file"
+        elif secret in configured_names and globals().get(secret):
+            SECRET_SOURCES[secret] = "configuration file"
+    if SECRET_SOURCES:
+        for secret, source in SECRET_SOURCES.items():
+            debug_print(f"Secret resolution name={secret} source={source}")
+        verbose_print("Resolved private settings from " + ", ".join(sorted(set(SECRET_SOURCES.values()))))
+    else:
+        debug_print("No private settings were resolved from config, dotenv or environment")
     return env_path
 
 
 # Applies startup CLI overrides before any check consumes effective configuration
 def apply_startup_cli_overrides(args, configured_settings=None):
-    global GITHUB_TOKEN, GITHUB_API_URL, CHECK_INTERNET_URL
+    global GITHUB_TOKEN, GITHUB_API_URL, CHECK_INTERNET_URL, SECRET_SOURCES
     configured_names = set(configured_settings or ())
     previous_api_url = GITHUB_API_URL
     connectivity_follows_api = "CHECK_INTERNET_URL" not in configured_names or CHECK_INTERNET_URL == previous_api_url
     if args.github_token is not None:
         GITHUB_TOKEN = args.github_token
+        SECRET_SOURCES["GITHUB_TOKEN"] = "command line"
+        debug_print("Secret resolution name=GITHUB_TOKEN source=command line")
     if args.github_url is not None:
         GITHUB_API_URL = args.github_url
     if connectivity_follows_api:
@@ -4537,8 +4911,15 @@ def resolve_secret_env_path(env_file=None, action_name="Private secret setup") -
 # Returns whether one dotenv file already assigns the requested key
 def dotenv_contains_key(path: Path, key: str) -> bool:
     if not path.exists():
+        debug_print(f"Dotenv key check skipped because file does not exist path={path} key={key}")
         return False
-    content = path.read_text(encoding="utf-8")
+    debug_print(f"Reading dotenv file for key check path={path} key={key}")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        debug_print(f"Dotenv key check read failed path={path} key={key} error={type(exc).__name__}: {exc}")
+        raise
+    debug_print(f"Dotenv key check read succeeded path={path} key={key}")
     return any(re.match(rf"^\s*{re.escape(key)}\s*=", line) for line in content.splitlines())
 
 
@@ -4546,7 +4927,12 @@ def dotenv_contains_key(path: Path, key: str) -> bool:
 def update_dotenv_value(path: Path, key: str, value: str) -> None:
     if not path.parent.is_dir():
         raise FileNotFoundError(f"Dotenv parent directory does not exist: {path.parent}")
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    debug_print(f"Reading private settings file before update path={path} key={key} exists={path.exists()}")
+    try:
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    except Exception as exc:
+        debug_print(f"Private settings file read failed path={path} key={key} error={type(exc).__name__}: {exc}")
+        raise
     encoded_value = value.replace("\\", "\\\\").replace('"', '\\"')
     assignment = f'{key}="{encoded_value}"'
     output_lines = []
@@ -4560,9 +4946,15 @@ def update_dotenv_value(path: Path, key: str, value: str) -> None:
         output_lines.append(line)
     if not replaced:
         output_lines.append(assignment)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as dotenv_file:
-        dotenv_file.write("\n".join(output_lines) + "\n")
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as dotenv_file:
+            dotenv_file.write("\n".join(output_lines) + "\n")
+    except Exception as exc:
+        debug_print(f"Private settings file update failed path={path} key={key} error={type(exc).__name__}: {exc}")
+        raise
+    debug_print(f"Private settings file update succeeded path={path} key={key} mode=0600")
+    verbose_print(f"Saved {key} in the private settings file")
 
 
 # Validates one GitHub token without exposing it in errors or output
@@ -4585,8 +4977,11 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
     headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {selected_token}", "User-Agent": f"GitHubMonitor/{VERSION}"}
     get_request = req.get if request_get is None else request_get
     try:
+        debug_http_request("GET", endpoint, "GitHub token validation", 10, headers=headers, token=selected_token)
         response = get_request(endpoint, headers=headers, timeout=10, allow_redirects=False)
-    except req.RequestException:
+        debug_http_response("GET", endpoint, "GitHub token validation", getattr(response, "status_code", "unknown"))
+    except req.RequestException as exc:
+        debug_print(f"GitHub token validation request failed error={type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError("Could not reach the configured GitHub API while validating the token and the dotenv file was not changed") from None
     status_code = getattr(response, "status_code", None)
     if status_code in (401, 403):
@@ -4595,7 +4990,8 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
         raise GitHubTokenConfigurationError(f"GitHub token validation returned HTTP {status_code} and the dotenv file was not changed")
     try:
         payload = response.json()
-    except Exception:
+    except Exception as exc:
+        debug_swallowed_exception("GitHub token validation response parsing", exc)
         payload = None
     login = payload.get("login") if isinstance(payload, dict) else None
     if not isinstance(login, str) or not login.strip():
@@ -4605,6 +5001,7 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
 
 # Validates and safely stores one privately entered GitHub token
 def run_set_github_token(env_file=None, api_url=None, interactive=None, input_func=None, getpass_func=None, config_path=None, install_context=None) -> str:
+    global DEBUG_MODE
     destination = resolve_secret_env_path(env_file, "--set-github-token")
     terminal_is_interactive = sys.stdin.isatty() if interactive is None else interactive
     if not terminal_is_interactive:
@@ -4619,15 +5016,20 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
             raise GitHubTokenConfigurationError("GITHUB_TOKEN replacement was cancelled and the dotenv file was not changed")
     print("* Create or review GitHub tokens at: https://github.com/settings/tokens")
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
+    previous_debug_mode = DEBUG_MODE
+    DEBUG_MODE = False
     try:
         token = hidden_prompt("Enter GitHub token privately: ").strip()
     except (EOFError, KeyboardInterrupt):
         raise GitHubTokenConfigurationError("GITHUB_TOKEN entry was cancelled and the dotenv file was not changed") from None
+    finally:
+        DEBUG_MODE = previous_debug_mode
     print("* Validating the entered GitHub token before changing the dotenv file ...")
     login = validate_github_token(token, api_url=api_url)
     try:
         update_dotenv_value(destination, "GITHUB_TOKEN", token)
-    except Exception:
+    except Exception as exc:
+        debug_print(f"Private settings file update failed path={destination} key=GITHUB_TOKEN error={type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError(f"Could not save GITHUB_TOKEN in '{destination}'. Check the path and file permissions") from None
     command = ["GITHUB_USERNAME"]
     if config_path:
@@ -4643,6 +5045,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
 
 # Checks and safely stores one privately entered webhook URL
 def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpass_func=None, config_path=None, install_context=None) -> str:
+    global DEBUG_MODE
     destination = resolve_secret_env_path(env_file, "--set-webhook-url")
     terminal_is_interactive = sys.stdin.isatty() if interactive is None else interactive
     if not terminal_is_interactive:
@@ -4656,10 +5059,14 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
         if not confirmed:
             raise ValueError("Webhook setup was cancelled and the dotenv file was not changed")
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
+    previous_debug_mode = DEBUG_MODE
+    DEBUG_MODE = False
     try:
         webhook_url = hidden_prompt("Paste the Discord or ntfy webhook URL (input hidden): ").strip()
     except (EOFError, KeyboardInterrupt):
         raise ValueError("Webhook setup was cancelled and the dotenv file was not changed") from None
+    finally:
+        DEBUG_MODE = previous_debug_mode
     if not validate_webhook_url(webhook_url):
         raise ValueError("That does not look like a complete HTTPS webhook URL and the dotenv file was not changed")
     update_dotenv_value(destination, "WEBHOOK_URL", webhook_url)
@@ -4694,9 +5101,13 @@ def is_blocked_by(user):
             "Accept": "application/vnd.github+json",
         }
 
-        response = req.get(f"{GITHUB_API_URL}/user", headers=headers, timeout=15)
+        user_endpoint = f"{GITHUB_API_URL}/user"
+        debug_http_request("GET", user_endpoint, "authenticated viewer lookup for block detection", 15, headers=headers, token=GITHUB_TOKEN)
+        response = req.get(user_endpoint, headers=headers, timeout=15)
+        debug_http_response("GET", user_endpoint, "authenticated viewer lookup for block detection", response.status_code)
         if response.status_code != 200:
-            return False
+            verbose_degraded_feature("Block status", "block and unblock alerts")
+            return None
         me_login = response.json().get("login", "").lower()
         if user.lower() == me_login:
             return False
@@ -4710,20 +5121,25 @@ def is_blocked_by(user):
         }
         """
         payload = {"query": query, "variables": {"login": user}}
+        debug_http_request("POST", graphql_endpoint, "target block relationship lookup", 15, headers=headers, token=GITHUB_TOKEN)
         response_graphql = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15)
+        debug_http_response("POST", graphql_endpoint, "target block relationship lookup", response_graphql.status_code)
 
         if response_graphql.status_code == 404:
-            return False
+            verbose_degraded_feature("Block status", "block and unblock alerts")
+            return None
 
         if not response_graphql.ok:
-            return False
+            verbose_degraded_feature("Block status", "block and unblock alerts")
+            return None
 
         data = response_graphql.json()
         can_follow = (data.get("data", {}).get("user", {}).get("viewerCanFollow", True))
         return not bool(can_follow)
 
-    except Exception:
-        return False
+    except Exception as exc:
+        verbose_degraded_feature("Block status", "block and unblock alerts", exc)
+        return None
 
 
 # Return the total number of repositories the user has starred (faster than via PyGithub)
@@ -4746,16 +5162,20 @@ def get_starred_count(user):
         }
         """
         payload = {"query": query, "variables": {"login": user}}
+        debug_http_request("POST", graphql_endpoint, "starred repository count", 15, headers=headers, token=GITHUB_TOKEN)
         response = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15)
+        debug_http_response("POST", graphql_endpoint, "starred repository count", response.status_code)
 
         if not response.ok:
+            verbose_degraded_feature("Starred repository count", "starred repository change alerts")
             return 0
 
         data = response.json()
 
         return (data.get("data", {}).get("user", {}).get("starredRepositories", {}).get("totalCount", 0))
 
-    except Exception:
+    except Exception as exc:
+        verbose_degraded_feature("Starred repository count", "starred repository change alerts", exc)
         return 0
 
 
@@ -4763,9 +5183,12 @@ def get_starred_count(user):
 def has_private_banner(user):
     try:
         url = f"{GITHUB_HTML_URL.rstrip('/')}/{user}"
+        debug_http_request("GET", url, "public profile visibility page", 15)
         r = req.get(url, timeout=15)
+        debug_http_response("GET", url, "public profile visibility page", r.status_code)
         return r.ok and "activity is private" in r.text.lower()
-    except Exception:
+    except Exception as exc:
+        verbose_degraded_feature("Profile visibility", "profile visibility alerts", exc)
         return False
 
 
@@ -4776,6 +5199,7 @@ def is_profile_public(g: Github, user, new_account_days=30):
         return False
 
     try:
+        debug_github_operation("public profile lookup", user)
         u = g.get_user(user)
 
         if any([
@@ -4786,14 +5210,17 @@ def is_profile_public(g: Github, user, new_account_days=30):
             return True
 
         try:
+            debug_print(f"PyGithub operation=recent public event probe endpoint={diagnostic_endpoint(GITHUB_API_URL)} timeout={PYGITHUB_TIMEOUT_SECONDS}s token={mask_secret(GITHUB_TOKEN)} target={user}")
             events_iter = iter(u.get_events())
             next(events_iter)
             return True
-        except (StopIteration, GithubException):
-            pass
+        except StopIteration as exc:
+            debug_swallowed_exception("Recent public event probe returned no events", exc)
+        except GithubException as exc:
+            verbose_degraded_feature("Public profile detection", "profile visibility alerts", exc)
 
-    except GithubException:
-        pass
+    except GithubException as exc:
+        verbose_degraded_feature("Public profile detection", "profile visibility alerts", exc)
 
     return False
 
@@ -4854,7 +5281,9 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
         }"""
 
         variables = {"login": username, "from": start_iso, "to": end_iso}
+        debug_http_request("POST", url, "daily contribution calendar", 30, headers=headers, token=token)
         r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30)
+        debug_http_response("POST", url, "daily contribution calendar", r.status_code)
         r.raise_for_status()
         data = r.json()
 
@@ -4895,7 +5324,8 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
                     date_obj = dt.date.fromisoformat(date_str)
                     if start <= date_obj <= end:
                         out[date_str] = d.get("contributionCount", 0)
-                except ValueError:
+                except ValueError as exc:
+                    debug_swallowed_exception("Contribution calendar date parsing", exc)
                     continue
 
         # Move to next chunk
@@ -4925,6 +5355,7 @@ def check_daily_contribs(username: str, token: str, state: dict, min_delta: int 
     except Exception as e:
         state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
         state["last_error"] = sanitize_error_text(f"{type(e).__name__}: {e}")
+        verbose_degraded_feature("Daily contribution count", "daily contribution change alerts", e)
         error_notify = state["consecutive_failures"] >= fail_threshold
         return False, state.get("count", 0), error_notify
 
@@ -4954,6 +5385,12 @@ def has_nullable_profile_field_changed(value, previous, unavailable):
     return value is not unavailable and value != previous
 
 
+# Reports one unavailable profile field whose change alert cannot be evaluated
+def report_unavailable_profile_field(label, value, unavailable):
+    if value is unavailable:
+        verbose_degraded_feature(f"Profile {label}", f"{label} change alerts")
+
+
 # Monitors activity of the specified GitHub user
 def github_monitor_user(user, csv_file_name):
 
@@ -4961,7 +5398,7 @@ def github_monitor_user(user, csv_file_name):
         if csv_file_name:
             init_csv_file(csv_file_name)
     except Exception as e:
-        print(f"* Error: {e}")
+        print(f"* Error: {sanitize_error_text(e)}")
 
     followers_count = 0
     followings_count = 0
@@ -4979,14 +5416,15 @@ def github_monitor_user(user, csv_file_name):
     print("Sneaking into GitHub like a ninja ...")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("monitor initialization")
         auth_refresh_version = GITHUB_AUTH_REFRESH_VERSION
+        debug_github_operation("authenticated viewer profile lookup")
         g_user_myself = g.get_user()
         user_myself_login = g_user_myself.login
         user_myself_name = g_user_myself.name
         user_myself_url = g_user_myself.html_url
 
+        debug_github_operation("monitored user profile lookup", user)
         g_user = g.get_user(user)
         user_login = g_user.login
         user_name = g_user.name
@@ -5002,16 +5440,21 @@ def github_monitor_user(user, csv_file_name):
         followers_count = g_user.followers
         followings_count = g_user.following
 
+        debug_github_operation("followers listing", user)
         followers_list = g_user.get_followers()
+        debug_github_operation("followings listing", user)
         followings_list = g_user.get_following()
 
         if GET_ALL_REPOS:
+            debug_github_operation("all repository listing", user)
             repos_list = g_user.get_repos()
             repos_count = g_user.public_repos
         else:
+            debug_github_operation("owned repository listing", user)
             repos_list = [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login]
             repos_count = len(repos_list)
 
+        debug_github_operation("starred repository listing", user)
         starred_list = g_user.get_starred()
         starred_count = starred_list.totalCount
 
@@ -5027,11 +5470,12 @@ def github_monitor_user(user, csv_file_name):
             }
 
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
+            debug_github_operation("recent event listing", user)
             events = list(islice(g_user.get_events(), EVENTS_NUMBER))
             available_events = len(events)
 
     except Exception as e:
-        print(f"\n* Error: {e}")
+        print(f"\n* Error: {sanitize_error_text(e)}")
         sys.exit(1)
 
     last_event_id = 0
@@ -5049,8 +5493,8 @@ def github_monitor_user(user, csv_file_name):
                 if last_event_id:
                     last_event_ts = newest.created_at
             except Exception as e:
-                print(f"\n* Cannot get event IDs / timestamps: {e}\n")
-                pass
+                verbose_degraded_feature("Initial event identifiers", "new event alerts", e)
+                print(f"\n* Cannot get event IDs / timestamps: {sanitize_error_text(e)}\n")
 
     followers_old_count = followers_count
     followings_old_count = followings_count
@@ -5144,7 +5588,8 @@ def github_monitor_user(user, csv_file_name):
         try:
             list_of_repos = github_process_repos(repos_list_filtered, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()))
         except Exception as e:
-            print(f"* Cannot process list of public repositories: {e}")
+            verbose_degraded_feature("Initial repository details", "repository detail alerts", e)
+            print(f"* Cannot process list of public repositories: {sanitize_error_text(e)}")
         print_cur_ts("\nTimestamp:\t\t\t")
 
     list_of_repos_old = list_of_repos
@@ -5158,7 +5603,8 @@ def github_monitor_user(user, csv_file_name):
             try:
                 github_print_event(events[0], g, True)
             except Exception as e:
-                print(f"\n* Warning: cannot fetch last event details: {e}")
+                verbose_degraded_feature("Initial event details", "complete event alerts", e)
+                print(f"\n* Warning: cannot fetch last event details: {sanitize_error_text(e)}")
 
         print_cur_ts("\nTimestamp:\t\t\t")
 
@@ -5173,32 +5619,39 @@ def github_monitor_user(user, csv_file_name):
         repos_old = [repo.name for repo in repos_list]
         starred_old = [star.full_name for star in starred_list]
     except Exception as e:
-        print(f"* Error: {e}")
+        print(f"* Error: {sanitize_error_text(e)}")
         sys.exit(1)
 
+    verbose_print(f"Initial snapshot completed for {user}")
+    debug_monitor_wait_timing("initial monitoring interval", GITHUB_CHECK_INTERVAL)
     time.sleep(GITHUB_CHECK_INTERVAL)
     alive_counter = 0
     email_sent = False
     profile_field_unavailable = object()
+    check_number = 0
 
     # Primary loop
     while True:
+        check_number += 1
+        check_started_at = debug_monitor_check_start(check_number, user)
 
         try:
             if auth_refresh_version != GITHUB_AUTH_REFRESH_VERSION:
-                auth = Auth.Token(GITHUB_TOKEN)
-                g = Github(base_url=GITHUB_API_URL, auth=auth)
+                g = create_github_client("monitor authentication reload")
+                debug_github_operation("authenticated viewer profile lookup after reload")
                 g_user_myself = g.get_user()
                 user_myself_login = g_user_myself.login
                 user_myself_name = g_user_myself.name
                 user_myself_url = g_user_myself.html_url
                 auth_refresh_version = GITHUB_AUTH_REFRESH_VERSION
                 print("* GitHub API client recreated after token reload")
+            debug_github_operation("monitored user profile refresh", user)
             g_user = g.get_user(user)
             email_sent = False
 
         except (GithubException, Exception) as e:
             safe_error = sanitize_error_text(e)
+            verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
             print(f"* Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)}: {safe_error}")
 
             should_notify = False
@@ -5228,15 +5681,18 @@ def github_monitor_user(user, csv_file_name):
                 email_sent = True
 
             print_cur_ts("Timestamp:\t\t\t")
+            debug_monitor_wait_timing("monitored user refresh failure", GITHUB_CHECK_INTERVAL)
             time.sleep(GITHUB_CHECK_INTERVAL)
             continue
 
         # Changed followings
         try:
+            debug_github_operation("followings refresh", user)
             followings_raw = list(gh_call(g_user.get_following)())
             followings_count = gh_call(lambda: g_user.following)()  # noqa: B023
         except NET_ERRORS as e:
-            print(f"* Error while fetching followings: {e}")
+            verbose_degraded_feature("Followings", "following change alerts", e)
+            print(f"* Error while fetching followings: {sanitize_error_text(e)}")
             print_cur_ts("Timestamp:\t\t\t")
             followings_raw = None
             followings_count = None
@@ -5246,10 +5702,12 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed followers
         try:
+            debug_github_operation("followers refresh", user)
             followers_raw = list(gh_call(g_user.get_followers)())
             followers_count = gh_call(lambda: g_user.followers)()  # noqa: B023
         except NET_ERRORS as e:
-            print(f"* Error while fetching followers: {e}")
+            verbose_degraded_feature("Followers", "follower change alerts", e)
+            print(f"* Error while fetching followers: {sanitize_error_text(e)}")
             print_cur_ts("Timestamp:\t\t\t")
             followers_raw = None
             followers_count = None
@@ -5260,13 +5718,16 @@ def github_monitor_user(user, csv_file_name):
         # Changed public repositories
         try:
             if GET_ALL_REPOS:
+                debug_github_operation("all repository refresh", user)
                 repos_raw = list(gh_call(g_user.get_repos)())
                 repos_count = gh_call(lambda: g_user.public_repos)()  # noqa: B023
             else:
+                debug_github_operation("owned repository refresh", user)
                 repos_raw = list(gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])())  # noqa: B023
                 repos_count = len(repos_raw)
         except NET_ERRORS as e:
-            print(f"* Error while fetching repositories: {e}")
+            verbose_degraded_feature("Repositories", "repository change alerts", e)
+            print(f"* Error while fetching repositories: {sanitize_error_text(e)}")
             print_cur_ts("Timestamp:\t\t\t")
             repos_raw = None
             repos_count = None
@@ -5276,6 +5737,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed starred repositories
         try:
+            debug_github_operation("starred repository refresh", user)
             starred_raw = gh_call(g_user.get_starred)()
             if starred_raw is not None:
                 starred_list = list(starred_raw)
@@ -5284,7 +5746,8 @@ def github_monitor_user(user, csv_file_name):
                 starred_list = None
                 starred_count = None
         except NET_ERRORS as e:
-            print(f"* Error while fetching starred repositories: {e}")
+            verbose_degraded_feature("Starred repositories", "starred repository change alerts", e)
+            print(f"* Error while fetching starred repositories: {sanitize_error_text(e)}")
             print_cur_ts("Timestamp:\t\t\t")
             starred_list = None
             starred_count = None
@@ -5316,7 +5779,7 @@ def github_monitor_user(user, csv_file_name):
                     if csv_file_name:
                         write_csv_entry(csv_file_name, now_local_naive(), "Daily Contribs", user, contrib_old, contrib_curr)
                 except Exception as e:
-                    print(f"* Error: {e}")
+                    print(f"* Error: {sanitize_error_text(e)}")
 
                 m_subject = f"GitHub user {user} daily contributions changed from {contrib_old} to {contrib_curr}!"
                 m_body = (f"GitHub user {user} daily contributions changed on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
@@ -5334,6 +5797,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed bio
         bio = gh_call(lambda: g_user.bio, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("bio", bio, profile_field_unavailable)
         if has_nullable_profile_field_changed(bio, bio_old, profile_field_unavailable):
             print(f"* Bio has changed for user {user} !\n")
             print(f"Old bio:\n\n{bio_old}\n")
@@ -5343,7 +5807,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Bio", user, bio_old, bio)
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
 
             m_subject = f"GitHub user {user} bio has changed!"
             m_body = f"GitHub user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5366,6 +5830,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed location
         location = gh_call(lambda: g_user.location, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("location", location, profile_field_unavailable)
         if has_nullable_profile_field_changed(location, location_old, profile_field_unavailable):
             print(f"* Location has changed for user {user} !\n")
             print(f"Old location:\t\t\t{location_old}\n")
@@ -5375,7 +5840,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Location", user, location_old, location)
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
 
             m_subject = f"GitHub user {user} location has changed!"
             m_body = f"GitHub user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5396,6 +5861,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed user name
         user_name = gh_call(lambda: g_user.name, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("name", user_name, profile_field_unavailable)
         if has_nullable_profile_field_changed(user_name, user_name_old, profile_field_unavailable):
             print(f"* User name has changed for user {user} !\n")
             print(f"Old user name:\t\t\t{user_name_old}\n")
@@ -5405,7 +5871,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "User Name", user, user_name_old, user_name)
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
 
             m_subject = f"GitHub user {user} name has changed!"
             m_body = f"GitHub user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5426,6 +5892,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed company
         company = gh_call(lambda: g_user.company, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("company", company, profile_field_unavailable)
         if has_nullable_profile_field_changed(company, company_old, profile_field_unavailable):
             print(f"* User company has changed for user {user} !\n")
             print(f"Old company:\t\t\t{company_old}\n")
@@ -5435,7 +5902,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Company", user, company_old, company)
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
 
             m_subject = f"GitHub user {user} company has changed!"
             m_body = f"GitHub user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5456,6 +5923,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed email
         email = gh_call(lambda: g_user.email, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("email", email, profile_field_unavailable)
         if has_nullable_profile_field_changed(email, email_old, profile_field_unavailable):
             print(f"* User email has changed for user {user} !\n")
             print(f"Old email:\t\t\t{email_old}\n")
@@ -5465,7 +5933,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Email", user, email_old, email)
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
 
             m_subject = f"GitHub user {user} email has changed!"
             m_body = f"GitHub user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5486,6 +5954,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed blog URL
         blog = gh_call(lambda: g_user.blog, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("blog URL", blog, profile_field_unavailable)
         if has_nullable_profile_field_changed(blog, blog_old, profile_field_unavailable):
             print(f"* User blog URL has changed for user {user} !\n")
             print(f"Old blog URL:\t\t\t{blog_old}\n")
@@ -5495,7 +5964,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Blog URL", user, blog_old, blog)
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
 
             m_subject = f"GitHub user {user} blog URL has changed!"
             m_body = f"GitHub user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5517,7 +5986,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, convert_to_local_naive(account_updated_date), "Account Update Date", user, convert_to_local_naive(account_updated_date_old), convert_to_local_naive(account_updated_date))
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
 
             m_subject = f"GitHub user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
             m_body = f"GitHub user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5541,7 +6010,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Profile Visibility", user, _get_profile_status(public_old), _get_profile_status(public))
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
 
             m_subject = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !"
             m_body = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5569,7 +6038,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Block Status", user, _get_blocked_status(blocked_old, public), _get_blocked_status(blocked, public))
             except Exception as e:
-                print(f"* Error: {e}")
+                print(f"* Error: {sanitize_error_text(e)}")
 
             m_subject = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!"
             m_body = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5588,6 +6057,7 @@ def github_monitor_user(user, csv_file_name):
             if GET_ALL_REPOS:
                 repos_list = gh_call(g_user.get_repos)()
             else:
+                debug_github_operation("owned repository detail refresh", user)
                 repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])()  # noqa: B023
 
             # Filter repos for detailed monitoring only (keep full repos_list for profile change detection)
@@ -5618,7 +6088,8 @@ def github_monitor_user(user, csv_file_name):
                     list_of_repos_ok = True
                 except Exception as e:
                     list_of_repos = list_of_repos_old
-                    print(f"* Cannot process list of public repositories, keeping old list: {e}")
+                    verbose_degraded_feature("Repository detail refresh", "repository detail alerts", e)
+                    print(f"* Cannot process list of public repositories, keeping old list: {sanitize_error_text(e)}")
                     list_of_repos_ok = False
 
                 if list_of_repos_ok:
@@ -5667,7 +6138,7 @@ def github_monitor_user(user, csv_file_name):
                                         if csv_file_name:
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Update Date", r_name, convert_to_local_naive(r_update_old), convert_to_local_naive(r_update))
                                     except Exception as e:
-                                        print(f"* Error: {e}")
+                                        print(f"* Error: {sanitize_error_text(e)}")
                                     m_subject = f"GitHub user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     timespan_str = calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)
@@ -5703,6 +6174,7 @@ def github_monitor_user(user, csv_file_name):
                                 if r_discussions is not None and r_discussions_old is not None:
                                     check_repo_list_changes(r_discussions_old, r_discussions, r_discussions_list_old, r_discussions_list, "Discussions", r_name, r_url, user, csv_file_name)
                                 elif r_discussions is None:
+                                    verbose_degraded_feature(f"Discussions for {r_name}", "discussion change alerts")
                                     repo["discussions"] = r_discussions_old
                                     repo["discussions_list"] = r_discussions_list_old
 
@@ -5714,7 +6186,7 @@ def github_monitor_user(user, csv_file_name):
                                         if csv_file_name:
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Description", r_name, r_descr_old, r_descr)
                                     except Exception as e:
-                                        print(f"* Error: {e}")
+                                        print(f"* Error: {sanitize_error_text(e)}")
                                     m_subject = f"GitHub user {user} repo '{r_name}' description has changed !"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     r_descr_old_html = markdown_to_html(r_descr_old, convert_line_breaks=True) if r_descr_old else ""
@@ -5737,6 +6209,7 @@ def github_monitor_user(user, csv_file_name):
 
         # New GitHub events
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
+            debug_github_operation("recent event refresh", user)
             events = list(gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)))())  # noqa: B023
             if events is not None:
                 available_events = len(events)
@@ -5752,7 +6225,8 @@ def github_monitor_user(user, csv_file_name):
                     except Exception as e:
                         last_event_id = 0
                         last_event_ts = None
-                        print(f"* Cannot get last event ID / timestamp: {e}")
+                        verbose_degraded_feature("Newest event identifiers", "new event alerts", e)
+                        print(f"* Cannot get last event ID / timestamp: {sanitize_error_text(e)}")
                         print_cur_ts("Timestamp:\t\t\t")
 
                 events_list_of_ids = set()
@@ -5778,7 +6252,8 @@ def github_monitor_user(user, csv_file_name):
                             try:
                                 event_date, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
                             except Exception as e:
-                                print(f"\n* Warning, cannot fetch all event details: {e}")
+                                verbose_degraded_feature("New event details", "complete event alerts", e)
+                                print(f"\n* Warning, cannot fetch all event details: {sanitize_error_text(e)}")
 
                             first_new = False
 
@@ -5788,7 +6263,7 @@ def github_monitor_user(user, csv_file_name):
                                     if csv_file_name:
                                         write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                                 except Exception as e:
-                                    print(f"* Error: {e}")
+                                    print(f"* Error: {sanitize_error_text(e)}")
 
                                 m_subject = f"GitHub user {user} has new {event.type} (repo: {repo_name})"
                                 m_body = f"GitHub user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5796,8 +6271,8 @@ def github_monitor_user(user, csv_file_name):
                                 try:
                                     if hasattr(event, 'payload'):
                                         event_payload = event.payload
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    verbose_degraded_feature("Event payload", "complete event notification details", exc)
                                 event_text_html = event_text_to_html(event_text, event.type, event_payload)
                                 m_body_html = (
                                     f"<html><head></head><body>"
@@ -5815,6 +6290,8 @@ def github_monitor_user(user, csv_file_name):
                     last_event_id_old = last_event_id
                     last_event_ts_old = last_event_ts
                     events_list_of_ids_old = events_list_of_ids.copy()
+            else:
+                verbose_degraded_feature("Recent events", "new event alerts")
 
         alive_counter += 1
 
@@ -5822,12 +6299,15 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Liveness check, timestamp:\t")
             alive_counter = 0
 
+        verbose_print(f"Monitoring check #{check_number} completed for {user}")
+        debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL)
+        debug_monitor_wait_timing("normal monitoring interval", GITHUB_CHECK_INTERVAL)
         time.sleep(GITHUB_CHECK_INTERVAL)
 
 
 # Applies validated one-run webhook command-line overrides to runtime settings
 def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    global WEBHOOK_ENABLED, WEBHOOK_URL, WEBHOOK_PROVIDER, WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_ERROR_NOTIFICATION
+    global WEBHOOK_ENABLED, WEBHOOK_URL, WEBHOOK_PROVIDER, WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_ERROR_NOTIFICATION, SECRET_SOURCES
     if args.webhook_provider is not None:
         WEBHOOK_PROVIDER = str(args.webhook_provider)
     if args.webhook_url is not None:
@@ -5835,6 +6315,8 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
             parser.error("--webhook-url must contain a complete HTTPS link without embedded credentials")
         WEBHOOK_URL = str(args.webhook_url).strip()
         WEBHOOK_ENABLED = True
+        SECRET_SOURCES["WEBHOOK_URL"] = "command line"
+        debug_print("Secret resolution name=WEBHOOK_URL source=command line")
     if args.webhook_enabled is not None:
         WEBHOOK_ENABLED = args.webhook_enabled
     if args.webhook_profile is True:
@@ -5861,12 +6343,18 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
         configured_provider = normalized_webhook_provider()
         if detected_provider and detected_provider != configured_provider:
             WEBHOOK_PROVIDER = detected_provider
+            verbose_print(f"Selected webhook provider {detected_provider} from the destination URL")
             print(f"* Warning: Configured webhook provider did not match the URL. Using {detected_provider}.")
 
 
 # Parses command-line settings and starts the requested GitHub Monitor action
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
+    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE
+
+    if "--verbose" in sys.argv:
+        VERBOSE_MODE = True
+    if "--debug" in sys.argv:
+        DEBUG_MODE = True
 
     if "--generate-config" in sys.argv:
         config_content = CONFIG_BLOCK.strip("\n") + "\n"
@@ -5876,12 +6364,19 @@ def main():
             if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
                 # Write directly to file to avoid PowerShell UTF-16 redirection issues
                 output_file = sys.argv[idx + 1]
+                debug_print(f"Opening generated configuration for write path={output_file}")
                 with open(output_file, "w", encoding="utf-8") as f:
                     f.write(config_content)
+                debug_print(f"Generated configuration write succeeded path={output_file} bytes={len(config_content.encode('utf-8'))}")
                 print(f"Config written to: {output_file}")
                 sys.exit(0)
-        except (ValueError, IndexError):
-            pass
+        except (ValueError, IndexError) as exc:
+            debug_swallowed_exception("Generated configuration argument resolution", exc)
+        except OSError as exc:
+            debug_print(f"Generated configuration write failed path={locals().get('output_file', '<unknown>')} error={type(exc).__name__}: {exc}")
+            advice = make_recovery_advice("file.unwritable", "The generated configuration could not be written", "Check the destination path and file permissions", False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
+            print_recovery_advice(advice)
+            sys.exit(1)
         # No filename provided so write to stdout buffer as UTF-8
         sys.stdout.buffer.write(config_content.encode("utf-8"))
         sys.stdout.buffer.flush()
@@ -6204,14 +6699,14 @@ def main():
         dest="verbose",
         action="store_true",
         default=None,
-        help="Show recovery codes and whether a failure is retryable"
+        help="Show user-facing decisions, degraded features and the complete startup summary"
     )
     opts.add_argument(
         "--debug",
         dest="debug",
         action="store_true",
         default=None,
-        help="Show sanitized technical detail for recovery errors"
+        help="Show sanitized operations, requests, files, retries and monitoring timing"
     )
     opts.add_argument(
         "--repos",
@@ -6245,14 +6740,18 @@ def main():
         sys.exit(1)
 
     if cfg_path:
-        if not load_config_file(cfg_path, loaded_names_out=configured_settings):
+        if not load_config_file(cfg_path, loaded_names_out=configured_settings, diagnostic_overrides=(args.verbose is True, args.debug is True)):
             sys.exit(1)
 
     apply_diagnostic_cli_overrides(args)
-    env_path = load_startup_secrets(args.env_file)
+    env_path = load_startup_secrets(args.env_file, configured_settings)
     apply_startup_cli_overrides(args, configured_settings)
 
-    clear_screen(CLEAR_SCREEN)
+    if CLEAR_SCREEN and (VERBOSE_MODE or DEBUG_MODE):
+        verbose_print("Terminal clearing was skipped so diagnostic output remains visible")
+        debug_print("Terminal screen clear skipped because diagnostic mode is active")
+    else:
+        clear_screen(CLEAR_SCREEN)
     print(f"GitHub Monitoring Tool v{VERSION}\n")
 
     if args.set_github_token:
@@ -6278,8 +6777,8 @@ def main():
         if get_localzone is not None:
             try:
                 local_tz = get_localzone()
-            except Exception:
-                pass
+            except Exception as exc:
+                debug_swallowed_exception("Local timezone detection", exc)
         if local_tz:
             LOCAL_TIMEZONE = str(local_tz)
         else:
@@ -6366,9 +6865,12 @@ def main():
 
     if CSV_FILE:
         try:
+            debug_print(f"Opening CSV output for startup write check path={CSV_FILE}")
             with open(CSV_FILE, 'a', newline='', buffering=1, encoding="utf-8") as _:
                 pass
+            debug_print(f"CSV startup write check succeeded path={CSV_FILE}")
         except Exception as e:
+            debug_print(f"CSV startup write check failed path={CSV_FILE} error={type(e).__name__}: {e}")
             advice = classify_recovery_error(e, "file")
             if advice.code == "unknown":
                 advice = make_recovery_advice("file.unwritable", "The CSV file cannot be opened for writing", "Check CSV_FILE and its parent directory permissions", False, f"{type(e).__name__}: {e}", CONFIG_GUIDE_URL)
@@ -6405,9 +6907,16 @@ def main():
         else:
             if log_path.suffix == "":
                 log_path = Path(f"{log_path.name}_{args.username}.log")
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        FINAL_LOG_PATH = str(log_path)
-        sys.stdout = Logger(FINAL_LOG_PATH)
+        try:
+            debug_print(f"Ensuring output log directory exists path={log_path.parent}")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            debug_print(f"Output log directory ready path={log_path.parent}")
+            FINAL_LOG_PATH = str(log_path)
+            sys.stdout = Logger(FINAL_LOG_PATH)
+        except Exception as e:
+            advice = make_recovery_advice("file.unwritable", "The output log could not be opened", "Check GITHUB_LOGFILE and its parent directory permissions or use --disable-logging", False, f"{type(e).__name__}: {e}", CONFIG_GUIDE_URL)
+            print_recovery_advice(advice)
+            sys.exit(1)
     else:
         FINAL_LOG_PATH = None
 
@@ -6467,26 +6976,8 @@ def main():
         CONTRIB_NOTIFICATION = False
         ERROR_NOTIFICATION = False
 
-    print(f"* GitHub polling interval:\t[ {display_time(GITHUB_CHECK_INTERVAL)} ]")
-    for notification_summary_line in _startup_notification_summary_lines():
-        print(notification_summary_line)
-    print(f"* GitHub API URL:\t\t{GITHUB_API_URL}")
-    print(f"* Track repos changes:\t\t{TRACK_REPOS_CHANGES}")
-    print(f"* Track contrib changes:\t{TRACK_CONTRIB_CHANGES}")
-    print(f"* Monitor GitHub events:\t{not DO_NOT_MONITOR_GITHUB_EVENTS}")
-    print(f"* Get owned repos only:\t\t{not GET_ALL_REPOS}")
-    print(f"* Liveness check:\t\t{bool(LIVENESS_CHECK_INTERVAL)}" + (f" ({display_time(LIVENESS_CHECK_INTERVAL)})" if LIVENESS_CHECK_INTERVAL else ""))
-    print(f"* CSV logging enabled:\t\t{bool(CSV_FILE)}" + (f" ({CSV_FILE})" if CSV_FILE else ""))
-    print(f"* Output logging enabled:\t{not DISABLE_LOGGING}" + (f" ({FINAL_LOG_PATH})" if not DISABLE_LOGGING else ""))
-    print(f"* ASCII log separators:\t\t{ascii_log_separators_enabled()} (mode: {ASCII_LOG_SEPARATORS})")
-    print(f"* Configuration file:\t\t{cfg_path}")
-    print(f"* Dotenv file:\t\t\t{env_path or 'None'}")
-    print(f"* Local timezone:\t\t{LOCAL_TIMEZONE}")
-    if VERBOSE_MODE or DEBUG_MODE:
-        install_context = detect_install_context()
-        print(f"* Install method:\t\t{install_context.install_method}")
-        print(f"* Verbose mode:\t\t{VERBOSE_MODE}")
-        print(f"* Debug mode:\t\t\t{DEBUG_MODE}")
+    startup_rows = build_startup_summary(args.username, cfg_path, env_path, FINAL_LOG_PATH)
+    emit_startup_summary(startup_rows, show_full=bool(VERBOSE_MODE or DEBUG_MODE))
 
     out = f"\nMonitoring GitHub user {args.username}"
     print(out)

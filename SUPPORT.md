@@ -14,7 +14,7 @@ github_monitor --send-test-webhook
 
 Most reports come down to an expired or under-scoped GitHub token, an SMTP server that rejects the message or a webhook URL the provider no longer accepts. The test commands above tell those apart before anything else.
 
-When an error includes a recovery code, include that code in the report. Re-run the failing command with `--debug` when more context is needed. Technical detail is sanitized but you should still review copied output before posting it publicly.
+When an error includes a recovery code, include that code in the report. Re-run the failing command with `--verbose` to show decisions and unavailable alerts. Use `--debug` when the report also needs request, delivery, file, retry or poll timing details. Technical detail is sanitized but you should still review copied output before posting it publicly.
 
 ## Where to ask
 

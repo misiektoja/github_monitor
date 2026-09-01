@@ -30,7 +30,7 @@ body:
     id: logs
     attributes:
       label: Relevant log output
-      description: The lines around the failure or sanitized output from repeating the command with `--debug`. The tool writes a log file unless you pass `--disable-logging`.
+      description: The lines around the failure. Repeat with `--verbose` for decisions and unavailable alerts or `--debug` for sanitized operations, delivery, files, retries and timing. The tool writes a log file unless you pass `--disable-logging`.
       render: shell
     validations:
       required: false

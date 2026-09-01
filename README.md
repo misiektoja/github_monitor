@@ -714,19 +714,29 @@ To fix: The next action to take
 Guide: A relevant documentation link
 ```
 
-Run with `--verbose` to include a stable recovery code and whether retrying can help:
+Verbose mode answers "what did the tool decide?" It expands the startup summary, includes stable recovery codes and states when missing data prevents a specific alert from firing during the current check:
 
 ```sh
 github_monitor <github_username> --verbose
 ```
 
-Run with `--debug` to include sanitized technical detail:
+Debug mode answers "what did the tool do?" Every line is timestamped. It includes sanitized technical detail plus the endpoint, timeout, masked credential, response status, retry decision, file path and monitoring timing used by the relevant operation:
 
 ```sh
 github_monitor <github_username> --debug
 ```
 
-`VERBOSE_MODE` and `DEBUG_MODE` provide the same controls in the configuration file. An explicit command-line flag takes precedence even when the selected config disables that mode. Debug output redacts loaded secrets plus common GitHub token, authorization and Discord webhook shapes before printing or logging them.
+The modes cover the full runtime path:
+
+* Direct HTTP, PyGithub and SMTP operations report their destination and timeout. Credentials are masked inside the printer.
+* Exceptions that would otherwise be swallowed name the failed operation and exception type in debug output.
+* Degraded profile, repository, contribution and event checks state which alert cannot fire in verbose output.
+* Email and webhook deliveries report the attempt, response, retryability, wait and confirmed outcome.
+* Config, dotenv, CSV, log and private-setting file operations report both success and failure branches.
+* Retries and monitoring sleeps report their reason, interval and next timestamp.
+* Config loading reports its file and applied setting count. Private-setting resolution reports each setting name and source without printing its value.
+
+`VERBOSE_MODE` and `DEBUG_MODE` provide the same controls in the configuration file. An explicit command-line flag takes precedence even when the selected config disables that mode, including while the config is being loaded. Diagnostic runs keep the terminal history visible instead of clearing it. Both printers sanitize internally so loaded secrets plus common GitHub token, authorization and Discord webhook shapes are redacted before terminal or log output.
 
 Recovery codes are stable identifiers such as `config.invalid`, `auth.github_token_invalid`, `network.timeout`, `github.rate_limited` and `file.unwritable`. Include the code when asking for help. Commands printed after setup or inside recovery guidance automatically match a PyPI install or standalone script invocation with platform-correct quoting.
 
