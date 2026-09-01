@@ -844,7 +844,8 @@ _LABEL_STYLES = (
 _FROM_TO_COUNT_RE = re.compile(r"(from\s+)(\d+)(\s+to\s+)(\d+)")
 _DIFF_COUNT_UP_RE = re.compile(r"(\(\+\d+\))")
 _DIFF_COUNT_DOWN_RE = re.compile(r"(\(-\d+\))")
-_USER_TAG_RE = re.compile(r"((?:GitHub user|for user|by user|of user|Monitoring GitHub user):?)([\t ]+)([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))")
+# The separator is a space in prose and an equals sign in the key=value diagnostic fields
+_USER_TAG_RE = re.compile(r"((?:GitHub user|for user|by user|of user|Monitoring GitHub user|\buser):?)([\t ]+|=)([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))")
 _QUOTED_CONTEXT_RE = re.compile(r"\b(repo|user)\s+$", re.IGNORECASE)
 _DURATION_RE = re.compile(r"~?\b[0-9]{1,20}[ \t]{1,20}(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b", re.IGNORECASE)
 _LONG_DATE_RE = re.compile(r"\b(?:\w{3}\s+)?\d{1,2}\s+\w{3}(?:\s+\d{2,4})?[\s,]*\d{2}:\d{2}(:\d{2})?(\s*[AP]M)?\b", re.IGNORECASE)
@@ -2704,7 +2705,8 @@ def format_diagnostic_line(operation, fields):
 def debug_print(_operation, **fields):
     if DEBUG_MODE:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[DEBUG {timestamp}] {sanitize_error_text(format_diagnostic_line(_operation, fields))}")
+        message = format_diagnostic_line(_operation, fields)
+        print(f"[DEBUG {timestamp}] {sanitize_error_text(message)}")
 
 
 # Redacts credential-bearing request headers before diagnostic output
