@@ -78,7 +78,7 @@ def test_debug_transcript_covers_outbound_call_and_response(gm_module, monkeypat
     assert gm_module.validate_github_token(token, api_url="https://api.example.test", request_get=request_get) == "octocat"
 
     output = capsys.readouterr().out
-    assert "HTTP GET https://api.example.test/user" in output
+    assert "HTTP GET: url=https://api.example.test/user" in output
     assert "operation=GitHub token validation" in output
     assert "timeout=10s" in output
     assert "status=200" in output
@@ -98,7 +98,7 @@ def test_swallowed_exception_reports_degraded_feature(gm_module, monkeypatch, ca
 
     output = capsys.readouterr().out
     assert "Block status is unavailable, so block and unblock alerts cannot fire this cycle" in output
-    assert "Block status degraded: ConnectionError" in output
+    assert "Block status: outcome=degraded, error=ConnectionError" in output
     assert token not in output
 
 
@@ -114,11 +114,11 @@ def test_delivery_transcript_covers_retry_and_outcome(gm_module, monkeypatch, ca
     assert gm_module.send_webhook("Title", "Body", "profile", sleeper=sleeps.append) == 0
 
     output = capsys.readouterr().out
-    assert "channel=discord host=https://discord.com attempt=1/2 timeout=10s" in output
-    assert "attempt=1/2 status=503 retryable=True" in output
+    assert "channel=discord, host=https://discord.com, attempt=1/2, timeout=10s" in output
+    assert "attempt=1/2, status=503, retryable=True" in output
     assert "reason=webhook HTTP 503 retry attempt 2/2" in output
-    assert "attempt=2/2 status=204 retryable=False" in output
-    assert "outcome=success attempt=2/2" in output
+    assert "attempt=2/2, status=204, retryable=False" in output
+    assert "outcome=OK, attempt=2/2" in output
     assert "Webhook delivery through discord succeeded" in output
     assert "private-diagnostic-token" not in output
     assert sleeps == [gm_module.WEBHOOK_FALLBACK_RETRY_SECONDS]
@@ -136,8 +136,8 @@ def test_file_transcript_covers_success_and_failure(gm_module, monkeypatch, caps
         gm_module.update_dotenv_value(Path(directory.name), "GITHUB_TOKEN", "private-file-value")
 
     output = capsys.readouterr().out
-    assert f"Private settings file update succeeded path={destination}" in output
-    assert f"Private settings file read failed path={directory.name}" in output
+    assert f"Private settings file update succeeded: path={destination}" in output
+    assert f"Private settings file read failed: path={directory.name}" in output
     assert "IsADirectoryError" in output
     assert "private-file-value" not in output
 
@@ -153,10 +153,10 @@ def test_monitor_timing_transcript_covers_poll_and_sleep(gm_module, monkeypatch,
     gm_module.debug_monitor_wait_timing("normal monitoring interval", 60)
 
     output = capsys.readouterr().out
-    assert "Starting monitoring check #7 for octocat" in output
-    assert "Completed monitoring check #7 for octocat duration=2.500s" in output
+    assert "Starting monitoring check: check=#7, user=octocat" in output
+    assert "Completed monitoring check: check=#7, user=octocat, duration=2.500s" in output
     assert "interval=1 minute" in output
-    assert "Waiting 1 minute reason=normal monitoring interval" in output
+    assert "Waiting: interval=1 minute, reason=normal monitoring interval" in output
     assert "next=" in output
 
 
@@ -181,12 +181,12 @@ def test_config_and_secret_resolution_transcript(gm_module, monkeypatch, capsys,
     assert gm_module.load_startup_secrets(str(dotenv), loaded) == str(dotenv)
 
     output = capsys.readouterr().out
-    assert f"Reading configuration file path={config}" in output
+    assert f"Reading configuration file: path={config}" in output
     assert "Configuration applied" in output and "settings=2" in output
-    assert f"Reading dotenv file path={dotenv}" in output
-    assert "Secret resolution name=GITHUB_TOKEN source=dotenv file" in output
-    assert "Secret resolution name=SMTP_PASSWORD source=configuration file" in output
-    assert "Secret resolution name=NTFY_ACCESS_TOKEN source=environment" in output
+    assert f"Reading dotenv file: path={dotenv}" in output
+    assert "Secret resolution: name=GITHUB_TOKEN, source=dotenv file" in output
+    assert "Secret resolution: name=SMTP_PASSWORD, source=configuration file" in output
+    assert "Secret resolution: name=NTFY_ACCESS_TOKEN, source=environment" in output
     assert "Loaded 2 settings from the configuration file" in output
     for secret in ("config-private-value", "dotenv-private-token", "private-diagnostic-topic", "environment-private-token"):
         assert secret not in output
@@ -254,9 +254,9 @@ def test_broken_target_transcript_exercises_real_cli_path(gm_module, monkeypatch
     assert "Recovery code: target.not_found" in output
     assert "github_pat_broken_target_secret" not in output
     if mode == "--debug":
-        assert "HTTP GET https://api.example.test operation=startup connectivity timeout=4s" in output
-        assert "PyGithub client operation=repository listing endpoint=https://api.example.test timeout=15s token=" in output
-        assert "PyGithub operation=user profile lookup" in output
+        assert "HTTP GET: url=https://api.example.test, operation=startup connectivity, timeout=4s" in output
+        assert "PyGithub client: operation=repository listing, endpoint=https://api.example.test, timeout=15s, token=" in output
+        assert "PyGithub: operation=user profile lookup" in output
         assert "Technical detail:" in output
     else:
         assert "Loaded 9 settings from the configuration file" in output

@@ -1163,13 +1163,13 @@ class Logger(object):
     # Opens one line-buffered UTF-8 log while preserving the real terminal stream
     def __init__(self, filename):
         self.terminal = unwrap_terminal_stream(sys.stdout)
-        debug_print(f"Opening output log for append path={filename}")
+        debug_print("Opening output log for append", path=filename)
         try:
             self.logfile = open(filename, "a", buffering=1, encoding="utf-8")
         except Exception as exc:
-            debug_print(f"Opening output log failed path={filename} error={type(exc).__name__}: {exc}")
+            debug_print("Opening output log failed", path=filename, error=f"{type(exc).__name__}: {exc}")
             raise
-        debug_print(f"Output log opened path={filename}")
+        debug_print("Output log opened", path=filename)
 
     # Writes sanitized output to both the terminal and log
     def write(self, message):
@@ -2588,22 +2588,22 @@ def smtp_quit_quietly(smtp_object):
     try:
         smtp_object.quit()
     except Exception as quit_error:
-        debug_print(f"SMTP quit failed and was ignored error={type(quit_error).__name__}: {quit_error}")
+        debug_print("SMTP quit failed and was ignored", error=f"{type(quit_error).__name__}: {quit_error}")
 
 
 # Opens one authenticated SMTP session and leaves closing it to the caller
 def smtp_connect_and_login(use_ssl, smtp_timeout=15):
-    debug_print(f"SMTP delivery attempt=1/1 host={SMTP_HOST} port={SMTP_PORT} timeout={smtp_timeout}s tls={bool(use_ssl)} user={mask_secret(SMTP_USER)} password={mask_secret(SMTP_PASSWORD)}")
+    debug_print("SMTP delivery", attempt="1/1", host=SMTP_HOST, port=SMTP_PORT, timeout=f"{smtp_timeout}s", tls=bool(use_ssl), user=mask_secret(SMTP_USER), password=mask_secret(SMTP_PASSWORD))
     smtp_object = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
     try:
         if use_ssl:
             smtp_object.starttls(context=ssl.create_default_context())
-        debug_print(f"SMTP connection established host={SMTP_HOST} port={SMTP_PORT}")
+        debug_print("SMTP connection established", host=SMTP_HOST, port=SMTP_PORT)
         smtp_object.login(SMTP_USER, SMTP_PASSWORD)
-        debug_print(f"SMTP authentication succeeded host={SMTP_HOST}")
+        debug_print("SMTP authentication succeeded", host=SMTP_HOST)
         return smtp_object
     except Exception as connect_error:
-        debug_print(f"SMTP session setup failed host={SMTP_HOST} error={type(connect_error).__name__}: {connect_error}")
+        debug_print("SMTP session setup failed", host=SMTP_HOST, error=f"{type(connect_error).__name__}: {connect_error}")
         smtp_quit_quietly(smtp_object)
         raise
 
@@ -2634,10 +2634,10 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
 
         smtpObj.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, email_msg.as_string())
         smtpObj.quit()
-        debug_print(f"SMTP delivery outcome=success host={SMTP_HOST} attempt=1/1")
+        debug_print("SMTP delivery", outcome="OK", host=SMTP_HOST, attempt="1/1")
         verbose_print("Email delivery succeeded")
     except Exception as e:
-        debug_print(f"SMTP delivery outcome=failed host={SMTP_HOST} attempt=1/1 error={type(e).__name__}: {e}")
+        debug_print("SMTP delivery", outcome="failed", host=SMTP_HOST, attempt="1/1", error=f"{type(e).__name__}: {e}")
         verbose_print("Email delivery failed")
         print(f"Error sending email: {sanitize_error_text(e)}")
         return 1
@@ -2694,11 +2694,17 @@ def verbose_print(message):
         print(f"* {sanitize_error_text(message)}")
 
 
+# Renders one diagnostic line as an operation followed by comma-separated key=value fields, dropping unset ones
+def format_diagnostic_line(operation, fields):
+    rendered = ", ".join(f"{key}={value}" for key, value in fields.items() if value is not None)
+    return f"{operation}: {rendered}" if rendered else str(operation)
+
+
 # Prints one timestamped sanitized operation only when debug mode is enabled
-def debug_print(message):
+def debug_print(_operation, **fields):
     if DEBUG_MODE:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[DEBUG {timestamp}] {sanitize_error_text(message)}")
+        print(f"[DEBUG {timestamp}] {sanitize_error_text(format_diagnostic_line(_operation, fields))}")
 
 
 # Redacts credential-bearing request headers before diagnostic output
@@ -2735,24 +2741,17 @@ def diagnostic_endpoint(url, host_only=False):
 
 # Logs one outbound HTTP request without exposing private request values
 def debug_http_request(method, url, operation, timeout, headers=None, params=None, token=None, host_only=False):
-    details = [f"HTTP {str(method).upper()} {diagnostic_endpoint(url, host_only=host_only)}", f"operation={operation}", f"timeout={timeout}s"]
-    if headers:
-        details.append(f"headers={sanitize_debug_headers(headers)}")
-    if params:
-        details.append(f"params={sanitize_debug_params(params)}")
-    if token is not None:
-        details.append(f"token={mask_secret(token)}")
-    debug_print(" ".join(details))
+    debug_print(f"HTTP {str(method).upper()}", url=diagnostic_endpoint(url, host_only=host_only), operation=operation, timeout=f"{timeout}s", headers=sanitize_debug_headers(headers) if headers else None, params=sanitize_debug_params(params) if params else None, token=mask_secret(token) if token is not None else None)
 
 
 # Logs one HTTP response status for a named operation
 def debug_http_response(method, url, operation, status):
-    debug_print(f"HTTP {str(method).upper()} {diagnostic_endpoint(url)} operation={operation} status={status}")
+    debug_print(f"HTTP {str(method).upper()}", url=diagnostic_endpoint(url), operation=operation, status=status)
 
 
 # Logs one swallowed exception and the feature that degraded because of it
 def debug_swallowed_exception(operation, error):
-    debug_print(f"{operation} degraded: {type(error).__name__}: {error}")
+    debug_print(operation, outcome="degraded", error=f"{type(error).__name__}: {error}")
 
 
 # Reports a tracked feature that cannot produce its alert during the current cycle
@@ -2764,7 +2763,7 @@ def verbose_degraded_feature(feature, alert, error=None):
 
 # Logs the start of one monitoring poll and returns its monotonic start time
 def debug_monitor_check_start(check_number, user):
-    debug_print(f"Starting monitoring check #{check_number} for {user}")
+    debug_print("Starting monitoring check", check=f"#{check_number}", user=user)
     return time.monotonic()
 
 
@@ -2772,13 +2771,13 @@ def debug_monitor_check_start(check_number, user):
 def debug_monitor_check_timing(check_number, user, started_at, interval):
     duration = max(0.0, time.monotonic() - started_at)
     next_check = datetime.now() + dt.timedelta(seconds=interval)
-    debug_print(f"Completed monitoring check #{check_number} for {user} duration={duration:.3f}s next={next_check.astimezone().isoformat()} interval={display_time(interval)}")
+    debug_print("Completed monitoring check", check=f"#{check_number}", user=user, duration=f"{duration:.3f}s", next=next_check.astimezone().isoformat(), interval=display_time(interval))
 
 
 # Logs one scheduled wait with its reason and next timestamp
 def debug_monitor_wait_timing(reason, interval):
     next_check = datetime.now() + dt.timedelta(seconds=interval)
-    debug_print(f"Waiting {display_time(interval)} reason={reason} next={next_check.astimezone().isoformat()}")
+    debug_print("Waiting", interval=display_time(interval), reason=reason, next=next_check.astimezone().isoformat())
 
 
 @dataclass(frozen=True)
@@ -3368,7 +3367,7 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
     for attempt in range(WEBHOOK_MAX_ATTEMPTS):
         try:
             attempt_number = attempt + 1
-            debug_print(f"Webhook delivery channel={provider} host={diagnostic_endpoint(WEBHOOK_URL, host_only=True)} attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS} timeout={WEBHOOK_TIMEOUT_SECONDS}s")
+            debug_print("Webhook delivery", channel=provider, host=diagnostic_endpoint(WEBHOOK_URL, host_only=True), attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", timeout=f"{WEBHOOK_TIMEOUT_SECONDS}s")
             if provider == "ntfy":
                 response = post_webhook_request(data=ntfy_message.encode("utf-8"), params={"title": ntfy_title}, headers=request_headers)
             elif isinstance(discord_payload, str):
@@ -3376,15 +3375,15 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
             else:
                 response = post_webhook_request(json=discord_payload, headers=request_headers)
             retryable = response.status_code == 429 or 500 <= response.status_code <= 599
-            debug_print(f"Webhook delivery channel={provider} attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS} status={response.status_code} retryable={retryable}")
+            debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", status=response.status_code, retryable=retryable)
             if 200 <= response.status_code <= 299:
                 verbose_print(f"Webhook delivery through {provider} succeeded")
-                debug_print(f"Webhook delivery channel={provider} outcome=success attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
+                debug_print("Webhook delivery", channel=provider, outcome="OK", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 return 0
             last_error = response
             if not retryable or attempt == WEBHOOK_MAX_ATTEMPTS - 1:
                 verbose_print(f"Webhook delivery through {provider} failed")
-                debug_print(f"Webhook delivery channel={provider} outcome=failed attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
+                debug_print("Webhook delivery", channel=provider, outcome="failed", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 print_webhook_error(f"HTTP {response.status_code}: {getattr(response, 'text', '')[:200]}")
                 return 1
             delay = webhook_retry_after_seconds(response) if response.status_code == 429 else WEBHOOK_FALLBACK_RETRY_SECONDS
@@ -3393,16 +3392,16 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
         except req.RequestException as exc:
             last_error = exc
             attempt_number = attempt + 1
-            debug_print(f"Webhook delivery channel={provider} attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS} error={type(exc).__name__}: {exc} retryable={attempt < WEBHOOK_MAX_ATTEMPTS - 1}")
+            debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", error=f"{type(exc).__name__}: {exc}", retryable=attempt < WEBHOOK_MAX_ATTEMPTS - 1)
             if attempt == WEBHOOK_MAX_ATTEMPTS - 1:
                 verbose_print(f"Webhook delivery through {provider} failed")
-                debug_print(f"Webhook delivery channel={provider} outcome=failed attempt={attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
+                debug_print("Webhook delivery", channel=provider, outcome="failed", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 print_webhook_error(exc)
                 return 1
             debug_monitor_wait_timing(f"webhook request retry attempt {attempt_number + 1}/{WEBHOOK_MAX_ATTEMPTS}", WEBHOOK_FALLBACK_RETRY_SECONDS)
             sleep_func(WEBHOOK_FALLBACK_RETRY_SECONDS)
     verbose_print(f"Webhook delivery through {provider} failed")
-    debug_print(f"Webhook delivery channel={provider} outcome=failed after={WEBHOOK_MAX_ATTEMPTS} attempts")
+    debug_print("Webhook delivery", channel=provider, outcome="failed", after=f"{WEBHOOK_MAX_ATTEMPTS} attempts")
     print_webhook_error(last_error)
     return 1
 
@@ -3423,28 +3422,28 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
 # Initializes the CSV file
 def init_csv_file(csv_file_name):
     try:
-        debug_print(f"Checking CSV output file path={csv_file_name}")
+        debug_print("Checking CSV output file", path=csv_file_name)
         if not os.path.isfile(csv_file_name) or os.path.getsize(csv_file_name) == 0:
-            debug_print(f"Opening CSV output for header write path={csv_file_name}")
+            debug_print("Opening CSV output for header write", path=csv_file_name)
             with open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
                 writer.writeheader()
-            debug_print(f"CSV header write succeeded path={csv_file_name}")
+            debug_print("CSV header write succeeded", path=csv_file_name)
     except Exception as e:
-        debug_print(f"CSV initialization failed path={csv_file_name} error={type(e).__name__}: {e}")
+        debug_print("CSV initialization failed", path=csv_file_name, error=f"{type(e).__name__}: {e}")
         raise RuntimeError(f"Could not initialize CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
 # Writes CSV entry
 def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new):
     try:
-        debug_print(f"Opening CSV output for append path={csv_file_name} record_type={object_type}")
+        debug_print("Opening CSV output for append", path=csv_file_name, record_type=object_type)
         with open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8") as csv_file:
             csvwriter = csv.DictWriter(csv_file, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
             csvwriter.writerow({'Date': timestamp, 'Type': object_type, 'Name': object_name, 'Old': old, 'New': new})
-        debug_print(f"CSV append succeeded path={csv_file_name} record_type={object_type}")
+        debug_print("CSV append succeeded", path=csv_file_name, record_type=object_type)
     except Exception as e:
-        debug_print(f"CSV append failed path={csv_file_name} record_type={object_type} error={type(e).__name__}: {e}")
+        debug_print("CSV append failed", path=csv_file_name, record_type=object_type, error=f"{type(e).__name__}: {e}")
         raise RuntimeError(f"Failed to write to CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
@@ -3735,9 +3734,9 @@ def reload_secrets_signal_handler(sig, frame):
             else:
                 env_path = find_dotenv()
             if env_path:
-                debug_print(f"Reading dotenv file for signal reload path={env_path}")
+                debug_print("Reading dotenv file for signal reload", path=env_path)
                 load_dotenv(env_path, override=True)
-                debug_print(f"Dotenv signal reload succeeded path={env_path}")
+                debug_print("Dotenv signal reload succeeded", path=env_path)
             else:
                 print("* No .env file found, skipping env-var reload")
         except ImportError as exc:
@@ -3758,7 +3757,7 @@ def reload_secrets_signal_handler(sig, frame):
             if val is not None and val != old_val:
                 globals()[secret] = val
                 SECRET_SOURCES[secret] = "dotenv file reload"
-                debug_print(f"Secret resolution name={secret} source=dotenv file reload")
+                debug_print("Secret resolution", name=secret, source="dotenv file reload")
                 if secret == "GITHUB_TOKEN":
                     github_token_changed = True
                 if secret == "WEBHOOK_URL":
@@ -3784,14 +3783,14 @@ class EmptyPaginatedList(list):
 
 # Creates one timed PyGithub client and records its sanitized connection settings
 def create_github_client(operation):
-    debug_print(f"PyGithub client operation={operation} endpoint={diagnostic_endpoint(GITHUB_API_URL)} timeout={PYGITHUB_TIMEOUT_SECONDS}s token={mask_secret(GITHUB_TOKEN)}")
+    debug_print("PyGithub client", operation=operation, endpoint=diagnostic_endpoint(GITHUB_API_URL), timeout=f"{PYGITHUB_TIMEOUT_SECONDS}s", token=mask_secret(GITHUB_TOKEN))
     return Github(base_url=GITHUB_API_URL, auth=Auth.Token(GITHUB_TOKEN), timeout=PYGITHUB_TIMEOUT_SECONDS, verify=VERIFY_SSL)
 
 
 # Logs one named PyGithub operation before its lazy network request is consumed
 def debug_github_operation(operation, target=""):
     suffix = f" target={target}" if target else ""
-    debug_print(f"PyGithub operation={operation} endpoint={diagnostic_endpoint(GITHUB_API_URL)} timeout={PYGITHUB_TIMEOUT_SECONDS}s token={mask_secret(GITHUB_TOKEN)}{suffix}")
+    debug_print("PyGithub", operation=operation, endpoint=diagnostic_endpoint(GITHUB_API_URL), timeout=f"{PYGITHUB_TIMEOUT_SECONDS}s", token=f"{mask_secret(GITHUB_TOKEN)}{suffix}")
 
 
 # Returns a stable display name for a partially populated PyGithub object
@@ -3806,9 +3805,9 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         for i in range(1, retries + 1):
             try:
-                debug_print(f"PyGithub retry wrapper operation={fn.__name__} attempt={i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, attempt=f"{i}/{retries}")
                 result = fn(*args, **kwargs)
-                debug_print(f"PyGithub retry wrapper operation={fn.__name__} outcome=success attempt={i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="OK", attempt=f"{i}/{retries}")
                 return result
             except RateLimitExceededException as e:
                 headers = getattr(e, "headers", None)
@@ -3835,7 +3834,7 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
                         sleep_for = int(backoff * i)
 
                 retryable = i < retries
-                debug_print(f"PyGithub retry wrapper operation={fn.__name__} error={type(e).__name__}: {e} retryable={retryable} attempt={i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
                 if retryable:
                     print(f"* {fn.__name__} rate limited, sleeping {sleep_for}s (retry {i}/{retries})")
                     debug_monitor_wait_timing(f"GitHub rate limit before attempt {i + 1}/{retries}", sleep_for)
@@ -3845,13 +3844,13 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
             except NET_ERRORS as e:
                 retryable = i < retries
                 delay = backoff * i
-                debug_print(f"PyGithub retry wrapper operation={fn.__name__} error={type(e).__name__}: {e} retryable={retryable} attempt={i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
                 if retryable:
                     print(f"* {fn.__name__} error: {sanitize_error_text(e)} (retry {i}/{retries})")
                     debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{retries}", delay)
                     time.sleep(delay)
         verbose_degraded_feature(f"GitHub operation {fn.__name__}", "its dependent alerts")
-        debug_print(f"PyGithub retry wrapper operation={fn.__name__} outcome=default after={retries} attempts")
+        debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="default", after=f"{retries} attempts")
         return default
     return wrapped
 
@@ -5364,7 +5363,7 @@ def find_config_file(cli_path=None):
 
     if cli_path:
         p = Path(os.path.expanduser(cli_path))
-        debug_print(f"Checking explicit configuration path={p}")
+        debug_print("Checking explicit configuration", path=p)
         return str(p) if p.is_file() else None
 
     candidates = [
@@ -5374,9 +5373,9 @@ def find_config_file(cli_path=None):
     ]
 
     for p in candidates:
-        debug_print(f"Checking discovered configuration path={p}")
+        debug_print("Checking discovered configuration", path=p)
         if p.is_file():
-            debug_print(f"Selected discovered configuration path={p}")
+            debug_print("Selected discovered configuration", path=p)
             return str(p)
     debug_print("No configuration file selected")
     return None
@@ -5471,9 +5470,9 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
     selected_namespace = globals() if namespace is None else namespace
     retired_settings = []
     try:
-        debug_print(f"Reading configuration file path={config_path}")
+        debug_print("Reading configuration file", path=config_path)
         content = Path(config_path).read_text(encoding="utf-8")
-        debug_print(f"Configuration file read succeeded path={config_path} bytes={len(content.encode('utf-8'))}")
+        debug_print("Configuration file read succeeded", path=config_path, bytes=len(content.encode('utf-8')))
         # Parsed as data rather than executed, so a config file picked up from the working directory cannot run code
         parsed_values = parse_config_content(content, str(config_path), retired_settings)
         selected_namespace.update(parsed_values)
@@ -5489,7 +5488,7 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
             retired_names_out.update(retired_settings)
         if retired_settings and report_errors:
             print(f"* Note: {describe_retired_settings(retired_settings, chr(39) + str(config_path) + chr(39))}")
-        debug_print(f"Configuration applied path={config_path} settings={len(parsed_values)} retired={len(retired_settings)}")
+        debug_print("Configuration applied", path=config_path, settings=len(parsed_values), retired=len(retired_settings))
         verbose_print(f"Loaded {len(parsed_values)} settings from the configuration file")
         return True
     except SyntaxError as exc:
@@ -5506,7 +5505,7 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
         detail = f"Config file '{config_path}' contains unsupported content: {exc}"
     except Exception as exc:
         detail = f"Config file '{config_path}' failed with {type(exc).__name__}: {exc}"
-    debug_print(f"Configuration load failed path={config_path} detail={detail}")
+    debug_print("Configuration load failed", path=config_path, detail=detail)
     if error_out is not None:
         error_out.append(detail)
     if report_errors:
@@ -5537,24 +5536,24 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
             if DOTENV_FILE:
                 env_path = DOTENV_FILE
                 if not os.path.isfile(env_path):
-                    debug_print(f"Dotenv file not found path={env_path}")
+                    debug_print("Dotenv file not found", path=env_path)
                     detail = f"Dotenv file '{env_path}' does not exist"
                     if errors_out is not None:
                         errors_out.append(detail)
                     if report_errors:
                         print(f"* Warning: {detail}\n")
                 else:
-                    debug_print(f"Reading dotenv file path={env_path}")
+                    debug_print("Reading dotenv file", path=env_path)
                     dotenv_keys = {str(name) for name in dotenv_values(env_path) if name in SECRET_KEYS}
                     load_dotenv(env_path, override=False)
-                    debug_print(f"Dotenv file loaded path={env_path} secret_names={sorted(dotenv_keys)}")
+                    debug_print("Dotenv file loaded", path=env_path, secret_names=sorted(dotenv_keys))
             else:
                 env_path = find_dotenv() or None
                 if env_path:
-                    debug_print(f"Reading discovered dotenv file path={env_path}")
+                    debug_print("Reading discovered dotenv file", path=env_path)
                     dotenv_keys = {str(name) for name in dotenv_values(env_path) if name in SECRET_KEYS}
                     load_dotenv(env_path, override=False)
-                    debug_print(f"Discovered dotenv file loaded path={env_path} secret_names={sorted(dotenv_keys)}")
+                    debug_print("Discovered dotenv file loaded", path=env_path, secret_names=sorted(dotenv_keys))
                 else:
                     debug_print("No dotenv file discovered")
         except ImportError as exc:
@@ -5591,8 +5590,7 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
             SECRET_SOURCES[secret] = "built-in configuration"
     if SECRET_SOURCES:
         for secret, source in SECRET_SOURCES.items():
-            debug_print(f"Secret resolution name={secret} source={source}")
-        verbose_print("Resolved private settings from " + ", ".join(sorted(set(SECRET_SOURCES.values()))))
+            debug_print("Secret resolution", name=secret, source=source)
     else:
         debug_print("No private settings were resolved from config, dotenv or environment")
     return env_path
@@ -5650,15 +5648,15 @@ def render_dotenv_assignment(key: str, value: str, prefix: str = "") -> str:
 # Returns whether one dotenv file already assigns the requested key
 def dotenv_contains_key(path: Path, key: str) -> bool:
     if not path.exists():
-        debug_print(f"Dotenv key check skipped because file does not exist path={path} key={key}")
+        debug_print("Dotenv key check skipped because file does not exist", path=path, key=key)
         return False
-    debug_print(f"Reading dotenv file for key check path={path} key={key}")
+    debug_print("Reading dotenv file for key check", path=path, key=key)
     try:
         content = path.read_text(encoding="utf-8")
     except Exception as exc:
-        debug_print(f"Dotenv key check read failed path={path} key={key} error={type(exc).__name__}: {exc}")
+        debug_print("Dotenv key check read failed", path=path, key=key, error=f"{type(exc).__name__}: {exc}")
         raise
-    debug_print(f"Dotenv key check read succeeded path={path} key={key}")
+    debug_print("Dotenv key check read succeeded", path=path, key=key)
     return any(match_dotenv_assignment(line, key) for line in content.splitlines())
 
 
@@ -5666,11 +5664,11 @@ def dotenv_contains_key(path: Path, key: str) -> bool:
 def update_dotenv_value(path: Path, key: str, value: str) -> None:
     if not path.parent.is_dir():
         raise FileNotFoundError(f"Dotenv parent directory does not exist: {path.parent}")
-    debug_print(f"Reading private settings file before update path={path} key={key} exists={path.exists()}")
+    debug_print("Reading private settings file before update", path=path, key=key, exists=path.exists())
     try:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
     except Exception as exc:
-        debug_print(f"Private settings file read failed path={path} key={key} error={type(exc).__name__}: {exc}")
+        debug_print("Private settings file read failed", path=path, key=key, error=f"{type(exc).__name__}: {exc}")
         raise
     output_lines = []
     replaced = False
@@ -5689,9 +5687,9 @@ def update_dotenv_value(path: Path, key: str, value: str) -> None:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as dotenv_file:
             dotenv_file.write("\n".join(output_lines) + "\n")
     except Exception as exc:
-        debug_print(f"Private settings file update failed path={path} key={key} error={type(exc).__name__}: {exc}")
+        debug_print("Private settings file update failed", path=path, key=key, error=f"{type(exc).__name__}: {exc}")
         raise
-    debug_print(f"Private settings file update succeeded path={path} key={key} mode=0600")
+    debug_print("Private settings file update succeeded", path=path, key=key, mode="0600")
     verbose_print(f"Saved {key} in the private settings file")
 
 
@@ -5715,7 +5713,7 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
         response = get_request(endpoint, headers=headers, timeout=10, allow_redirects=False, verify=VERIFY_SSL)
         debug_http_response("GET", endpoint, "GitHub token validation", getattr(response, "status_code", "unknown"))
     except req.RequestException as exc:
-        debug_print(f"GitHub token validation request failed error={type(exc).__name__}: {exc}")
+        debug_print("GitHub token validation request failed", error=f"{type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError("Could not reach the configured GitHub API while validating the token and the dotenv file was not changed") from None
     status_code = getattr(response, "status_code", None)
     if status_code in (401, 403):
@@ -5763,7 +5761,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     try:
         update_dotenv_value(destination, "GITHUB_TOKEN", token)
     except Exception as exc:
-        debug_print(f"Private settings file update failed path={destination} key=GITHUB_TOKEN error={type(exc).__name__}: {exc}")
+        debug_print("Private settings file update failed", path=destination, key="GITHUB_TOKEN", error=f"{type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError(f"Could not save GITHUB_TOKEN in '{destination}'. Check the path and file permissions") from None
     paths = []
     if config_path:
@@ -5948,7 +5946,7 @@ def is_profile_public(g: Github, user, new_account_days=30):
             return True
 
         try:
-            debug_print(f"PyGithub operation=recent public event probe endpoint={diagnostic_endpoint(GITHUB_API_URL)} timeout={PYGITHUB_TIMEOUT_SECONDS}s token={mask_secret(GITHUB_TOKEN)} target={user}")
+            debug_print("PyGithub", operation="recent public event probe", endpoint=diagnostic_endpoint(GITHUB_API_URL), timeout=f"{PYGITHUB_TIMEOUT_SECONDS}s", token=mask_secret(GITHUB_TOKEN), target=user)
             events_iter = iter(u.get_events())
             next(events_iter)
             return True
@@ -7034,6 +7032,7 @@ def github_monitor_user(user, csv_file_name):
         alive_counter += 1
 
         if LIVENESS_CHECK_COUNTER and alive_counter >= LIVENESS_CHECK_COUNTER:
+            verbose_print(f"Monitoring healthy for {user}. No tracked change since the last check")
             print_cur_ts("Liveness check, timestamp:\t")
             alive_counter = 0
 
@@ -8027,13 +8026,13 @@ def build_wizard_state(config_path, dotenv_path, install_context=None):
     defaults = parse_config_content(CONFIG_BLOCK, "<built-in-config>")
     existing_values = {}
     if selected_config.exists():
-        debug_print(f"Reading setup baseline configuration path={selected_config}")
+        debug_print("Reading setup baseline configuration", path=selected_config)
         existing_values = parse_config_content(selected_config.read_text(encoding="utf-8"), str(selected_config), reference_values=defaults)
     values = dict(defaults)
     values.update(existing_values)
     secrets = {}
     if selected_dotenv.exists():
-        debug_print(f"Reading setup baseline dotenv path={selected_dotenv}")
+        debug_print("Reading setup baseline dotenv", path=selected_dotenv)
         try:
             from dotenv import dotenv_values
             secrets.update({str(name): str(value) for name, value in dotenv_values(selected_dotenv).items() if name in SECRET_KEYS and value is not None})
@@ -8404,7 +8403,7 @@ def prepare_wizard_atomic_file(path, content):
         except OSError as close_error:
             debug_swallowed_exception("Setup temporary descriptor cleanup", close_error)
         temporary_path.unlink(missing_ok=True)
-        debug_print(f"Setup temporary file write failed path={path} error={type(exc).__name__}: {exc}")
+        debug_print("Setup temporary file write failed", path=path, error=f"{type(exc).__name__}: {exc}")
         raise
     return temporary_path
 
@@ -8435,7 +8434,7 @@ def write_generated_config(output_file, content, force=False, interactive=None, 
         return None, False
     backup_path = backup_wizard_file(destination) if destination.exists() else None
     if backup_path is not None:
-        debug_print(f"Generated configuration backup written path={backup_path}")
+        debug_print("Generated configuration backup written", path=backup_path)
     temporary_path = prepare_wizard_atomic_file(destination, content)
     try:
         os.replace(temporary_path, destination)
@@ -8465,8 +8464,8 @@ def save_wizard_files(state):
     finally:
         for temporary_path in prepared:
             temporary_path.unlink(missing_ok=True)
-    debug_print(f"Setup configuration write succeeded path={state.config_path}")
-    debug_print(f"Setup dotenv write succeeded path={state.dotenv_path}")
+    debug_print("Setup configuration write succeeded", path=state.config_path)
+    debug_print("Setup dotenv write succeeded", path=state.dotenv_path)
     return backups
 
 
@@ -8617,12 +8616,12 @@ def main():
             if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
                 # Write directly to file to avoid PowerShell UTF-16 redirection issues
                 output_file = sys.argv[idx + 1]
-                debug_print(f"Opening generated configuration for write path={output_file}")
+                debug_print("Opening generated configuration for write", path=output_file)
                 backup_path, written = write_generated_config(output_file, config_content, force="--force" in sys.argv)
                 if not written:
                     print("Config was not replaced. The existing file is unchanged.")
                     sys.exit(1)
-                debug_print(f"Generated configuration write succeeded path={output_file} bytes={len(config_content.encode('utf-8'))}")
+                debug_print("Generated configuration write succeeded", path=output_file, bytes=len(config_content.encode('utf-8')))
                 print(f"Config written to: {output_file}")
                 if backup_path is not None:
                     print(f"Previous config backed up to: {backup_path}")
@@ -8634,7 +8633,7 @@ def main():
             print_recovery_advice(advice)
             sys.exit(1)
         except OSError as exc:
-            debug_print(f"Generated configuration write failed path={locals().get('output_file', '<unknown>')} error={type(exc).__name__}: {exc}")
+            debug_print("Generated configuration write failed", path=locals().get('output_file', '<unknown>'), error=f"{type(exc).__name__}: {exc}")
             advice = make_recovery_advice("file.unwritable", "The generated configuration could not be written", "Check the destination path and file permissions", False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
             print_recovery_advice(advice)
             sys.exit(1)
@@ -9205,12 +9204,12 @@ def main():
 
     if CSV_FILE:
         try:
-            debug_print(f"Opening CSV output for startup write check path={CSV_FILE}")
+            debug_print("Opening CSV output for startup write check", path=CSV_FILE)
             with open(CSV_FILE, 'a', newline='', buffering=1, encoding="utf-8") as _:
                 pass
-            debug_print(f"CSV startup write check succeeded path={CSV_FILE}")
+            debug_print("CSV startup write check succeeded", path=CSV_FILE)
         except Exception as e:
-            debug_print(f"CSV startup write check failed path={CSV_FILE} error={type(e).__name__}: {e}")
+            debug_print("CSV startup write check failed", path=CSV_FILE, error=f"{type(e).__name__}: {e}")
             advice = classify_recovery_error(e, "file")
             if advice.code == "unknown":
                 advice = make_recovery_advice("file.unwritable", "The CSV file cannot be opened for writing", "Check CSV_FILE and its parent directory permissions", False, f"{type(e).__name__}: {e}", CONFIG_GUIDE_URL)
@@ -9239,9 +9238,9 @@ def main():
     if not DISABLE_LOGGING:
         log_path = resolve_output_log_path(args.username)
         try:
-            debug_print(f"Ensuring output log directory exists path={log_path.parent}")
+            debug_print("Ensuring output log directory exists", path=log_path.parent)
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            debug_print(f"Output log directory ready path={log_path.parent}")
+            debug_print("Output log directory ready", path=log_path.parent)
             FINAL_LOG_PATH = str(log_path)
             sys.stdout = Logger(FINAL_LOG_PATH)
         except Exception as e:

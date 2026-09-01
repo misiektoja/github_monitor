@@ -850,7 +850,14 @@ Verbose mode answers "what did the tool decide?" It expands the startup summary,
 github_monitor <github_username> --verbose
 ```
 
-Debug mode answers "what did the tool do?" Every line is timestamped. It includes sanitized technical detail plus the endpoint, timeout, masked credential, response status, retry decision, file path and monitoring timing used by the relevant operation:
+Debug mode answers "what did the tool do?" Every line is timestamped, names the operation, then lists its details as comma-separated `key=value` fields:
+
+```
+[DEBUG 23:53:52] Webhook delivery: channel=discord, host=https://discord.com, attempt=1/2, timeout=10s
+[DEBUG 23:53:52] Webhook delivery: channel=discord, outcome=OK, attempt=2/2
+```
+
+The fields carry the endpoint, timeout, masked credential, response status, retry decision, file path and monitoring timing used by the relevant operation:
 
 ```sh
 github_monitor <github_username> --debug
@@ -861,7 +868,7 @@ The modes cover the full runtime path:
 * Direct HTTP, PyGithub and SMTP operations report their destination and timeout. Every configured credential is rendered as the fixed `<redacted>` marker inside the printer.
 * Exceptions that would otherwise be swallowed name the failed operation and exception type in debug output.
 * Degraded profile, repository, contribution and event checks state which alert cannot fire in verbose output.
-* Email and webhook deliveries report the attempt, response, retryability, wait and confirmed outcome.
+* Email and webhook deliveries report the attempt, response, retryability, wait and confirmed outcome as `outcome=OK` or `outcome=failed`.
 * Config, dotenv, CSV, log and private-setting file operations report both success and failure branches.
 * Retries and monitoring sleeps report their reason, interval and next timestamp.
 * Config loading reports its file and applied setting count. Private-setting resolution reports each setting name and source without printing its value.
