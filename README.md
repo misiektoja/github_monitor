@@ -415,6 +415,10 @@ WEBHOOK_URL="https://discord.com/api/webhooks/your_id/your_token"
 NTFY_ACCESS_TOKEN="tk_your_ntfy_access_token"
 ```
 
+An `export ` prefix in front of a dotenv line is accepted, so the same file can be sourced by a shell. `--set-github-token`, `--set-webhook-url` and `--setup` replace such a line in place and keep its prefix, rather than leaving the old value behind.
+
+If the same secret is set in more than one place, an exported environment variable wins over the dotenv file, which wins over the config file, and an explicit command-line value wins over all of them. `--verbose` and `--doctor` both report which source each secret came from, so a forgotten `export` is visible rather than silent.
+
 By default the tool will auto-search for dotenv file named `.env` in current directory and then upward from it.
 
 You can specify a custom file with `DOTENV_FILE` or `--env-file` flag:

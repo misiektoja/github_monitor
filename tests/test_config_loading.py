@@ -127,3 +127,28 @@ def test_generated_config_writes_a_new_destination_directly(tmp_path):
 
     assert (backup_path, written) == (None, True)
     assert config.read_text(encoding="utf-8") == "GITHUB_CHECK_INTERVAL = 60\n"
+
+
+# The retired set is empty today, so these prove the mechanism works before the first real retirement needs it
+def test_a_retired_setting_is_ignored_instead_of_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(monitor, "RETIRED_CONFIG_SETTINGS", frozenset(("OBSOLETE_TEST_SETTING",)))
+    setting = first_allowed_setting()
+    config = tmp_path / "retired.conf"
+    config.write_text(f'OBSOLETE_TEST_SETTING = "gone"\n{setting} = 7\n', encoding="utf-8")
+    namespace = {}
+    retired_names = set()
+
+    assert monitor.load_config_file(config, namespace=namespace, report_errors=False, retired_names_out=retired_names) is True
+    assert namespace[setting] == 7
+    assert "OBSOLETE_TEST_SETTING" not in namespace
+    assert retired_names == {"OBSOLETE_TEST_SETTING"}
+    assert "OBSOLETE_TEST_SETTING" in monitor.describe_retired_settings(retired_names, "'retired.conf'")
+
+
+# Verifies a name that was never retired is still rejected, so the tolerance stays limited to the declared set
+def test_an_unlisted_unknown_setting_is_still_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(monitor, "RETIRED_CONFIG_SETTINGS", frozenset(("OBSOLETE_TEST_SETTING",)))
+    config = tmp_path / "unlisted.conf"
+    config.write_text("SOME_OTHER_REMOVED_SETTING = 1\n", encoding="utf-8")
+
+    assert monitor.load_config_file(config, namespace={}, report_errors=False) is False

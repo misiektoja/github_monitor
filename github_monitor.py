@@ -5002,6 +5002,16 @@ def resolve_secret_env_path(env_file=None, action_name="Private secret setup") -
     return path.resolve()
 
 
+# Matches one dotenv assignment, tolerating the export prefix used when the same file is sourced by a shell
+def match_dotenv_assignment(line: Any, key: str):
+    return re.match(rf"^(\s*(?:export\s+)?){re.escape(key)}\s*=", str(line))
+
+
+# Renders one quoted dotenv assignment, keeping the export prefix of the line it replaces
+def render_dotenv_assignment(key: str, value: str, prefix: str = "") -> str:
+    return f'{prefix}{key}="{value.replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34))}"'
+
+
 # Returns whether one dotenv file already assigns the requested key
 def dotenv_contains_key(path: Path, key: str) -> bool:
     if not path.exists():
@@ -5014,7 +5024,7 @@ def dotenv_contains_key(path: Path, key: str) -> bool:
         debug_print(f"Dotenv key check read failed path={path} key={key} error={type(exc).__name__}: {exc}")
         raise
     debug_print(f"Dotenv key check read succeeded path={path} key={key}")
-    return any(re.match(rf"^\s*{re.escape(key)}\s*=", line) for line in content.splitlines())
+    return any(match_dotenv_assignment(line, key) for line in content.splitlines())
 
 
 # Updates one dotenv assignment while preserving unrelated lines
@@ -5027,19 +5037,18 @@ def update_dotenv_value(path: Path, key: str, value: str) -> None:
     except Exception as exc:
         debug_print(f"Private settings file read failed path={path} key={key} error={type(exc).__name__}: {exc}")
         raise
-    encoded_value = value.replace("\\", "\\\\").replace('"', '\\"')
-    assignment = f'{key}="{encoded_value}"'
     output_lines = []
     replaced = False
     for line in existing.splitlines():
-        if re.match(rf"^\s*{re.escape(key)}\s*=", line):
+        match = match_dotenv_assignment(line, key)
+        if match:
             if not replaced:
-                output_lines.append(assignment)
+                output_lines.append(render_dotenv_assignment(key, value, match.group(1)))
                 replaced = True
             continue
         output_lines.append(line)
     if not replaced:
-        output_lines.append(assignment)
+        output_lines.append(render_dotenv_assignment(key, value))
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as dotenv_file:
@@ -7544,19 +7553,18 @@ def render_wizard_dotenv(state):
             continue
         if "\r" in value or "\n" in value or "\x00" in value:
             raise ValueError(f"{key} contains an unsupported line break or null byte")
-        encoded = value.replace("\\", "\\\\").replace('"', '\\"')
-        assignment = f'{key}="{encoded}"'
         replaced = False
         updated = []
         for line in lines:
-            if re.match(rf"^\s*{re.escape(key)}\s*=", line):
+            match = match_dotenv_assignment(line, key)
+            if match:
                 if not replaced:
-                    updated.append(assignment)
+                    updated.append(render_dotenv_assignment(key, value, match.group(1)))
                     replaced = True
             else:
                 updated.append(line)
         if not replaced:
-            updated.append(assignment)
+            updated.append(render_dotenv_assignment(key, value))
         lines = updated
     return "\n".join(lines) + ("\n" if lines else "")
 
@@ -7646,10 +7654,12 @@ def save_wizard_files(state):
     config_content = render_wizard_config(state)
     dotenv_content = render_wizard_dotenv(state)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    backups = [backup_wizard_file(state.config_path, timestamp), backup_wizard_file(state.dotenv_path, timestamp)]
+    backups = (backup_wizard_file(state.config_path, timestamp), backup_wizard_file(state.dotenv_path, timestamp))
     prepared = []
     try:
-        prepared = [prepare_wizard_atomic_file(state.config_path, config_content), prepare_wizard_atomic_file(state.dotenv_path, dotenv_content)]
+        # Appended one at a time so a failure on the second file still exposes the first for cleanup
+        for path, content in ((state.config_path, config_content), (state.dotenv_path, dotenv_content)):
+            prepared.append(prepare_wizard_atomic_file(path, content))
         os.replace(prepared[0], state.config_path)
         os.replace(prepared[1], state.dotenv_path)
         os.chmod(state.config_path, 0o600)
@@ -7659,7 +7669,7 @@ def save_wizard_files(state):
             temporary_path.unlink(missing_ok=True)
     debug_print(f"Setup configuration write succeeded path={state.config_path}")
     debug_print(f"Setup dotenv write succeeded path={state.dotenv_path}")
-    return tuple(path for path in backups if path is not None)
+    return backups
 
 
 # Builds the exact install-aware argument list used after setup
@@ -7712,11 +7722,16 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         destination.write("\n")
         destination.write(render_recovery_advice(advice) + "\n")
         return 1
+    config_backup, dotenv_backup = backups
+    saved_rows = [("Configuration:", state.config_path), ("Dotenv:", state.dotenv_path)]
+    if config_backup is not None:
+        saved_rows.append(("Configuration backup:", config_backup))
+    if dotenv_backup is not None:
+        saved_rows.append(("Dotenv backup:", dotenv_backup))
+    saved_width = max(len(label) for label, _ in saved_rows) + 1
     destination.write("\nSaved files\n")
-    destination.write(f"  Configuration: {state.config_path}\n")
-    destination.write(f"  Dotenv:       {state.dotenv_path}\n")
-    for backup in backups:
-        destination.write(f"  Backup:       {backup}\n")
+    for label, path in saved_rows:
+        destination.write(f"  {label:<{saved_width}}{path}\n")
     monitor_arguments = wizard_monitor_arguments(state)
     doctor_arguments = [*monitor_arguments, "--doctor"]
     doctor_exit = None

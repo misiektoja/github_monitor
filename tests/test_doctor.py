@@ -513,3 +513,21 @@ def test_doctor_cannot_be_combined_with_generate_config(gm_module, monkeypatch, 
 
     assert exit_error.value.code == 2
     assert not destination.exists()
+
+
+# Verifies the doctor surfaces a retired setting as a warning rather than failing the whole configuration
+def test_doctor_warns_about_retired_configuration_settings(gm_module, monkeypatch, request):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "RETIRED_CONFIG_SETTINGS", frozenset(("OBSOLETE_TEST_SETTING",)))
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config = Path(directory.name) / "retired.conf"
+    config.write_text('OBSOLETE_TEST_SETTING = "gone"\nLOCAL_TIMEZONE = "UTC"\n', encoding="utf-8")
+    monkeypatch.setattr(gm_module, "find_config_file", lambda path=None: str(config))
+    report = gm_module.DoctorReport(target_name="octocat")
+
+    gm_module.doctor_check_configuration(report, doctor_args(config_file=str(config)), Mock())
+
+    assert any(check.status == "PASS" and check.label == "Configuration file loaded" for check in report.checks)
+    warning = next(check for check in report.checks if check.label == "Retired configuration settings were ignored")
+    assert warning.status == "WARN" and "OBSOLETE_TEST_SETTING" in warning.detail

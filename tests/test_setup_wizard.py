@@ -409,3 +409,35 @@ def test_setup_cli_pseudo_terminal_transcript_has_stable_order_and_spacing(gm_mo
     assert "\n\n\n" not in transcript
     assert config_path.exists()
     assert dotenv_path.exists()
+
+
+# A dotenv sourced by a shell uses export, and appending beside that line would leave the old secret on disk
+def test_wizard_replaces_an_exported_secret_in_place(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    dotenv = Path(directory.name) / ".env"
+    dotenv.write_text('export GITHUB_TOKEN="github_pat_old_stale_value"\nUNRELATED="keep"\n#GITHUB_TOKEN="commented"\n', encoding="utf-8")
+    state = gm_module.build_wizard_state(Path(directory.name) / "w.conf", dotenv)
+    state.secrets["GITHUB_TOKEN"] = "github_pat_new_rotated_value"
+
+    rendered = gm_module.render_wizard_dotenv(state)
+
+    assert "github_pat_old_stale_value" not in rendered
+    assert 'export GITHUB_TOKEN="github_pat_new_rotated_value"' in rendered
+    assert 'UNRELATED="keep"' in rendered
+    assert '#GITHUB_TOKEN="commented"' in rendered
+
+
+# Verifies a failure writing the second file leaves no temporary file beside the destinations
+def test_setup_save_failure_leaves_no_temporary_files(gm_module, monkeypatch, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    state = gm_module.build_wizard_state(Path(directory.name) / "w.conf", Path(directory.name) / "w.env")
+    state.target = "octocat"
+    real_prepare = gm_module.prepare_wizard_atomic_file
+    monkeypatch.setattr(gm_module, "prepare_wizard_atomic_file", lambda path, content: (_ for _ in ()).throw(OSError(28, "No space left on device")) if path == state.dotenv_path else real_prepare(path, content))
+
+    with pytest.raises(OSError):
+        gm_module.save_wizard_files(state)
+
+    assert [entry.name for entry in Path(directory.name).iterdir() if entry.name.endswith(".tmp")] == []
