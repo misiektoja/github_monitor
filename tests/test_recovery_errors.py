@@ -93,3 +93,33 @@ def test_logger_redacts_secrets_from_terminal_and_log(gm_module, monkeypatch):
     assert secret not in logger.terminal.getvalue()
     assert secret not in logger.logfile.getvalue()
     assert "<redacted>" in logger.terminal.getvalue()
+
+
+# Sanitizing runs over every logged line, so a short secret must not redact ordinary words in monitoring output
+def test_short_secrets_do_not_redact_ordinary_output(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "SMTP_PASSWORD", "github")
+    monkeypatch.setattr(gm_module, "GITHUB_TOKEN", "")
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "")
+
+    assert gm_module.sanitize_error_text("Pushed to repo github/monitor") == "Pushed to repo github/monitor"
+    # The assignment shape an error can actually expose stays covered
+    assert "github" not in gm_module.sanitize_error_text("SMTP_PASSWORD = github")
+
+
+# Verifies a credential of realistic length is still replaced wherever it appears
+def test_full_length_secrets_are_still_redacted(gm_module, monkeypatch):
+    token = "ghp_" + "A" * 36
+    monkeypatch.setattr(gm_module, "GITHUB_TOKEN", token)
+
+    assert token not in gm_module.sanitize_error_text(f"Request failed for {token}")
+
+
+# Verifies a config failure names the rejected setting without waiting for --debug
+def test_config_advice_summary_names_the_rejected_setting(gm_module):
+    error = ValueError("Line 2: GITHUB_CHECK_INTERVAL must be a plain value")
+
+    advice = gm_module.classify_recovery_error(error, "config")
+
+    assert advice.code == "config.invalid"
+    assert "GITHUB_CHECK_INTERVAL" in advice.summary
+    assert "GITHUB_CHECK_INTERVAL" in gm_module.render_recovery_advice(advice, verbose=False, debug=False)

@@ -92,3 +92,38 @@ def test_invalid_encoding_is_reported(tmp_path):
     config.write_bytes(b"\xff\xfe\x00bad\n")
 
     assert monitor.load_config_file(config, namespace={}, report_errors=False) is False
+
+
+# Verifies an existing config is never replaced without consent, since the tool's own advice names this command
+def test_generated_config_refuses_to_replace_without_consent(tmp_path):
+    config = tmp_path / "existing.conf"
+    config.write_text("GITHUB_CHECK_INTERVAL = 1200\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="--force"):
+        monitor.write_generated_config(config, "GITHUB_CHECK_INTERVAL = 60\n", interactive=False)
+    assert config.read_text(encoding="utf-8") == "GITHUB_CHECK_INTERVAL = 1200\n"
+
+    assert monitor.write_generated_config(config, "GITHUB_CHECK_INTERVAL = 60\n", interactive=True, input_func=lambda prompt: "n") == (None, False)
+    assert config.read_text(encoding="utf-8") == "GITHUB_CHECK_INTERVAL = 1200\n"
+
+
+# Verifies an approved replacement keeps the previous content in a backup instead of destroying it
+def test_generated_config_backs_up_the_file_it_replaces(tmp_path):
+    config = tmp_path / "existing.conf"
+    config.write_text("GITHUB_CHECK_INTERVAL = 1200\n", encoding="utf-8")
+
+    backup_path, written = monitor.write_generated_config(config, "GITHUB_CHECK_INTERVAL = 60\n", force=True)
+
+    assert written is True
+    assert config.read_text(encoding="utf-8") == "GITHUB_CHECK_INTERVAL = 60\n"
+    assert backup_path is not None and backup_path.read_text(encoding="utf-8") == "GITHUB_CHECK_INTERVAL = 1200\n"
+
+
+# Verifies a fresh destination needs no approval and no backup
+def test_generated_config_writes_a_new_destination_directly(tmp_path):
+    config = tmp_path / "fresh.conf"
+
+    backup_path, written = monitor.write_generated_config(config, "GITHUB_CHECK_INTERVAL = 60\n", interactive=False)
+
+    assert (backup_path, written) == (None, True)
+    assert config.read_text(encoding="utf-8") == "GITHUB_CHECK_INTERVAL = 60\n"

@@ -190,6 +190,8 @@ github_monitor --generate-config github_monitor.conf
 
 > **IMPORTANT**: On **Windows PowerShell**, using redirection (`>`) can cause the file to be encoded in UTF-16, which will lead to "null bytes" errors when running the tool. It is highly recommended to provide the filename directly as an argument to `--generate-config` to ensure UTF-8 encoding.
 
+When the named file already exists, `--generate-config` asks before replacing it and keeps the previous version in a timestamped `.bak` file next to it. Outside a terminal it refuses and names `--force`, which replaces the file after taking the same backup. Shell redirection (`>`) is handled by the shell, so it still truncates without asking.
+
 Edit the `github_monitor.conf` file and change any desired configuration options (detailed comments are provided for each).
 
 `--setup --config-file PATH --env-file PATH` selects custom wizard destinations. Setup parses an existing config as data and preserves its supported settings. It moves usable secrets found there into the dotenv output. Nothing is written during questioning or section edits. Save validates the complete generated config then prepares both files before replacing either destination.

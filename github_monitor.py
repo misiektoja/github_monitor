@@ -579,6 +579,12 @@ PYGITHUB_TIMEOUT_SECONDS = 15
 # Calendar days requested to stabilize one-day contribution count lookups
 DAILY_CONTRIBUTION_LOOKBACK_DAYS = 30
 
+# Shortest secret replaced by plain substring search. Sanitizing runs over normal monitoring output, so a
+# short value such as a simple SMTP password would otherwise redact ordinary words like repository names.
+# Every credential this tool handles is far longer, and shorter ones stay covered by the shape patterns
+# in sanitize_error_text that match the assignment and header forms an error can actually expose.
+MIN_REDACTABLE_SECRET_LENGTH = 12
+
 
 # Reports whether separator-only log lines should use ASCII on this system
 def ascii_log_separators_enabled():
@@ -2060,11 +2066,11 @@ def known_secret_values():
     values = []
     for key in SECRET_KEYS:
         value = globals().get(key)
-        if isinstance(value, str) and value and not value.startswith("your_"):
+        if isinstance(value, str) and len(value) >= MIN_REDACTABLE_SECRET_LENGTH and not value.startswith("your_"):
             values.append(value)
     if isinstance(WEBHOOK_HEADERS, dict):
         for name, value in WEBHOOK_HEADERS.items():
-            if isinstance(name, str) and name.casefold() == "authorization" and isinstance(value, str) and value:
+            if isinstance(name, str) and name.casefold() == "authorization" and isinstance(value, str) and len(value) >= MIN_REDACTABLE_SECRET_LENGTH:
                 values.append(value)
     return values
 
@@ -2226,6 +2232,7 @@ RECOVERY_CODES = frozenset({
     "config.value_invalid",
     "dependency.missing",
     "dotenv.missing",
+    "file.exists",
     "file.unreadable",
     "file.unwritable",
     "github.api_error",
@@ -2334,7 +2341,10 @@ def classify_recovery_error(error, context="unknown", install_context=None):
     if selected_context == "webhook":
         return make_recovery_advice("webhook.invalid", "Webhook setup could not be completed", f"Check the HTTPS destination then run: {webhook_command}", False, detail, NOTIFICATION_GUIDE_URL)
     if selected_context == "config":
-        return make_recovery_advice("config.invalid", "The selected configuration is invalid", f"Correct the named setting or generate a fresh configuration with: {config_command}", False, detail, CONFIG_GUIDE_URL)
+        # The parser already names the line and setting, so the summary carries it instead of only --debug
+        reason = sanitize_error_text(error)
+        summary = f"The selected configuration is invalid: {reason}" if reason else "The selected configuration is invalid"
+        return make_recovery_advice("config.invalid", summary, f"Correct the reported setting, or generate a fresh configuration with: {config_command}", False, detail, CONFIG_GUIDE_URL)
     if selected_context == "timezone":
         return make_recovery_advice("timezone.invalid", "The configured timezone is invalid", "Install tzlocal for automatic detection or set a valid pytz timezone", False, detail, CONFIG_GUIDE_URL)
     return make_recovery_advice("unknown", "An unexpected error stopped the requested action", f"Run the command again with {debug_command} and include the recovery code when asking for help", False, detail, SUPPORT_GUIDE_URL)
@@ -7593,6 +7603,41 @@ def prepare_wizard_atomic_file(path, content):
     return temporary_path
 
 
+# Confirms replacing one existing generated configuration, or requires --force outside a terminal
+def confirm_generated_config_replacement(destination, force=False, interactive=None, input_func=input):
+    if not destination.exists() or force:
+        return True
+    try:
+        terminal_is_interactive = bool(sys.stdin.isatty()) if interactive is None else bool(interactive)
+    except Exception as exc:
+        debug_swallowed_exception("Generated configuration terminal detection", exc)
+        terminal_is_interactive = False
+    if not terminal_is_interactive:
+        raise FileExistsError(f"Config file '{destination}' already exists. Re-run with --force to replace it after a timestamped backup.")
+    try:
+        answer = str(input_func(f"Config file '{destination}' exists. Replace it and create a timestamped backup? [y/N]: ")).strip().casefold()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        answer = ""
+    return answer in {"y", "yes"}
+
+
+# Writes one generated configuration atomically after backing up any existing destination
+def write_generated_config(output_file, content, force=False, interactive=None, input_func=input):
+    destination = Path(os.path.expanduser(str(output_file)))
+    if not confirm_generated_config_replacement(destination, force, interactive, input_func):
+        return None, False
+    backup_path = backup_wizard_file(destination) if destination.exists() else None
+    if backup_path is not None:
+        debug_print(f"Generated configuration backup written path={backup_path}")
+    temporary_path = prepare_wizard_atomic_file(destination, content)
+    try:
+        os.replace(temporary_path, destination)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return backup_path, True
+
+
 # Saves both wizard files only after validation, backup and temporary writes succeed
 def save_wizard_files(state):
     for path in (state.config_path, state.dotenv_path):
@@ -7763,13 +7808,21 @@ def main():
                 # Write directly to file to avoid PowerShell UTF-16 redirection issues
                 output_file = sys.argv[idx + 1]
                 debug_print(f"Opening generated configuration for write path={output_file}")
-                with open(output_file, "w", encoding="utf-8") as f:
-                    f.write(config_content)
+                backup_path, written = write_generated_config(output_file, config_content, force="--force" in sys.argv)
+                if not written:
+                    print("Config was not replaced. The existing file is unchanged.")
+                    sys.exit(1)
                 debug_print(f"Generated configuration write succeeded path={output_file} bytes={len(config_content.encode('utf-8'))}")
                 print(f"Config written to: {output_file}")
+                if backup_path is not None:
+                    print(f"Previous config backed up to: {backup_path}")
                 sys.exit(0)
         except (ValueError, IndexError) as exc:
             debug_swallowed_exception("Generated configuration argument resolution", exc)
+        except FileExistsError as exc:
+            advice = make_recovery_advice("file.exists", "The generated configuration would replace an existing file", str(exc), False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
+            print_recovery_advice(advice)
+            sys.exit(1)
         except OSError as exc:
             debug_print(f"Generated configuration write failed path={locals().get('output_file', '<unknown>')} error={type(exc).__name__}: {exc}")
             advice = make_recovery_advice("file.unwritable", "The generated configuration could not be written", "Check the destination path and file permissions", False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
@@ -7826,6 +7879,12 @@ def main():
         const=True,
         metavar="FILENAME",
         help="Print default config template and exit (on Windows PowerShell specify a filename to avoid redirect encoding issues)",
+    )
+    conf.add_argument(
+        "--force",
+        dest="force",
+        action="store_true",
+        help="With --generate-config, replace an existing file without prompting after a timestamped backup",
     )
     conf.add_argument(
         "--setup",
@@ -8146,6 +8205,10 @@ def main():
 
     if args.set_github_token and args.set_webhook_url:
         parser.error("--set-github-token cannot be combined with --set-webhook-url")
+
+    # Reached only when --generate-config did not already handle and exit, so --force would do nothing here
+    if args.force:
+        parser.error("--force only applies to --generate-config with a filename")
 
     apply_diagnostic_cli_overrides(args)
 
