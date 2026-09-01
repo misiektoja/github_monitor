@@ -72,19 +72,18 @@ def scripted_secret_reader(answers):
 def minimal_setup_answers(run_doctor="n", start_monitoring="n"):
     answers = [
         "https://github.com/octocat/",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
+        "",  # Persist target
+        "",  # Public events
+        "",  # Repository changes
+        "",  # Contribution changes
+        "",  # Polling interval
+        "",  # GitHub API URL
+        "",  # GitHub web URL
+        "",  # Email alerts
+        "",  # Webhook alerts
+        "",  # Per-target log
+        "",  # CSV output
+        "",  # Save settings
         run_doctor,
     ]
     if run_doctor == "y":
@@ -93,7 +92,7 @@ def minimal_setup_answers(run_doctor="n", start_monitoring="n"):
 
 
 # Verifies human durations and profile URLs normalize at the input boundary
-@pytest.mark.parametrize(("value", "seconds"), (("30s", 30), ("2m", 120), ("1.5h", 5400), ("1h 30m", 5400), ("1d", 86400)))
+@pytest.mark.parametrize(("value", "seconds"), (("120", 120), ("30s", 30), ("2m", 120), ("1.5h", 5400), ("1h 30m", 5400), ("1d", 86400)))
 def test_wizard_accepts_human_duration_formats(gm_module, value, seconds):
     assert gm_module.wizard_parse_duration(value) == seconds
 
@@ -102,6 +101,8 @@ def test_wizard_accepts_human_duration_formats(gm_module, value, seconds):
 def test_wizard_rejects_invalid_human_input(gm_module):
     with pytest.raises(ValueError):
         gm_module.wizard_parse_duration("half an hour")
+    with pytest.raises(ValueError):
+        gm_module.wizard_parse_duration("31536001")
     assert gm_module.wizard_normalize_target("https://github.com/octocat/repos") == ""
     assert gm_module.wizard_normalize_target("bad--") == ""
 
@@ -129,18 +130,27 @@ def test_setup_wizard_writes_reviewed_config_and_secrets(gm_module, request):
     assert exit_code == 0
     transcript = output.getvalue()
     assert transcript.startswith(f"GitHub Monitoring Tool\n                     v{gm_module.VERSION}\n\nSetup Wizard\n\n")
-    assert transcript.index("Target\n") < transcript.index("Polling\n") < transcript.index("Authentication\n")
+    assert transcript.index("GitHub username or profile URL") < transcript.index("GitHub polling interval (seconds or use s/m/h/d)") < transcript.index("Create or view your GitHub personal access token:")
     assert transcript.index("Setup summary\n") < transcript.index("Saved files\n") < transcript.index("Next steps\n")
+    assert "\nTarget\n" not in transcript
+    assert "\nPolling\n" not in transcript
+    assert "\nAuthentication\n" not in transcript
     assert "Detected install method: manual" in transcript
     assert transcript.count("Install method:") == 1
     assert transcript.count("manual") >= 2
     assert "Recommended setup monitors" not in transcript
     assert "Using normalized GitHub username: octocat" in transcript
-    assert "<redacted>" in transcript
+    assert "Persist target:" in transcript
+    assert "Authentication status:" in transcript
+    assert "GitHub polling interval (seconds or use s/m/h/d) [1800s - 30m]: " in transcript
+    assert "Local timezone" not in transcript
+    assert "Configure email notifications? [y/N]: " in transcript
+    assert "Set up webhook alerts (Discord, ntfy etc.)? [y/N]: " in transcript
     assert token not in transcript
     config_content = config_path.read_text(encoding="utf-8")
     dotenv_content = dotenv_path.read_text(encoding="utf-8")
     assert gm_module.parse_config_content(config_content, str(config_path))["GITHUB_CHECK_INTERVAL"] == 1800
+    assert gm_module.parse_config_content(config_content, str(config_path))["TARGET_GITHUB_USERNAME"] == "octocat"
     assert f"DOTENV_FILE = {str(dotenv_path)!r}" in config_content
     assert "GITHUB_TOKEN" not in config_content
     assert token in dotenv_content
@@ -216,6 +226,23 @@ def test_setup_review_can_edit_one_section_without_losing_other_answers(gm_modul
     assert state.values["GITHUB_CHECK_INTERVAL"] == 300
 
 
+# Verifies a blank required token retries unless the user explicitly accepts an unusable setup
+def test_setup_token_prompt_explains_source_and_gates_empty_input(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    state = gm_module.build_wizard_state(Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor")
+    output = io.StringIO()
+    token = "github_pat_private_wizard_value"
+
+    gm_module.wizard_collect_authentication(state, scripted_reader(["", "", "n"]), scripted_secret_reader(["", token]), output, lambda entered, _url: "octocat" if entered == token else "")
+
+    transcript = output.getvalue()
+    assert f"Create or view your GitHub personal access token: {gm_module.GITHUB_TOKEN_SETTINGS_URL}" in transcript
+    assert "Continue without a token? Nothing can be monitored until one is set [y/N]: " in transcript
+    assert state.secrets["GITHUB_TOKEN"] == token
+    assert state.authenticated_login == "octocat"
+
+
 # Verifies review menus use the shared labels, descriptions and validation messages
 def test_setup_review_menu_matches_the_shared_monitor_wording(gm_module, request):
     directory = make_test_directory()
@@ -280,8 +307,8 @@ def test_setup_wizard_hands_off_to_doctor_then_monitoring(gm_module, request):
 
     assert exit_code == 0
     assert doctor_calls[0].doctor is True
-    assert doctor_calls[0].username == "octocat"
-    assert monitor_calls == [["octocat", "--config-file", str(config_path), "--env-file", str(dotenv_path)]]
+    assert doctor_calls[0].username is None
+    assert monitor_calls == [["--config-file", str(config_path), "--env-file", str(dotenv_path)]]
     assert "Run doctor now? It writes no files and offers real delivery tests only with separate approval." in output.getvalue()
     assert "Start monitoring now? Monitoring will continue until Ctrl+C." in output.getvalue()
     assert output.getvalue().count("[Y/n]: ") >= 2
@@ -364,6 +391,46 @@ def test_zero_argument_cli_prints_welcome(gm_module, monkeypatch, capsys, reques
     assert "usage:" not in transcript
 
 
+# Verifies saved targets shorten generated commands while positional targets remain available
+def test_saved_target_shortens_commands_without_removing_positional_override(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config_path = Path(directory.name) / "monitor.conf"
+    dotenv_path = Path(directory.name) / ".env-monitor"
+    config_path.write_text("TARGET_GITHUB_USERNAME = 'saved-user'\n", encoding="utf-8")
+
+    state = gm_module.build_wizard_state(config_path, dotenv_path)
+
+    assert state.target == "saved-user"
+    assert state.persist_target is True
+    assert gm_module.wizard_monitor_arguments(state) == ["--config-file", str(config_path), "--env-file", str(dotenv_path)]
+    state.target = "positional-user"
+    state.persist_target = False
+    assert gm_module.wizard_monitor_arguments(state)[0] == "positional-user"
+
+
+# Drives the bare CLI path and verifies a saved target starts monitoring instead of reopening welcome
+def test_zero_argument_cli_uses_saved_target(gm_module, monkeypatch, capsys, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config_path = Path(directory.name) / gm_module.DEFAULT_CONFIG_FILENAME
+    config_path.write_text("TARGET_GITHUB_USERNAME = 'saved-user'\nGITHUB_TOKEN = 'private-test-token'\nLOCAL_TIMEZONE = 'Europe/Warsaw'\nDISABLE_LOGGING = True\n", encoding="utf-8")
+    monitored = []
+    monkeypatch.chdir(directory.name)
+    monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor"])
+    monkeypatch.setattr(gm_module.sys, "stdin", io.StringIO())
+    monkeypatch.setattr(gm_module, "check_internet", lambda: True)
+    monkeypatch.setattr(gm_module, "github_monitor_user", lambda username, _csv: monitored.append(username))
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *_args: None)
+
+    with pytest.raises(SystemExit) as exit_error:
+        gm_module.main()
+
+    assert exit_error.value.code == 0
+    assert monitored == ["saved-user"]
+    assert "For <github_target>" not in capsys.readouterr().out
+
+
 # Verifies regular CLI actions accept the same complete profile URL advertised by setup
 def test_doctor_cli_normalizes_complete_profile_url(gm_module, monkeypatch):
     captured = []
@@ -435,9 +502,10 @@ def test_setup_cli_pseudo_terminal_transcript_has_stable_order_and_spacing(gm_mo
         stderr=slave,
         cwd=PROJECT_ROOT,
         close_fds=True,
+        env={**os.environ, "GITHUB_TOKEN": "github_pat_existing_test_value"},
     )
     os.close(slave)
-    os.write(master, b"octocat\n\n\n\n\n\n\n\nn\n\n\n\n\n\n")
+    os.write(master, b"octocat\n" + b"\n" * 7 + b"n\n" + b"\n" * 5 + b"n\n")
     chunks = []
     deadline = time.monotonic() + 10
     while process.poll() is None and time.monotonic() < deadline:
@@ -462,7 +530,7 @@ def test_setup_cli_pseudo_terminal_transcript_has_stable_order_and_spacing(gm_mo
     transcript = b"".join(chunks).decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "")
 
     assert process.returncode == 0, transcript
-    assert transcript.index("Setup Wizard") < transcript.index("Target\n") < transcript.index("Setup summary\n") < transcript.index("Saved files\n") < transcript.index("Next steps\n")
+    assert transcript.index("Setup Wizard") < transcript.index("GitHub username or profile URL") < transcript.index("Setup summary\n") < transcript.index("Saved files\n") < transcript.index("Next steps\n")
     assert "\n\n\n" not in transcript
     assert config_path.exists()
     assert dotenv_path.exists()

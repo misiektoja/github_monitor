@@ -106,6 +106,7 @@ def configure_healthy_doctor(gm_module, monkeypatch):
         "DOTENV_FILE": "",
         "SECRET_SOURCES": {},
         "GITHUB_TOKEN": "github_pat_doctor_private_token",
+        "TARGET_GITHUB_USERNAME": "",
         "GITHUB_API_URL": "https://api.example.test",
         "GITHUB_HTML_URL": "https://github.example.test",
         "CHECK_INTERNET_URL": "https://api.example.test",
@@ -208,6 +209,21 @@ def test_doctor_reports_missing_authentication_and_target(gm_module, monkeypatch
     assert "To fix:" in transcript
     assert "Guide:" in transcript
     assert "Fix the failures above before relying on the tool." in transcript
+
+
+# Verifies Doctor uses the saved target when no positional target is supplied
+def test_doctor_uses_saved_target(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "TARGET_GITHUB_USERNAME", "octocat")
+    output = io.StringIO()
+
+    result = gm_module.run_doctor_preflight(doctor_args(username=None), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
+
+    transcript = output.getvalue()
+    assert result == 0
+    assert "[PASS] Saved GitHub target is valid" in transcript
+    assert "[PASS] GitHub target is accessible" in transcript
+    assert "[WARN] No GitHub target was provided" not in transcript
 
 
 # Verifies network failure is visible in authentication and connectivity checks

@@ -141,9 +141,9 @@ The easiest first run is the guided setup wizard:
 github_monitor --setup
 ```
 
-It asks for the target, polling interval, GitHub authentication, optional email and webhook alerts and output destinations. Answers stay in memory until the complete masked summary is reviewed. Choose **Save settings** to write non-secret settings to `github_monitor.conf` and private values to a separate mode-0600 `.env` file. Existing destinations receive timestamped mode-0600 backups before replacement.
+It asks for the target, whether to save it, the polling interval, GitHub authentication, optional email and webhook alerts and output destinations. Polling accepts seconds or values such as `30s`, `2m`, `1.5h`, `1h 30m` and `1d`. The existing automatic timezone setting is retained instead of adding another setup question. Answers stay in memory until the complete summary is reviewed. Choose **Save settings** to write non-secret settings to `github_monitor.conf` and private values to a separate mode-0600 `.env` file. Existing destinations receive timestamped mode-0600 backups before replacement.
 
-The wizard validates a newly entered GitHub token before saving it. After saving, it offers the read-only Doctor preflight then monitoring. Both prompts default to yes when the saved setup is ready. Commands after setup match a PyPI install or downloaded script and include the selected config plus dotenv paths.
+The wizard links to GitHub's token settings then validates a newly entered token before saving it. An empty token is requested again unless you explicitly confirm that setup should remain unusable for monitoring. After saving, the wizard offers the read-only Doctor preflight then monitoring. Both prompts default to yes when the saved setup is ready. Commands after setup match a PyPI install or downloaded script and include the selected config plus dotenv paths.
 
 Run the tool without arguments to see the same first-run screen used across the monitor tools. It uses short portable commands instead of the active interpreter and absolute script paths:
 
@@ -163,6 +163,8 @@ Full options: python3 github_monitor.py --help
 ```
 
 A PyPI install prints `github_monitor` instead of `python3 github_monitor.py`. Windows prints `python github_monitor.py`. An interactive terminal offers the setup wizard with a default-yes prompt. A non-interactive `--setup` run explains how to use `--generate-config` instead.
+
+When setup saves the target, later runs can omit it. A positional target still overrides `TARGET_GITHUB_USERNAME` for one run. If no target is saved, running the tool without arguments shows the first-run screen above.
 
 For manual setup, create a [GitHub personal access token](#github-personal-access-token) then validate and save it through the hidden prompt:
 
@@ -214,6 +216,8 @@ When the named file already exists, `--generate-config` asks before replacing it
 Edit the `github_monitor.conf` file and change any desired configuration options (detailed comments are provided for each).
 
 `--setup --config-file PATH --env-file PATH` selects custom wizard destinations. Setup parses an existing config as data and preserves its supported settings. It moves usable secrets found there into the dotenv output. Nothing is written during questioning or section edits. **Save settings** validates the complete generated config then prepares both files before replacing either destination.
+
+`TARGET_GITHUB_USERNAME` stores the optional default monitoring target. The setup wizard writes it only when you choose to persist the target. A positional GitHub username or profile URL takes precedence.
 
 Startup resolves values in this order:
 

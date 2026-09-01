@@ -428,7 +428,7 @@ def test_wizard_prompt_and_menu_are_coloured(colored):
     output = io.StringIO()
     monitor.wizard_ask_choice("Pick one", (("first", "First", "Use the first choice."), ("second", "Second", "Use the second choice.")), "second", lambda: "1", output)
     rendered = output.getvalue()
-    assert f"{colored['section']}Pick one{monitor.ANSI_RESET}" in rendered
+    assert f"{colored['info']}Pick one{monitor.ANSI_RESET}" in rendered
     assert f"{colored['username']}1{monitor.ANSI_RESET}. First" in rendered
     assert f"{colored['info']} (default){monitor.ANSI_RESET}" in rendered
     assert f"{colored['info']}Choose [1-2]: {monitor.ANSI_RESET}" in rendered
