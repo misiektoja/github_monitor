@@ -20,6 +20,8 @@ Every check uses one of four stable markers: `[PASS]`, `[WARN]`, `[FAIL]` or `[S
 
 When stdin is interactive and a notification channel is ready, doctor offers a separate default-no approval for one real email and one real webhook. A piped or non-interactive run never sends messages. Review the sanitized report before posting it because targets, paths and recipient addresses can still identify your setup.
 
+The report ends with a **Next steps** block naming the command that starts monitoring, carrying the same `--config-file` and `--env-file` this run checked. While a check is failing it asks for the failures first.
+
 ## Error Messages and Recovery
 
 Failures that stop an action use one consistent shape:
