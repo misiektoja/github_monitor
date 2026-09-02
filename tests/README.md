@@ -37,6 +37,7 @@ and again before anything is published to PyPI.
 
 | File | Area under test |
 | --- | --- |
+| `conftest.py` | Import setup plus shared fixtures: the working-tree module, deterministic globals and the degraded-feature tracker reset between tests |
 | `test_config_loading.py` | Config files read as data, rejected content naming its line and setting, and guarded replacement of a generated config |
 | `test_daily_contributions.py` | Stable calendar window selection and missing-day handling |
 | `test_diagnostic_modes.py` | User-visible verbose and debug transcripts across requests, swallowed exceptions, degraded checks, delivery, files, waits and private-setting sources |
