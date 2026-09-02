@@ -234,7 +234,6 @@ def test_doctor_uses_saved_target(gm_module, monkeypatch):
 
     transcript = output.getvalue()
     assert result == 0
-    assert "[PASS] Saved GitHub target is valid" in transcript
     assert "[PASS] GitHub target is accessible" in transcript
     assert "[WARN] No GitHub target was provided" not in transcript
 
@@ -407,8 +406,7 @@ def test_doctor_keeps_checking_after_invalid_configuration_file(gm_module, monke
     gm_module.doctor_check_configuration(report, doctor_args(config_file=str(config)), Mock())
 
     assert any(check.status == "FAIL" and check.label == "Configuration file could not be loaded" for check in report.checks)
-    assert any(check.label == "GitHub API URL is valid" for check in report.checks)
-    assert any(check.label == "Polling interval is valid" for check in report.checks)
+    assert any(check.label == "TLS certificate verification is on" for check in report.checks)
 
 
 # Verifies doctor only inspects output paths and does not create configured files or directories
@@ -685,3 +683,16 @@ def test_a_rejected_smtp_sign_in_fails_the_check(gm_module, monkeypatch):
     assert email_check.status == "FAIL"
     assert email_check.fix
     assert report.email_ready is False
+
+
+# Verifies settings that are merely valid take no row, since a value that is fine is not a finding
+def test_valid_settings_take_no_configuration_rows(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "TARGET_GITHUB_USERNAME", "octocat")
+    report = gm_module.DoctorReport(target_name="octocat")
+
+    gm_module.doctor_check_configuration(report, doctor_args(), Mock())
+
+    labels = {check.label for check in report.checks}
+    assert labels.isdisjoint({"GitHub API URL is valid", "GitHub web URL is valid", "Polling interval is valid", "Saved GitHub target is valid", "Connectivity timeout is valid", "Recent event window is valid", "GitHub retry policy is valid", "Liveness interval is valid", "Event type selection is valid", "Event type selection is not required", "Log separator mode is valid"})
+    assert "Local timezone is valid" in labels

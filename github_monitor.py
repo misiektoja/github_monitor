@@ -7645,13 +7645,9 @@ def doctor_check_configuration(report, args, parser):
         report.add("Configuration", "PASS", "TLS certificate verification is on", "Every outbound request checks the server certificate")
     else:
         report.add("Configuration", "WARN", "TLS certificate verification is off", "VERIFY_SSL is False, so an intercepted connection cannot be told apart from the real service", "Set VERIFY_SSL back to True unless this network intercepts TLS with its own certificate authority", TLS_GUIDE_URL)
-    if validate_github_endpoint_url(GITHUB_API_URL):
-        report.add("Configuration", "PASS", "GitHub API URL is valid", diagnostic_endpoint(GITHUB_API_URL))
-    else:
+    if not validate_github_endpoint_url(GITHUB_API_URL):
         report.add("Configuration", "FAIL", "GitHub API URL is invalid", sanitize_error_text(GITHUB_API_URL) or "No URL configured", "Set GITHUB_API_URL to a complete HTTPS URL without credentials, query parameters or fragments")
-    if validate_github_endpoint_url(GITHUB_HTML_URL):
-        report.add("Configuration", "PASS", "GitHub web URL is valid", diagnostic_endpoint(GITHUB_HTML_URL))
-    else:
+    if not validate_github_endpoint_url(GITHUB_HTML_URL):
         report.add("Configuration", "FAIL", "GitHub web URL is invalid", sanitize_error_text(GITHUB_HTML_URL) or "No URL configured", "Set GITHUB_HTML_URL to a complete HTTPS URL without credentials, query parameters or fragments")
     if LOCAL_TIMEZONE == "Auto":
         if get_localzone is None:
@@ -7671,42 +7667,24 @@ def doctor_check_configuration(report, args, parser):
         report.add("Configuration", "PASS", "Local timezone is valid", str(LOCAL_TIMEZONE))
     else:
         report.add("Configuration", "FAIL", "Local timezone is invalid", sanitize_error_text(LOCAL_TIMEZONE), "Set LOCAL_TIMEZONE to a valid pytz timezone")
-    if type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0:
-        report.add("Configuration", "PASS", "Polling interval is valid", display_time(GITHUB_CHECK_INTERVAL))
-    else:
+    if not (type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0):
         report.add("Configuration", "FAIL", "Polling interval is invalid", str(GITHUB_CHECK_INTERVAL), "Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds")
-    if TARGET_GITHUB_USERNAME:
-        saved_target = wizard_normalize_target(TARGET_GITHUB_USERNAME)
-        if saved_target:
-            report.add("Configuration", "PASS", "Saved GitHub target is valid", saved_target)
-        else:
-            report.add("Configuration", "FAIL", "Saved GitHub target is invalid", sanitize_error_text(TARGET_GITHUB_USERNAME), "Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL")
-    if isinstance(CHECK_INTERNET_TIMEOUT, (int, float)) and not isinstance(CHECK_INTERNET_TIMEOUT, bool) and CHECK_INTERNET_TIMEOUT > 0:
-        report.add("Configuration", "PASS", "Connectivity timeout is valid", f"{CHECK_INTERNET_TIMEOUT} seconds")
-    else:
+    if TARGET_GITHUB_USERNAME and not wizard_normalize_target(TARGET_GITHUB_USERNAME):
+        report.add("Configuration", "FAIL", "Saved GitHub target is invalid", sanitize_error_text(TARGET_GITHUB_USERNAME), "Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL")
+    if not (isinstance(CHECK_INTERNET_TIMEOUT, (int, float)) and not isinstance(CHECK_INTERNET_TIMEOUT, bool) and CHECK_INTERNET_TIMEOUT > 0):
         report.add("Configuration", "FAIL", "Connectivity timeout is invalid", str(CHECK_INTERNET_TIMEOUT), "Set CHECK_INTERNET_TIMEOUT to a positive number of seconds")
-    if type(EVENTS_NUMBER) is int and EVENTS_NUMBER > 0:
-        report.add("Configuration", "PASS", "Recent event window is valid", f"{EVENTS_NUMBER} events")
-    else:
+    if not (type(EVENTS_NUMBER) is int and EVENTS_NUMBER > 0):
         report.add("Configuration", "FAIL", "Recent event window is invalid", str(EVENTS_NUMBER), "Set EVENTS_NUMBER to a positive integer")
     retry_policy_valid = type(NET_MAX_RETRIES) is int and NET_MAX_RETRIES > 0 and isinstance(NET_BASE_BACKOFF_SEC, (int, float)) and not isinstance(NET_BASE_BACKOFF_SEC, bool) and NET_BASE_BACKOFF_SEC >= 0
-    if retry_policy_valid:
-        report.add("Configuration", "PASS", "GitHub retry policy is valid", f"Attempts: {NET_MAX_RETRIES} | Base backoff: {NET_BASE_BACKOFF_SEC} seconds")
-    else:
+    if not retry_policy_valid:
         report.add("Configuration", "FAIL", "GitHub retry policy is invalid", f"NET_MAX_RETRIES={NET_MAX_RETRIES} | NET_BASE_BACKOFF_SEC={NET_BASE_BACKOFF_SEC}", "Use a positive retry count and a non-negative base backoff")
-    if isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0:
-        report.add("Configuration", "PASS", "Liveness interval is valid", "Disabled" if not LIVENESS_CHECK_INTERVAL else display_time(LIVENESS_CHECK_INTERVAL))
-    else:
+    if not (isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0):
         report.add("Configuration", "FAIL", "Liveness interval is invalid", str(LIVENESS_CHECK_INTERVAL), "Set LIVENESS_CHECK_INTERVAL to zero or a positive number of seconds")
-    if DO_NOT_MONITOR_GITHUB_EVENTS:
-        report.add("Configuration", "PASS", "Event type selection is not required", "GitHub event monitoring is disabled")
-    elif isinstance(EVENTS_TO_MONITOR, (list, tuple)) and any(isinstance(value, str) and value.strip() for value in EVENTS_TO_MONITOR):
-        report.add("Configuration", "PASS", "Event type selection is valid", f"Configured entries: {len(EVENTS_TO_MONITOR)}")
-    else:
+    event_types_valid = isinstance(EVENTS_TO_MONITOR, (list, tuple)) and any(isinstance(value, str) and value.strip() for value in EVENTS_TO_MONITOR)
+    if not DO_NOT_MONITOR_GITHUB_EVENTS and not event_types_valid:
         report.add("Configuration", "FAIL", "Event type selection is invalid", "No usable event type is configured", "Add ALL or at least one supported event name to EVENTS_TO_MONITOR")
     try:
         ascii_log_separators_enabled()
-        report.add("Configuration", "PASS", "Log separator mode is valid", str(ASCII_LOG_SEPARATORS))
     except ValueError as exc:
         report.add("Configuration", "FAIL", "Log separator mode is invalid", str(exc), "Set ASCII_LOG_SEPARATORS to Auto, On or Off")
     return cfg_path, env_path
