@@ -519,6 +519,8 @@ GITHUB_AUTH_REFRESH_VERSION = 0
 
 # Whole checks, so a check interval longer than the liveness interval still waits one check instead of reporting on every check
 LIVENESS_CHECK_COUNTER = max(1, -(-LIVENESS_CHECK_INTERVAL // GITHUB_CHECK_INTERVAL)) if LIVENESS_CHECK_INTERVAL else 0
+# Seconds rather than checks, because a failing run usually retries on a different interval than a healthy one
+LIVENESS_REMINDER_SECONDS = LIVENESS_CHECK_INTERVAL if LIVENESS_CHECK_COUNTER else 0
 
 stdout_bck = None
 csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
@@ -3145,22 +3147,23 @@ class OutageReporter:
     def __init__(self):
         self.code = None
         self.since = 0
-        self.checks = 0
+        self.reported_at = 0
 
-    # Records one failed check and returns "full" for a new failure, "degraded" on the liveness cadence,
+    # Records one failed check and returns "full" for a new failure, "degraded" once the liveness interval has passed,
     # "repeat" while the liveness banner is switched off or "" while the same failure is merely continuing
-    def failed(self, advice, liveness_counter):
+    def failed(self, advice, liveness_interval):
+        now = int(time.time())
         if advice.code != self.code:
             self.code = advice.code
-            self.since = int(time.time())
-            self.checks = 0
+            self.since = now
+            self.reported_at = now
             return "full"
-        self.checks += 1
         # With the liveness banner off there is nothing to carry the reminder, so the summary keeps its old cadence
-        if not liveness_counter:
+        if not liveness_interval:
             return "repeat"
-        if self.checks >= liveness_counter:
-            self.checks = 0
+        # Timed rather than counted, because a failing run usually retries on a different interval than a healthy one
+        if now - self.reported_at >= liveness_interval:
+            self.reported_at = now
             return "degraded"
         return ""
 
@@ -3171,7 +3174,7 @@ class OutageReporter:
         lasted = int(time.time()) - self.since
         self.code = None
         self.since = 0
-        self.checks = 0
+        self.reported_at = 0
         return lasted
 
 
@@ -6931,7 +6934,7 @@ def github_monitor_user(user, csv_file_name):
             advice = classify_recovery_error(e, "target")
 
             # A failure that has not changed is left to the liveness cadence rather than repeated every check
-            outage_outcome = outage.failed(advice, LIVENESS_CHECK_COUNTER)
+            outage_outcome = outage.failed(advice, LIVENESS_REMINDER_SECONDS)
             if outage_outcome in ("full", "repeat"):
                 print_recovery_advice(advice, tracker=monitor_recovery_tracker, retry_note=f"retrying in {display_time(GITHUB_CHECK_INTERVAL)}")
             elif outage_outcome == "degraded":
@@ -7627,7 +7630,7 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
 
 # Applies monitoring, output and email command-line overrides to effective settings
 def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser, strict=True) -> None:
-    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_CHECK_COUNTER, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
+    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_CHECK_COUNTER, LIVENESS_REMINDER_SECONDS, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
     if args.check_interval is not None:
         GITHUB_CHECK_INTERVAL = args.check_interval
     if args.csv_file is not None:
@@ -7675,6 +7678,7 @@ def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.Ar
         WEBHOOK_EVENT_NOTIFICATION = False
     intervals_valid = type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0 and isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0
     LIVENESS_CHECK_COUNTER = max(1, -(-int(LIVENESS_CHECK_INTERVAL) // GITHUB_CHECK_INTERVAL)) if intervals_valid and LIVENESS_CHECK_INTERVAL else 0
+    LIVENESS_REMINDER_SECONDS = int(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_COUNTER else 0
 
 
 # Returns the final log file path without creating its directory or file

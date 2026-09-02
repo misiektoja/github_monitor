@@ -154,15 +154,38 @@ def test_repeated_advice_keeps_the_summary_and_drops_the_fix(gm_module, capsys):
     assert third == first
 
 
-# Verifies a lasting failure is reported once and then only on the liveness cadence
-def test_the_outage_reporter_reports_once_then_on_the_cadence(gm_module):
+# Verifies a lasting failure is reported once and then only once the liveness interval has passed
+def test_the_outage_reporter_reports_once_then_on_the_cadence(gm_module, monkeypatch):
+    clock = [1000000.0]
+    monkeypatch.setattr(gm_module.time, "time", lambda: clock[0])
     reporter = gm_module.OutageReporter()
     advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
 
-    assert reporter.failed(advice, 3) == "full"
-    assert [reporter.failed(advice, 3) for _ in range(3)] == ["", "", "degraded"]
+    assert reporter.failed(advice, 180) == "full"
+    outcomes = []
+    for _ in range(3):
+        clock[0] += 60
+        outcomes.append(reporter.failed(advice, 180))
+
+    assert outcomes == ["", "", "degraded"]
     assert reporter.recovered() is not None
     assert reporter.recovered() is None
+
+
+# Verifies the reminder follows the clock, so a run that retries faster than it polls does not remind more often
+def test_the_outage_reminder_follows_the_clock_not_the_check_count(gm_module, monkeypatch):
+    clock = [1000000.0]
+    monkeypatch.setattr(gm_module.time, "time", lambda: clock[0])
+    reporter = gm_module.OutageReporter()
+    advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
+
+    assert reporter.failed(advice, 900) == "full"
+    outcomes = []
+    for _ in range(60):
+        clock[0] += 15
+        outcomes.append(reporter.failed(advice, 900))
+
+    assert outcomes.count("degraded") == 1
 
 
 # Verifies the summary keeps its every-check cadence when the liveness banner is switched off
@@ -199,7 +222,7 @@ def test_the_monitoring_loop_classifies_its_failures(gm_module):
     source = inspect.getsource(gm_module.github_monitor_user)
 
     assert 'classify_recovery_error(e, "target")' in source
-    assert "outage.failed(advice, LIVENESS_CHECK_COUNTER)" in source
+    assert "outage.failed(advice, LIVENESS_REMINDER_SECONDS)" in source
     assert "print_outage_liveness(user, advice, outage.since)" in source
     assert "print_outage_recovery(user, outage_lasted)" in source
     assert '"Forbidden"' not in source, "the loop must classify failures rather than match exception text"
