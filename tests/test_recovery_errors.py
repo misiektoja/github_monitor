@@ -204,3 +204,12 @@ def test_the_monitoring_loop_classifies_its_failures(gm_module):
     assert "print_outage_recovery(user, outage_lasted)" in source
     assert '"Forbidden"' not in source, "the loop must classify failures rather than match exception text"
     assert '"Bad Request"' not in source, "the loop must classify failures rather than match exception text"
+
+
+# Verifies a named sub-operation keeps the shared line shape rather than inventing its own
+def test_a_labelled_failure_keeps_the_shared_shape(gm_module, capsys):
+    advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
+
+    gm_module.print_recovery_advice(advice, verbose=False, debug=False, retry_note="retrying in 1 hour", label="Warning")
+
+    assert capsys.readouterr().out.splitlines()[0] == "* Warning: GitHub returned an API error (retrying in 1 hour)"

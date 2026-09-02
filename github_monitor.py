@@ -3100,10 +3100,10 @@ def secret_replacement_declined_advice(subject, flag, guide_url, plural=False):
 
 
 # Renders recovery advice according to the effective diagnostic modes
-def render_recovery_advice(advice, verbose=None, debug=None, retry_note="", with_fix=True):
+def render_recovery_advice(advice, verbose=None, debug=None, retry_note="", with_fix=True, label="Error"):
     verbose_enabled = VERBOSE_MODE if verbose is None else bool(verbose)
     debug_enabled = DEBUG_MODE if debug is None else bool(debug)
-    lines = [f"* Error: {sanitize_error_text(advice.summary)}" + (f" ({retry_note})" if retry_note else "")]
+    lines = [f"* {label}: {sanitize_error_text(advice.summary)}" + (f" ({retry_note})" if retry_note else "")]
     if not with_fix:
         return lines[0]
     lines.append(f"To fix: {sanitize_error_text(advice.fix)}")
@@ -3117,8 +3117,8 @@ def render_recovery_advice(advice, verbose=None, debug=None, retry_note="", with
 
 
 # Prints advice in full the first time its category appears and as one line while the same category persists
-def print_recovery_advice(advice, verbose=None, debug=None, tracker=None, retry_note=""):
-    print(render_recovery_advice(advice, verbose=verbose, debug=debug, retry_note=retry_note, with_fix=tracker is None or tracker.should_render(advice)))
+def print_recovery_advice(advice, verbose=None, debug=None, tracker=None, retry_note="", label="Error"):
+    print(render_recovery_advice(advice, verbose=verbose, debug=debug, retry_note=retry_note, with_fix=tracker is None or tracker.should_render(advice), label=label))
 
 
 # Suppresses a repeated fix paragraph until the failure category changes or a check succeeds
