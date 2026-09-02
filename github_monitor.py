@@ -517,7 +517,8 @@ SECRET_SOURCES = {}
 # Version incremented when SIGHUP reloads the GitHub token
 GITHUB_AUTH_REFRESH_VERSION = 0
 
-LIVENESS_CHECK_COUNTER = LIVENESS_CHECK_INTERVAL / GITHUB_CHECK_INTERVAL
+# Whole checks, so a check interval longer than the liveness interval still waits one check instead of reporting on every check
+LIVENESS_CHECK_COUNTER = max(1, -(-LIVENESS_CHECK_INTERVAL // GITHUB_CHECK_INTERVAL)) if LIVENESS_CHECK_INTERVAL else 0
 
 stdout_bck = None
 csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
@@ -7594,7 +7595,7 @@ def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.Ar
         EVENT_NOTIFICATION = False
         WEBHOOK_EVENT_NOTIFICATION = False
     intervals_valid = type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0 and isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0
-    LIVENESS_CHECK_COUNTER = LIVENESS_CHECK_INTERVAL / GITHUB_CHECK_INTERVAL if intervals_valid else 0
+    LIVENESS_CHECK_COUNTER = max(1, -(-int(LIVENESS_CHECK_INTERVAL) // GITHUB_CHECK_INTERVAL)) if intervals_valid and LIVENESS_CHECK_INTERVAL else 0
 
 
 # Returns the final log file path without creating its directory or file

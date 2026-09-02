@@ -2,6 +2,7 @@
 
 import tempfile
 from pathlib import Path
+import argparse
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -230,6 +231,18 @@ def test_a_command_line_secret_is_not_reported_as_a_config_file_secret(gm_module
 
     assert rows["Secrets from command line"] == "GITHUB_TOKEN"
     assert rows["Secrets from config file"] == "None"
+
+
+# Verifies a check interval longer than the liveness interval still waits one whole check
+@pytest.mark.parametrize("check_interval,liveness_interval,expected", [(1800, 43200, 24), (86400, 43200, 1), (1800, 0, 0)])
+def test_the_liveness_counter_never_falls_below_one_check(gm_module, monkeypatch, check_interval, liveness_interval, expected):
+    monkeypatch.setattr(gm_module, "LIVENESS_CHECK_INTERVAL", liveness_interval)
+    monkeypatch.setattr(gm_module, "LIVENESS_CHECK_COUNTER", 99)
+    args = argparse.Namespace(check_interval=check_interval, csv_file=None, disable_logging=False, get_all_repos=False, no_monitor_events=False, notify_daily_contribs=False, notify_errors=False, notify_events=False, notify_profile=False, notify_repo_changes=False, notify_repo_update_date=False, repos=None, track_contribs_changes=False, track_repos_changes=False)
+
+    gm_module.apply_monitoring_cli_overrides(args, argparse.ArgumentParser())
+
+    assert gm_module.LIVENESS_CHECK_COUNTER == expected
 
 
 # Verifies a first run without a username is told about the target before it is told about the token
