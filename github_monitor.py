@@ -8191,18 +8191,24 @@ def doctor_output_is_interactive(stream=None):
 # Reads one default-no delivery approval without exposing any private setting
 def ask_doctor_approval(prompt, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
-    destination.write(colorize("info", f"{prompt} [y/N]: "))
-    destination.flush()
-    try:
-        answer = read_interactively(input_func)
-    except EOFError:
-        destination.write("\n")
-        return False
-    except KeyboardInterrupt:
-        # Ctrl+C ends the run here the way it does anywhere else, rather than only declining this one test
-        signal_handler(signal.SIGINT, None)
-        raise
-    return str(answer).strip().casefold() in {"y", "yes"}
+    while True:
+        destination.write(colorize("info", f"{prompt} [y/N]: "))
+        destination.flush()
+        try:
+            answer = str(read_interactively(input_func)).strip().casefold()
+        except EOFError:
+            destination.write("\n")
+            return False
+        except KeyboardInterrupt:
+            # Ctrl+C ends the run here the way it does anywhere else, rather than only declining this one test
+            signal_handler(signal.SIGINT, None)
+            raise
+        if not answer or answer in ("n", "no"):
+            return False
+        if answer in ("y", "yes"):
+            return True
+        # An unreadable answer is re-asked rather than counted as consent or as a refusal the user did not give
+        destination.write(colorize("warning", "  Please answer 'y' or 'n'.") + "\n")
 
 
 # Offers separately approved real delivery tests only on interactive stdin

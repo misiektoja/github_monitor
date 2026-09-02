@@ -929,3 +929,24 @@ def test_a_delivery_prompt_interrupt_ends_the_run(gm_module, monkeypatch):
         gm_module.ask_doctor_approval("Send one test", interrupt)
 
     assert raised.value.code == 0
+
+
+# Verifies an unreadable delivery answer is asked again rather than counted as a refusal the user did not give
+def test_an_unreadable_delivery_answer_is_asked_again(gm_module):
+    answers = iter(["maybe", "yes"])
+    stream = io.StringIO()
+
+    approved = gm_module.ask_doctor_approval("Send one test", lambda: next(answers), stream)
+
+    assert approved is True
+    written = stream.getvalue()
+    assert written.count("Send one test [y/N]: ") == 2
+    assert "Please answer 'y' or 'n'." in written
+
+
+# Verifies a blank answer still declines, so the prompt keeps defaulting to no rather than looping forever
+def test_a_blank_delivery_answer_still_declines(gm_module):
+    stream = io.StringIO()
+
+    assert gm_module.ask_doctor_approval("Send one test", lambda: "", stream) is False
+    assert stream.getvalue().count("Send one test [y/N]: ") == 1
