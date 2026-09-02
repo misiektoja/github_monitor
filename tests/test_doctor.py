@@ -839,4 +839,5 @@ def test_the_connectivity_row_names_the_shared_endpoint(gm_module, monkeypatch):
     failing = failing_report.checks[0]
     assert (passing.status, passing.label, passing.detail) == ("PASS", "The connectivity endpoint is reachable", "Endpoint: https://probe.example/ping")
     assert (failing.status, failing.label, failing.detail) == ("FAIL", "The connectivity endpoint could not be reached", "Endpoint: https://probe.example/ping")
-    assert failing.fix == "Check network, DNS, proxy and CHECK_INTERNET_URL settings"
+    # The row carries no guide, because no page covers this check and the report ends with the doctor link
+    assert (failing.fix, failing.guide) == ("Check network, DNS, proxy and CHECK_INTERNET_URL settings", "")

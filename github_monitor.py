@@ -3082,7 +3082,8 @@ def classify_recovery_error(error, context="unknown", install_context=None):
         # Classified from the error, because a failed endpoint check has one answer whatever the exception was
         timed_out = isinstance(error, (req.Timeout, TimeoutError, socket.timeout))
         summary = "The connectivity endpoint did not answer in time" if timed_out else "The connectivity endpoint could not be reached"
-        return make_recovery_advice("network.timeout" if timed_out else "network.connection", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail, DEBUG_GUIDE_URL)
+        # No guide, because no page covers this check and the doctor report already ends with the troubleshooting link
+        return make_recovery_advice("network.timeout" if timed_out else "network.connection", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail)
     if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
         return make_recovery_advice("network.timeout", "The network request timed out", "Check connectivity and increase the configured timeout before trying again", True, detail, DEBUG_GUIDE_URL)
     if isinstance(error, (req.ConnectionError, socket.gaierror)):

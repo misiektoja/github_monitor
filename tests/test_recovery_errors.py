@@ -62,6 +62,15 @@ def test_recovery_classifier_maps_representative_failures(gm_module, error, cont
     assert advice.retryable is retryable
 
 
+# The connectivity check has no page of its own, and its fix already names the setting to look at
+def test_the_connectivity_advice_carries_no_guide_link(gm_module):
+    advice = gm_module.classify_recovery_error(gm_module.req.ConnectionError("offline"), "connectivity")
+
+    assert advice.code == "network.connection"
+    assert advice.fix == "Check network, DNS, proxy and CHECK_INTERNET_URL settings"
+    assert advice.guide_url == ""
+
+
 # Verifies RecoveryError carries structured advice and its original cause
 def test_recovery_error_preserves_advice_and_cause(gm_module):
     cause = RuntimeError("underlying")
