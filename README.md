@@ -30,6 +30,7 @@ pip install github_monitor
    - added/removed **followings and followers**
    - added/removed **starred repositories**
    - added/removed **public repositories**
+   - detection whether a removal was caused by a **deleted account or repository**, flagged in the alert
    - changes in **user name, email, location, company, bio and blog URL**
    - changes in **profile visibility** (public to private and vice versa)
    - changes in **user's daily contributions**

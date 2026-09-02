@@ -3928,6 +3928,52 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
     return wrapped
 
 
+# Returns True when the login still resolves to a GitHub account, False when it does not and None when the check fails
+def github_account_exists(login):
+    try:
+        g = create_github_client("account existence check")
+        debug_github_operation("account existence check", login)
+        g.get_user(login)
+        return True
+    except UnknownObjectException:
+        return False
+    except Exception as e:
+        debug_print("PyGithub", operation="account existence check", outcome="failed", error=f"{type(e).__name__}: {e}", target=login)
+        return None
+
+
+# Returns True when the owner/repo path still resolves to a repository, False when it does not and None when the check fails
+def github_repo_exists(full_name):
+    try:
+        g = create_github_client("repository existence check")
+        debug_github_operation("repository existence check", full_name)
+        g.get_repo(full_name)
+        return True
+    except UnknownObjectException:
+        return False
+    except Exception as e:
+        debug_print("PyGithub", operation="repository existence check", outcome="failed", error=f"{type(e).__name__}: {e}", target=full_name)
+        return None
+
+
+# Builds a bracketed note when a removed list item vanished because its account or repository is gone, empty otherwise
+def removed_item_note(label, item, user=None):
+    label_lower = label.lower()
+    if label_lower in ("stargazers", "watchers", "followers", "followings"):
+        if github_account_exists(item) is False:
+            return " (account no longer exists)"
+    elif label_lower == "forks":
+        if github_account_exists(item.split("/", 1)[0]) is False:
+            return " (owner account no longer exists)"
+    elif label_lower == "starred repos":
+        if github_repo_exists(item) is False:
+            return " (repository no longer exists)"
+    elif label_lower == "repos" and user:
+        if github_repo_exists(f"{user}/{item}") is False:
+            return " (repository no longer exists)"
+    return ""
+
+
 # Prints followers and followings for a GitHub user (-f)
 def github_print_followers_and_followings(user):
     user_name_str = user
@@ -5189,9 +5235,10 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
             item_url = (f"{web_base}/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
                         else f"{web_base}/{user}/{item}/")
 
-            print(f"- {item} [ {item_url} ]")
-            removed_list_str += f"- {item} [ {item_url} ]\n"
-            removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a><br>"
+            note = removed_item_note(label, item, user)
+            print(f"- {item} [ {item_url} ]{note}")
+            removed_list_str += f"- {item} [ {item_url} ]{note}\n"
+            removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a>{html.escape(note)}<br>"
             try:
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Removed {label[:-1]}", user, item, "")
@@ -5335,13 +5382,14 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             removed_mbody = f"\n{removal_text} {label.lower()}:\n\n"
             removed_mbody_html = f"<br><b>{html.escape(removal_text)} {html.escape(label.lower())}:</b><br><br>"
             for item in removed_items:
-                item_line = f"- {item} [ {github_web_base()}/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
+                note = removed_item_note(label, item)
+                item_line = f"- {item} [ {github_web_base()}/{item}/ ]{note}" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
                 print(item_line)
                 removed_list_str += item_line + "\n"
 
                 if label.lower() in ["stargazers", "watchers", "forks"]:
                     item_url = f"{github_web_base()}/{item}/"
-                    removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a><br>"
+                    removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a>{html.escape(note)}<br>"
                 elif label in ["Issues", "Pull Requests", "Discussions"]:
                     match = re.match(r'#(\d+)\s+(.+?)\s+\(([^)]+)\)\s+\[\s*([^\]]+)\s*\]', item)
                     if match:
