@@ -39,6 +39,17 @@ def test_removed_stargazer_notes_deleted_account(gm_module, monkeypatch, capsys)
     assert '<a href="https://github.com/ghosted/">ghosted</a> (account no longer exists)<br>' in emails[0][0][2]
 
 
+# Confirms webhook alerts carry the deleted-account note in the plain-text body
+def test_removed_stargazer_note_reaches_webhook_body(gm_module, monkeypatch):
+    webhooks = []
+    monkeypatch.setattr(gm_module, "GITHUB_API_URL", "https://api.github.com")
+    monkeypatch.setattr(gm_module, "webhook_event_enabled", lambda notification_type: True)
+    monkeypatch.setattr(gm_module, "send_webhook", lambda title, body, *args, **kwargs: webhooks.append((title, body)) or 0)
+    monkeypatch.setattr(gm_module, "github_account_exists", lambda login: False)
+    gm_module.check_repo_list_changes(1, 0, ["ghosted"], [], "Stargazers", "monitor", "https://github.com/owner/monitor", "owner", "")
+    assert "- ghosted [ https://github.com/ghosted/ ] (account no longer exists)" in webhooks[0][1]
+
+
 # Confirms removed stargazers with live accounts stay unannotated
 def test_removed_stargazer_with_live_account_has_no_note(gm_module, monkeypatch, capsys):
     monkeypatch.setattr(gm_module, "GITHUB_API_URL", "https://api.github.com")
