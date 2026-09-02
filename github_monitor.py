@@ -2949,8 +2949,19 @@ def install_method_display_name(method=None):
     return {"pip": "PyPI install", "manual": "downloaded script"}.get(selected, selected)
 
 
-# Renders one exact or portable install-aware command with platform quoting
-def render_install_command(arguments, install_context=None, exact=True):
+# Returns the --config-file and --env-file arguments this run was given, skipping any the caller already passed
+def active_path_arguments(arguments=()):
+    given = {str(argument) for argument in arguments}
+    paths = []
+    if CLI_CONFIG_PATH and "--config-file" not in given:
+        paths.extend(("--config-file", str(CLI_CONFIG_PATH)))
+    if DOTENV_FILE and str(DOTENV_FILE).casefold() != "none" and "--env-file" not in given:
+        paths.extend(("--env-file", str(DOTENV_FILE)))
+    return paths
+
+
+# Renders one install-aware command with platform quoting, carrying the paths this run was given
+def render_install_command(arguments, install_context=None, exact=False, include_paths=True):
     context = detect_install_context() if install_context is None else install_context
     prefix = context.command_prefix
     if not exact:
@@ -2958,6 +2969,8 @@ def render_install_command(arguments, install_context=None, exact=True):
         path_class = PureWindowsPath if context.operating_system.casefold() == "windows" else Path
         prefix = (executable, path_class(context.command_prefix[-1]).name) if context.install_method == "manual" else ("github_monitor",)
     parts = [*prefix, *(str(argument) for argument in arguments)]
+    if include_paths:
+        parts.extend(active_path_arguments(arguments))
     if context.operating_system.casefold() == "windows":
         return subprocess.list2cmdline(parts)
     return shlex.join(parts)
@@ -3059,7 +3072,7 @@ def classify_recovery_error(error, context="unknown", install_context=None):
     detail = f"{type(error).__name__}: {error}"
     token_command = render_install_command(["--set-github-token"], install_context)
     webhook_command = render_install_command(["--set-webhook-url"], install_context)
-    config_command = render_install_command(["--generate-config", "github_monitor.conf"], install_context)
+    config_command = render_install_command(["--generate-config", "github_monitor.conf"], install_context, include_paths=False)
     debug_command = render_install_command(["--debug"], install_context)
     if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
         return make_recovery_advice("network.timeout", "The network request timed out", "Check connectivity and increase the configured timeout before trying again", True, detail, DEBUG_GUIDE_URL)
@@ -3219,7 +3232,7 @@ def render_help_examples(groups, guide_url):
 
 # Returns the --help epilog, listing the commands worth knowing rather than every command there is
 def help_examples():
-    prefix = render_install_command([], exact=False)
+    prefix = render_install_command([], include_paths=False)
     groups = (
         ("Getting started", (
             ("Guided setup, recommended for the first run", f"{prefix} --setup"),
@@ -5788,7 +5801,7 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
     if error_out is not None:
         error_out.append(detail)
     if report_errors:
-        config_command = render_install_command(["--generate-config", "github_monitor.conf"])
+        config_command = render_install_command(["--generate-config", "github_monitor.conf"], include_paths=False)
         advice = make_recovery_advice("config.invalid", detail, f"Keep only documented SETTING = value lines with plain literal values or regenerate with: {config_command}", False, detail, CONFIG_GUIDE_URL)
         print_recovery_advice(advice)
     return False
@@ -9037,7 +9050,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     if show_banner:
         _write_startup_banner(destination)
     if not terminal_is_interactive:
-        generate_command = render_install_command(["--generate-config", str(selected_config)], context)
+        generate_command = render_install_command(["--generate-config", str(selected_config)], context, include_paths=False)
         destination.write(colorize("header", "Setup Wizard\n") + "\n")
         destination.write(colorize("warning", "The setup wizard needs an interactive terminal (TTY).") + "\n")
         destination.write("Run --setup from an interactive shell or use --generate-config and edit the files manually.\n")
@@ -9106,9 +9119,9 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     except WizardCancelled:
         destination.write(colorize("warning", "Setup is saved. Use the commands below when ready.") + "\n")
     _wizard_heading(destination, "Next steps", "header")
-    _wizard_print_command(destination, "Check setup again:", render_install_command(doctor_arguments, context))
+    _wizard_print_command(destination, "Check setup again:", render_install_command(doctor_arguments, context, include_paths=False))
     start_label = "After Doctor passes, start monitoring:" if doctor_exit not in (None, 0) else "Start monitoring:"
-    _wizard_print_command(destination, start_label, render_install_command(monitor_arguments, context))
+    _wizard_print_command(destination, start_label, render_install_command(monitor_arguments, context, include_paths=False))
     destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
     if doctor_exit == 0:
         try:
@@ -9134,7 +9147,7 @@ def run_zero_argument_welcome(parser, input_func=input, input_stream=None, strea
     except Exception as exc:
         debug_swallowed_exception("Welcome input terminal detection", exc)
         interactive = False
-    prefix = render_install_command([], context, exact=False)
+    prefix = render_install_command([], context, include_paths=False)
     destination.write("For <github_target>, use a GitHub username or complete profile URL.\n\n")
     _wizard_print_command(destination, "Quickest start (already configured):", f"{prefix} <github_target>")
     setup_suffix = "   (or just answer Y below)" if interactive else ""
@@ -9640,7 +9653,7 @@ def main():
     configured_settings = set()
 
     if not cfg_path and CLI_CONFIG_PATH:
-        config_command = render_install_command(["--generate-config", "github_monitor.conf"])
+        config_command = render_install_command(["--generate-config", "github_monitor.conf"], include_paths=False)
         advice = make_recovery_advice("config.missing", f"Config file '{CLI_CONFIG_PATH}' does not exist", f"Correct --config-file or generate a new configuration with: {config_command}", False, f"FileNotFoundError: {CLI_CONFIG_PATH}", CONFIG_GUIDE_URL)
         print_recovery_advice(advice)
         sys.exit(1)
