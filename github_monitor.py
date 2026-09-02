@@ -704,27 +704,35 @@ def normalize_log_separators(message):
     return re.sub(r"(?m)^─+$", lambda match: match.group(0).replace("─", "-"), message)
 
 
-# Truncates each line to a display width after tab expansion
+# Truncates each line to a display width, expanding tabs and counting double-width characters correctly
 def truncate_string_per_line(message, truncate_width, tabsize=8):
     try:
         from wcwidth import wcwidth
     except ImportError:
         return message
-    lines = message.split("\n")
     truncated_lines = []
-    for line in lines:
+    for line in message.split("\n"):
         expanded_line = line.expandtabs(tabsize)
         current_width = 0
-        truncated = ""
-        for char in expanded_line:
+        truncated = []
+        position = 0
+        while position < len(expanded_line):
+            # A colour sequence is copied through free of charge, so styling never eats into the visible width
+            escape = SGR_SEQUENCE_RE.match(expanded_line, position)
+            if escape:
+                truncated.append(escape.group(0))
+                position = escape.end()
+                continue
+            char = expanded_line[position]
             char_width = wcwidth(char)
-            if char_width < 0:
+            if char_width is None or char_width < 0:
                 char_width = 0
             if current_width + char_width > truncate_width:
                 break
-            truncated += char
+            truncated.append(char)
             current_width += char_width
-        truncated_lines.append(truncated)
+            position += 1
+        truncated_lines.append("".join(truncated))
     return "\n".join(truncated_lines)
 
 
