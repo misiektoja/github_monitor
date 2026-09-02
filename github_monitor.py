@@ -517,10 +517,8 @@ SECRET_SOURCES = {}
 # Version incremented when SIGHUP reloads the GitHub token
 GITHUB_AUTH_REFRESH_VERSION = 0
 
-# Whole checks, so a check interval longer than the liveness interval still waits one check instead of reporting on every check
-LIVENESS_CHECK_COUNTER = max(1, -(-LIVENESS_CHECK_INTERVAL // GITHUB_CHECK_INTERVAL)) if LIVENESS_CHECK_INTERVAL else 0
 # Seconds rather than checks, because a failing run usually retries on a different interval than a healthy one
-LIVENESS_REMINDER_SECONDS = LIVENESS_CHECK_INTERVAL if LIVENESS_CHECK_COUNTER else 0
+LIVENESS_REMINDER_SECONDS = LIVENESS_CHECK_INTERVAL if LIVENESS_CHECK_INTERVAL > 0 else 0
 
 stdout_bck = None
 csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
@@ -6898,7 +6896,7 @@ def github_monitor_user(user, csv_file_name):
     reset_degraded_features()
     debug_monitor_wait_timing("initial monitoring interval", GITHUB_CHECK_INTERVAL)
     time.sleep(GITHUB_CHECK_INTERVAL)
-    alive_counter = 0
+    alive_since = int(time.time())
     email_sent = False
     monitor_recovery_tracker = RecoveryHintTracker()
     outage = OutageReporter()
@@ -6927,6 +6925,7 @@ def github_monitor_user(user, csv_file_name):
             outage_lasted = outage.recovered()
             if outage_lasted is not None:
                 print_outage_recovery(user, outage_lasted)
+                alive_since = int(time.time())
 
         except (GithubException, Exception) as e:
             safe_error = sanitize_error_text(e)
@@ -7574,11 +7573,10 @@ def github_monitor_user(user, csv_file_name):
         report_recovered_features()
         close_pending_notice_block()
 
-        alive_counter += 1
 
-        if LIVENESS_CHECK_COUNTER and alive_counter >= LIVENESS_CHECK_COUNTER:
+        if LIVENESS_REMINDER_SECONDS and int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS:
             print_liveness_banner(f"Monitoring healthy for {user}. No tracked change since the last check")
-            alive_counter = 0
+            alive_since = int(time.time())
 
         debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL)
         debug_monitor_wait_timing("normal monitoring interval", GITHUB_CHECK_INTERVAL)
@@ -7630,7 +7628,7 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
 
 # Applies monitoring, output and email command-line overrides to effective settings
 def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser, strict=True) -> None:
-    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_CHECK_COUNTER, LIVENESS_REMINDER_SECONDS, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
+    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_REMINDER_SECONDS, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
     if args.check_interval is not None:
         GITHUB_CHECK_INTERVAL = args.check_interval
     if args.csv_file is not None:
@@ -7677,8 +7675,7 @@ def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.Ar
         EVENT_NOTIFICATION = False
         WEBHOOK_EVENT_NOTIFICATION = False
     intervals_valid = type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0 and isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0
-    LIVENESS_CHECK_COUNTER = max(1, -(-int(LIVENESS_CHECK_INTERVAL) // GITHUB_CHECK_INTERVAL)) if intervals_valid and LIVENESS_CHECK_INTERVAL else 0
-    LIVENESS_REMINDER_SECONDS = int(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_COUNTER else 0
+    LIVENESS_REMINDER_SECONDS = int(LIVENESS_CHECK_INTERVAL) if intervals_valid and LIVENESS_CHECK_INTERVAL else 0
 
 
 # Returns the final log file path without creating its directory or file
@@ -9364,7 +9361,7 @@ def launch_wizard_monitoring(arguments):
 
 # Parses command-line settings and starts the requested GitHub Monitor action
 def main():
-    global CLI_CONFIG_PATH, CONFIG_DISCOVERY_DISABLED, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS, TARGET_GITHUB_USERNAME, WEBHOOK_ENABLED
+    global CLI_CONFIG_PATH, CONFIG_DISCOVERY_DISABLED, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_REMINDER_SECONDS, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS, TARGET_GITHUB_USERNAME, WEBHOOK_ENABLED
 
     if "--debug" in sys.argv:
         DEBUG_MODE = True

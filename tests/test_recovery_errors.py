@@ -256,3 +256,4 @@ def test_the_loop_reports_its_healthy_banner_unconditionally(gm_module):
 
     assert "print_liveness_banner(f\"Monitoring healthy for {user}." in source
     assert "verbose_print(f\"Monitoring healthy" not in source, "the healthy banner is no longer verbose-only"
+    assert "int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS" in source, "the healthy banner is timed rather than counted"
