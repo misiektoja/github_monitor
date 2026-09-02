@@ -784,6 +784,22 @@ def test_an_actionable_row_is_rejected_without_a_fix(gm_module):
     assert report.add("Configuration", "SKIP", "a label").status == "SKIP"
 
 
+# Verifies a link in a detail line takes the link colour while a styled action line keeps its own colour
+def test_a_link_in_a_detail_line_is_coloured_as_a_link(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "COLOR_ENABLED", True)
+    monkeypatch.setattr(gm_module, "_COLOR_STYLES", {name: gm_module._build_ansi_sequence(value) for name, value in gm_module.DEFAULT_COLOR_THEME.items() if gm_module._build_ansi_sequence(value)})
+    report = gm_module.DoctorReport()
+    report.add("Connectivity", "PASS", "The connectivity endpoint is reachable", "Endpoint: https://api.github.com")
+    report.add("Authentication", "FAIL", "The token did not validate", "", "Create a token at https://github.com/settings/tokens", gm_module.DOCTOR_GUIDE_URL)
+    stream = io.StringIO()
+
+    gm_module.render_doctor_sections(report, stream)
+    rendered = stream.getvalue()
+    fix_line = next(line for line in rendered.splitlines() if "To fix:" in line)
+
+    assert f"  Endpoint: {gm_module.colorize('link', 'https://api.github.com')}" in rendered
+    assert fix_line == f"  {gm_module.colorize('info', 'To fix: Create a token at https://github.com/settings/tokens')}"
+
 # Verifies only the four shared markers can reach a report
 def test_only_the_four_shared_markers_are_accepted(gm_module):
     report = gm_module.DoctorReport()

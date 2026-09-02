@@ -8170,7 +8170,8 @@ def render_doctor_check(check, stream=None):
     marker = colorize(_DOCTOR_MARK_STYLES[check.status], f"[{check.status}]")
     destination.write(f"{marker} {sanitize_doctor_text(check.label)}\n")
     if check.detail:
-        destination.write(f"  {sanitize_doctor_text(check.detail)}\n")
+        # The report is written to a sanitize-only surface, so the link colour every other line gets from the stream is applied here
+        destination.write(f"  {_sub_outside_color(_URL_RE, lambda match: colorize('link', match.group(0)), sanitize_doctor_text(check.detail))}\n")
     if check.fix and check.status != "PASS":
         destination.write(f"  {colorize('info', f'To fix: {sanitize_doctor_text(check.fix)}')}\n")
         # The closing summary already points at the doctor page, so a row links only to a page of its own
