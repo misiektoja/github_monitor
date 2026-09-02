@@ -35,6 +35,14 @@ def gm_module():
     return gm
 
 
+@pytest.fixture(autouse=True)
+# Clears the degraded-feature tracker, whose module-level state would otherwise leak between tests
+def reset_degraded_feature_tracker():
+    gm.reset_degraded_features()
+    yield
+    gm.reset_degraded_features()
+
+
 @pytest.fixture
 # Restores every module-level setting a real startup run mutates, so one test cannot leak into the next
 def restored_globals():

@@ -101,8 +101,8 @@ def test_degraded_feature_lines_are_closed_once_by_the_check(gm_module, monkeypa
     gm_module.close_pending_notice_block()
 
     lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
-    assert lines[0] == "* Block status is unavailable, so block and unblock alerts cannot fire this cycle"
-    assert lines[1] == "* Starred repository count is unavailable, so starred repository change alerts cannot fire this cycle"
+    assert lines[0] == "* Block status is unavailable, so block and unblock alerts cannot fire"
+    assert lines[1] == "* Starred repository count is unavailable, so starred repository change alerts cannot fire"
     assert lines[2].startswith("Timestamp:")
     assert set(lines[3]) == {"\u2500"}
 
@@ -120,6 +120,36 @@ def test_a_report_trailer_absorbs_a_degraded_line_printed_inside_it(gm_module, m
     gm_module.close_pending_notice_block()
 
     assert capsys.readouterr().out == ""
+
+
+# Verifies a lasting outage is reported on the check it starts rather than on every check it continues
+def test_a_lasting_degraded_feature_is_reported_once(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm_module, "MONITORING_ACTIVE", True)
+
+    for _ in range(3):
+        gm_module.verbose_degraded_feature("Block status", "block and unblock alerts")
+        gm_module.report_recovered_features()
+
+    output = capsys.readouterr().out
+    assert output.count("Block status is unavailable, so block and unblock alerts cannot fire") == 1
+    assert "is available again" not in output
+
+
+# Verifies a feature that works again is reported once, so verbose says when the alert can fire again
+def test_a_recovered_feature_is_reported_once(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm_module, "MONITORING_ACTIVE", True)
+
+    gm_module.verbose_degraded_feature("Block status", "block and unblock alerts")
+    gm_module.report_recovered_features()
+    capsys.readouterr()
+
+    gm_module.report_recovered_features()
+    gm_module.report_recovered_features()
+
+    output = capsys.readouterr().out
+    assert output.count("Block status is available again, so block and unblock alerts can fire again") == 1
 
 
 # Verifies a verbose notice stays silent while verbose mode is off, so the trailer cannot leak into a quiet run
@@ -177,7 +207,7 @@ def test_swallowed_exception_reports_degraded_feature(gm_module, monkeypatch, ca
     assert gm_module.is_blocked_by("octocat") is None
 
     output = capsys.readouterr().out
-    assert "Block status is unavailable, so block and unblock alerts cannot fire this cycle" in output
+    assert "Block status is unavailable, so block and unblock alerts cannot fire" in output
     assert "Block status: outcome=degraded, error=ConnectionError" in output
     assert token not in output
 

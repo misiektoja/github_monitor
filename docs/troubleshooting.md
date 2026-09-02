@@ -59,7 +59,7 @@ The modes cover the full runtime path:
 
 * Direct HTTP, PyGithub and SMTP operations report their destination and timeout. Every configured credential is rendered as the fixed `<redacted>` marker inside the printer.
 * Exceptions that would otherwise be swallowed name the failed operation and exception type in debug output.
-* Degraded profile, repository, contribution and event checks state which alert cannot fire in verbose output.
+* Degraded profile, repository, contribution and event checks state which alert cannot fire in verbose output, once when the lookup starts failing and once when it works again.
 * Email and webhook deliveries report the attempt, response, retryability, wait and confirmed outcome as `outcome=OK` or `outcome=failed`.
 * Config, dotenv, CSV, log and private-setting file operations report both success and failure branches.
 * Retries and monitoring sleeps report their reason, interval and next timestamp.

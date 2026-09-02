@@ -481,6 +481,12 @@ MONITORING_ACTIVE = False
 # True while a verbose line is waiting for the timestamp trailer that closes its block
 PENDING_NOTICE_BLOCK = False
 
+# Features already reported unavailable, mapped to the alert they block, so a lasting outage is reported once
+DEGRADED_FEATURES: dict = {}
+
+# Features reported unavailable during the check in progress, so the rest can be reported as recovered
+DEGRADED_FEATURES_SEEN: set = set()
+
 COLORED_OUTPUT = False
 COLOR_THEME: dict = {}
 TRUNCATE_CHARS = 0
@@ -2837,15 +2843,41 @@ def debug_swallowed_exception(operation, error):
     debug_print(operation, outcome="degraded", error=f"{type(error).__name__}: {error}")
 
 
-# Reports a tracked feature that cannot produce its alert during the current cycle
+# Reports a tracked feature that cannot produce its alert, once per outage rather than on every check
 def verbose_degraded_feature(feature, alert, error=None):
     global PENDING_NOTICE_BLOCK
-    verbose_print(f"{feature} is unavailable, so {alert} cannot fire this cycle")
+    if error is not None:
+        debug_swallowed_exception(feature, error)
+    else:
+        debug_print(feature, outcome="degraded", alert=alert)
+    if MONITORING_ACTIVE:
+        DEGRADED_FEATURES_SEEN.add(feature)
+        # An outage that lasts is news once, so the repeats are left to debug until the feature works again
+        if DEGRADED_FEATURES.get(feature) == alert:
+            return
+        DEGRADED_FEATURES[feature] = alert
+    verbose_print(f"{feature} is unavailable, so {alert} cannot fire")
     # A degraded feature can be reported from inside a report, so the check closes the block instead of this line
     if VERBOSE_MODE and MONITORING_ACTIVE:
         PENDING_NOTICE_BLOCK = True
-    if error is not None:
-        debug_swallowed_exception(feature, error)
+
+
+# Forgets every tracked outage, so the checks that follow report the state they find rather than an older one
+def reset_degraded_features():
+    DEGRADED_FEATURES.clear()
+    DEGRADED_FEATURES_SEEN.clear()
+
+
+# Reports every feature that was unavailable before this check and worked during it
+def report_recovered_features():
+    global PENDING_NOTICE_BLOCK
+    recovered = [(feature, alert) for feature, alert in DEGRADED_FEATURES.items() if feature not in DEGRADED_FEATURES_SEEN]
+    for feature, alert in recovered:
+        del DEGRADED_FEATURES[feature]
+        verbose_print(f"{feature} is available again, so {alert} can fire again")
+    DEGRADED_FEATURES_SEEN.clear()
+    if recovered and VERBOSE_MODE and MONITORING_ACTIVE:
+        PENDING_NOTICE_BLOCK = True
 
 
 # Logs the start of one monitoring poll and returns its monotonic start time
@@ -6625,6 +6657,8 @@ def github_monitor_user(user, csv_file_name):
         sys.exit(1)
 
     verbose_notice(f"Initial snapshot completed for {user}")
+    # The snapshot names its features differently from the checks, so its outages are not carried into the loop
+    reset_degraded_features()
     debug_monitor_wait_timing("initial monitoring interval", GITHUB_CHECK_INTERVAL)
     time.sleep(GITHUB_CHECK_INTERVAL)
     alive_counter = 0
@@ -7295,6 +7329,7 @@ def github_monitor_user(user, csv_file_name):
             else:
                 verbose_degraded_feature("Recent events", "new event alerts")
 
+        report_recovered_features()
         close_pending_notice_block()
 
         alive_counter += 1
