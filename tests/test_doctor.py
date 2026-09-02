@@ -894,3 +894,17 @@ def test_the_timezone_row_follows_the_shared_resolver(gm_module, monkeypatch):
     assert (row.status, row.label, row.detail) == ("FAIL", "Local timezone is invalid", "Time zone: Mars/Olympus_Mons")
     # A failed resolution still leaves a zone the rest of the report can stamp timestamps with
     assert gm_module.LOCAL_TIMEZONE == "UTC"
+
+
+# Verifies Ctrl+C at a delivery prompt ends the run instead of declining one test and asking the next
+def test_a_delivery_prompt_interrupt_ends_the_run(gm_module, monkeypatch):
+    def interrupt(prompt=""):
+        raise KeyboardInterrupt
+
+    # The handler restores the saved stream, so it is pointed at the one this test captures
+    monkeypatch.setattr(gm_module, "stdout_bck", gm_module.sys.stdout)
+
+    with pytest.raises(SystemExit) as raised:
+        gm_module.ask_doctor_approval("Send one test", interrupt)
+
+    assert raised.value.code == 0
