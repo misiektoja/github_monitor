@@ -841,3 +841,38 @@ def test_the_connectivity_row_names_the_shared_endpoint(gm_module, monkeypatch):
     assert (failing.status, failing.label, failing.detail) == ("FAIL", "The connectivity endpoint could not be reached", "Endpoint: https://probe.example/ping")
     # The row carries no guide, because no page covers this check and the report ends with the doctor link
     assert (failing.fix, failing.guide) == ("Check network, DNS, proxy and CHECK_INTERNET_URL settings", "")
+
+
+# Verifies a report read on its own ends with the command that starts monitoring, carrying this run's files
+def test_the_report_ends_with_the_command_that_starts_monitoring(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", "/etc/github.conf")
+    monkeypatch.setattr(gm_module, "DOTENV_FILE", "/etc/github.env")
+    destination = io.StringIO()
+
+    gm_module.print_doctor_next_steps(destination, doctor_exit=0)
+
+    transcript = destination.getvalue()
+    assert "Next steps" in transcript
+    assert "Start monitoring:" in transcript
+    assert "--config-file /etc/github.conf --env-file /etc/github.env" in transcript
+    assert transcript.rstrip().endswith(gm_module.QUICK_START_GUIDE_URL)
+
+
+# Verifies a failing report names the order to work in, rather than inviting a run that cannot succeed yet
+def test_a_failing_report_asks_for_the_failures_first(gm_module):
+    destination = io.StringIO()
+
+    gm_module.print_doctor_next_steps(destination, doctor_exit=1)
+
+    assert "After Doctor passes, start monitoring:" in destination.getvalue()
+
+
+# Verifies a target the command line named is carried, so the printed command watches the account just checked
+def test_a_command_line_target_is_carried_into_the_command(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", "")
+    monkeypatch.setattr(gm_module, "DOTENV_FILE", "")
+    destination = io.StringIO()
+
+    gm_module.print_doctor_next_steps(destination, "someone", doctor_exit=0)
+
+    assert "someone" in destination.getvalue()

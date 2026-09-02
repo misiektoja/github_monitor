@@ -8157,6 +8157,16 @@ def _wizard_print_command(destination, label, command, suffix=""):
     destination.write(f"    {colorize('section', command)}{colorize('info', suffix) if suffix else ''}\n\n")
 
 
+# Writes the command that starts monitoring with the files this run checked, so a report read on its own
+# ends with the next action rather than leaving the reader to assemble the command
+def print_doctor_next_steps(destination, target=None, doctor_exit=0):
+    _wizard_heading(destination, "Next steps", "header")
+    label = "After Doctor passes, start monitoring:" if doctor_exit else "Start monitoring:"
+    _wizard_print_command(destination, label, render_install_command([str(target)] if target else []))
+    destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
+
+
+
 # Walks up to the first directory that exists, so a destination under a missing folder can still be judged
 def wizard_nearest_existing_parent(path):
     candidate = Path(path).expanduser()
@@ -9652,7 +9662,9 @@ def main():
         incompatible = (args.setup, args.generate_config, args.set_github_token, args.set_smtp_password, args.set_webhook_url, args.send_test_email, args.send_test_webhook, args.list_repos, args.list_starred_repos, args.list_followers_and_followings, args.list_recent_events)
         if any(incompatible):
             parser.error("--doctor cannot be combined with setup, listing or one-shot delivery commands")
-        sys.exit(run_doctor_preflight(args, parser, show_banner=False))
+        doctor_exit = run_doctor_preflight(args, parser, show_banner=False)
+        print_doctor_next_steps(terminal_surface_stream(sys.stdout), args.username, doctor_exit)
+        sys.exit(doctor_exit)
 
     config_discovery_disabled = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
     if args.config_file and not config_discovery_disabled:
