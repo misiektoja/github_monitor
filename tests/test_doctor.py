@@ -786,3 +786,38 @@ def test_the_action_lines_sit_indented_under_their_marker(gm_module):
     rows = [line for line in output.getvalue().splitlines() if line]
 
     assert rows[1:] == ["[WARN] a warning row", "  a detail worth keeping", "  To fix: do the thing", f"  Guide: {gm_module.DOCTOR_GUIDE_URL}", "[PASS] a passing row"]
+
+
+# Verifies an approved delivery test that failed reaches the summary, so a failing run cannot report a clean one
+def test_a_failed_delivery_test_reaches_the_summary(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "alerts@example.test")
+    report = gm_module.DoctorReport(email_ready=True)
+    output = FakeTTY()
+
+    gm_module.doctor_run_optional_delivery_tests(report, lambda: "yes", FakeTTY(), output, Mock(return_value=1), Mock(return_value=0))
+
+    assert [(check.section, check.status, check.label) for check in report.checks] == [("Optional delivery tests", "FAIL", "Test email delivery failed")]
+    assert report.failure_count == 1
+    summary = io.StringIO()
+    gm_module.render_doctor_summary(report, summary)
+    assert "1 check(s) failed, 0 warning(s)." in summary.getvalue()
+
+
+# Verifies every doctor entry point renders its summary after the delivery tests, so the sentence and the exit code describe one run
+def test_the_summary_is_rendered_after_the_delivery_tests(gm_module):
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(gm_module))
+    checked = 0
+    for function in [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]:
+        calls = [(call.lineno, ast.unparse(call.func)) for call in ast.walk(function) if isinstance(call, ast.Call)]
+        offers = [lineno for lineno, name in calls if name.endswith("doctor_run_optional_delivery_tests")]
+        summaries = [lineno for lineno, name in calls if name.endswith("render_doctor_summary")]
+        if not offers or not summaries:
+            continue
+        checked += 1
+        assert max(offers) < min(summaries), f"{function.name} renders the summary before the delivery tests"
+
+    assert checked, "no doctor entry point runs the delivery tests and then the summary"
