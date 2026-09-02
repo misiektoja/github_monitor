@@ -275,7 +275,7 @@ A value combines one colour with any number of style attributes separated by spa
 | `branch` | Branches, refs and target commitish values |
 | `duration` | Polling intervals and elapsed times |
 | `timestamp_label` | The `Timestamp:` label. Empty by default so the label stays plain |
-| `timestamp` | Timestamp values |
+| `timestamp_value` | Timestamp values |
 | `info` | Informational lines, prompts and recovery actions |
 | `warning` | Warning lines and wizard validation notices |
 | `error` | Error lines and failed verdicts |
@@ -288,7 +288,7 @@ A value combines one colour with any number of style attributes separated by spa
 | `boolean_false` | `False`, `Disabled`, `Off` and Doctor FAIL values |
 | `count_up` | Values in reported increases such as `from 10 to 12` and `(+2)` |
 | `count_down` | Values in reported decreases such as `from 12 to 10` and `(-2)` |
-| `url` | HTTP and HTTPS links |
+| `link` | HTTP and HTTPS links |
 
 Static counts stay plain. Only values that report a change receive `count_up` or `count_down`.
 

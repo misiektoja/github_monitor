@@ -134,7 +134,7 @@ def test_timestamp_label_is_uncolored(colored):
     result = monitor._colorize_line("Timestamp:\t\t\tWed 26 Aug 2026, 20:23:03")
     assert monitor.DEFAULT_COLOR_THEME["timestamp_label"] == ""
     assert "timestamp_label" not in colored
-    assert result == f"Timestamp:\t\t\t{colored['timestamp']}Wed 26 Aug 2026, 20:23:03{monitor.ANSI_RESET}"
+    assert result == f"Timestamp:\t\t\t{colored['timestamp_value']}Wed 26 Aug 2026, 20:23:03{monitor.ANSI_RESET}"
 
 
 # Verifies startup summary labels do not trigger whole-line styles
@@ -215,7 +215,7 @@ def test_listing_rows_use_their_domain_colour(colored, line, token, part):
     result = monitor._colorize_line(line)
     assert f"{colored[part]}{token}{monitor.ANSI_RESET}" in result
     if "https://" in line:
-        assert colored["url"] in result
+        assert colored["link"] in result
 
 
 # Verifies doctor markers are coloured without colouring their details
@@ -424,7 +424,7 @@ def test_logger_unwraps_the_early_terminal_stream(colored, monkeypatch, tmp_path
     finally:
         logger.logfile.close()
     assert logger.terminal is raw
-    assert raw.getvalue() == f"Timestamp:\t\t\t{colored['timestamp']}Wed 26 Aug 2026, 20:23:03{monitor.ANSI_RESET}\n"
+    assert raw.getvalue() == f"Timestamp:\t\t\t{colored['timestamp_value']}Wed 26 Aug 2026, 20:23:03{monitor.ANSI_RESET}\n"
 
 
 # Verifies nested early streams reach the terminal
@@ -497,8 +497,31 @@ def test_documented_theme_keys_match_the_built_in_theme():
     assert set(documented) == set(monitor.DEFAULT_COLOR_THEME)
 
 
+# Verifies a config written against the pre-rename 'url' and 'timestamp' keys still colours links and timestamps
+def test_legacy_theme_keys_still_apply(monkeypatch):
+    monkeypatch.setattr(monitor, "COLORED_OUTPUT", True)
+    monkeypatch.setattr(monitor, "COLOR_THEME", {"url": "red", "timestamp": "green"})
+    monkeypatch.setattr(monitor, "COLOR_ENABLED", False)
+    monkeypatch.setattr(monitor, "_COLOR_STYLES", {})
+    monkeypatch.setattr(monitor, "_stream_supports_color", lambda stream: True)
+    monitor.init_color_output(io.StringIO())
+    assert monitor._COLOR_STYLES["link"] == monitor._build_ansi_sequence("red")
+    assert monitor._COLOR_STYLES["timestamp_value"] == monitor._build_ansi_sequence("green")
+
+
+# Verifies the current key name wins when a config sets both the old and the new name
+def test_current_theme_key_wins_over_the_legacy_name(monkeypatch):
+    monkeypatch.setattr(monitor, "COLORED_OUTPUT", True)
+    monkeypatch.setattr(monitor, "COLOR_THEME", {"url": "red", "link": "green"})
+    monkeypatch.setattr(monitor, "COLOR_ENABLED", False)
+    monkeypatch.setattr(monitor, "_COLOR_STYLES", {})
+    monkeypatch.setattr(monitor, "_stream_supports_color", lambda stream: True)
+    monitor.init_color_output(io.StringIO())
+    assert monitor._COLOR_STYLES["link"] == monitor._build_ansi_sequence("green")
+
+
 # Verifies the target uses username colour everywhere
-@pytest.mark.parametrize("line", ["Monitoring GitHub user octocat", "User 'octocat' not found", "Getting repositories for user 'octocat'", "Username:\t\t\toctocat"])
+@pytest.mark.parametrize("line", ["Monitoring GitHub user octocat", "User 'octocat' not found", "Getting repositories for user 'octocat'", "Username:\t\t\toctocat", "* Target:                       octocat"])
 def test_target_username_uses_the_username_colour_everywhere(colored, line):
     result = monitor._colorize_line(line)
     assert monitor.ANSI_ESCAPE_RE.sub("", result) == line
@@ -574,7 +597,7 @@ def test_explicit_surface_stream_avoids_a_second_colour_pass(colored):
 def test_recovery_guidance_uses_the_info_colour(colored):
     result = monitor._colorize_line(f"To fix: Retry at {monitor.CONFIG_GUIDE_URL}")
     assert result.startswith(colored["info"])
-    assert colored["url"] in result
+    assert colored["link"] in result
 
 
 # Verifies names remain visible inside whole-line styles

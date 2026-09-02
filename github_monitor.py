@@ -360,7 +360,7 @@ COLOR_THEME = {
     "header": "bright_cyan",
     "section": "bright_white",
     # Identity
-    "username": "blue underline",
+    "username": "bright_cyan underline",
     "id": "bright_magenta",
     # Presence and visibility status values
     "status_online": "green",
@@ -374,7 +374,7 @@ COLOR_THEME = {
     "duration": "green",
     # Misc
     "timestamp_label": "",
-    "timestamp": "cyan",
+    "timestamp_value": "cyan",
     "info": "cyan",
     "warning": "yellow",
     "error": "red",
@@ -390,7 +390,7 @@ COLOR_THEME = {
     # Counters and differences
     "count_up": "green",
     "count_down": "red",
-    "url": "blue underline",
+    "link": "blue underline",
 }
 
 # Max characters per line when printing to screen to avoid line wrapping
@@ -782,7 +782,7 @@ DEFAULT_COLOR_THEME = {
     "header": "bright_cyan",
     "section": "bright_white",
     # Identity
-    "username": "blue underline",
+    "username": "bright_cyan underline",
     "id": "bright_magenta",
     # Presence and visibility status values
     "status_online": "green",
@@ -796,7 +796,7 @@ DEFAULT_COLOR_THEME = {
     "duration": "green",
     # Misc
     "timestamp_label": "",
-    "timestamp": "cyan",
+    "timestamp_value": "cyan",
     "info": "cyan",
     "warning": "yellow",
     "error": "red",
@@ -812,8 +812,11 @@ DEFAULT_COLOR_THEME = {
     # Counters and differences
     "count_up": "green",
     "count_down": "red",
-    "url": "blue underline",
+    "link": "blue underline",
 }
+
+# COLOR_THEME key names used by older releases, still honoured so an existing config keeps working
+_THEME_KEY_ALIASES = {"url": "link", "timestamp": "timestamp_value"}
 
 ANSI_RESET = "\033[0m"
 
@@ -928,6 +931,10 @@ def init_color_output(stream):
         return
     user_theme = globals().get("COLOR_THEME") if isinstance(globals().get("COLOR_THEME"), dict) else {}
     theme = {**DEFAULT_COLOR_THEME, **(user_theme or {})}
+    # A config written against an older key name still wins over the default, unless it also sets the current name
+    for legacy_name, current_name in _THEME_KEY_ALIASES.items():
+        if user_theme and legacy_name in user_theme and current_name not in user_theme:
+            theme[current_name] = user_theme[legacy_name]
     _COLOR_STYLES = {name: sequence for name, value in theme.items() if (sequence := _build_ansi_sequence(value))}
 
 
@@ -1032,14 +1039,14 @@ def _colorize_line(line):
         item = linked_list_match.group(2)
         url_parts = [part for part in urlsplit(linked_list_match.group(4)).path.split("/") if part]
         item_style = "repository" if "/" in item or len(url_parts) >= 2 else "username"
-        return f"{linked_list_match.group(1)}{colorize(item_style, item)}{linked_list_match.group(3)}{colorize('url', linked_list_match.group(4))}{linked_list_match.group(5)}"
+        return f"{linked_list_match.group(1)}{colorize(item_style, item)}{linked_list_match.group(3)}{colorize('link', linked_list_match.group(4))}{linked_list_match.group(5)}"
     user_list_match = _USER_LIST_RE.match(line)
     if user_list_match:
         return f"{user_list_match.group(1)}{colorize('username', user_list_match.group(2))}"
     labeled_value = _split_output_label(line, ("Timestamp:", "Liveness check, timestamp:"))
     if labeled_value:
         label, rest = labeled_value
-        colored = f"{colorize('timestamp_label', label)}{colorize('timestamp', rest)}"
+        colored = f"{colorize('timestamp_label', label)}{colorize('timestamp_value', rest)}"
         return colored + ("\n" if line.endswith("\n") else "")
     labeled_value = _split_output_label(line, ("Public profile:",))
     if labeled_value:
@@ -1055,7 +1062,7 @@ def _colorize_line(line):
         colored = f"{label}{colorize(status_style, status)}"
         return colored + ("\n" if line.endswith("\n") else "")
     if " URL:" in line or _split_output_label(line, ("URL:",)):
-        return _sub_outside_color(_URL_RE, lambda match: colorize("url", match.group(0)), line)
+        return _sub_outside_color(_URL_RE, lambda match: colorize("link", match.group(0)), line)
     for labels, style_name in _LABEL_STYLES:
         labeled_value = _split_output_label(line, labels)
         if labeled_value:
@@ -1072,7 +1079,7 @@ def _colorize_line(line):
     line = _sub_outside_color(_HOUR_RANGE_RE, lambda match: colorize("date_range", match.group(0)), line)
     line = _sub_outside_color(_LONG_DATE_RE, lambda match: colorize("date", match.group(0)), line)
     line = _sub_outside_color(_TIME_ONLY_RE, lambda match: colorize("date", match.group(0)), line)
-    line = _sub_outside_color(_URL_RE, lambda match: colorize("url", match.group(0)), line)
+    line = _sub_outside_color(_URL_RE, lambda match: colorize("link", match.group(0)), line)
     line = _sub_outside_color(_PROFILE_VISIBILITY_CHANGE_RE, lambda match: f"{match.group(1)}{match.group(2)}{colorize_status(match.group(3))}{match.group(4)}", line)
     line = _sub_outside_color(_BLOCK_CHANGE_RE, lambda match: colorize_status(match.group(0)), line)
     line = _sub_outside_color(_REPOSITORY_PUBLIC_RE, lambda match: colorize_status(match.group(0)), line)
@@ -7833,7 +7840,7 @@ def render_doctor_check(check, stream=None):
         destination.write(f"  {sanitize_doctor_text(check.detail)}\n")
     if check.status != "PASS":
         destination.write(colorize("info", f"To fix: {sanitize_doctor_text(check.fix)}") + "\n")
-        destination.write(f"Guide: {colorize('url', sanitize_doctor_text(check.guide))}\n")
+        destination.write(f"Guide: {colorize('link', sanitize_doctor_text(check.guide))}\n")
 
 
 # Renders fixed-order report sections with exactly one blank line between them
@@ -7929,7 +7936,7 @@ def render_doctor_summary(report, stream=None):
         destination.write(colorize("warning", f"  All critical checks passed with {report.warning_count} warning(s). Review the warnings above.") + "\n")
     else:
         destination.write(colorize("boolean_true", "  All checks passed. You are good to go!") + "\n")
-    destination.write(f"\nGuide: {colorize('url', DOCTOR_GUIDE_URL)}\n")
+    destination.write(f"\nGuide: {colorize('link', DOCTOR_GUIDE_URL)}\n")
 
 
 # Runs the complete read-only preflight and returns its healthcheck exit code
@@ -8335,7 +8342,7 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
     destination = sys.stdout if stream is None else stream
     state.values["GITHUB_API_URL"] = wizard_ask_text("GitHub API URL", str(state.values["GITHUB_API_URL"]), lambda value: "" if validate_github_endpoint_url(value) else "enter a complete HTTPS GitHub API URL", input_func, destination)
     state.values["GITHUB_HTML_URL"] = wizard_ask_text("GitHub web URL", str(state.values["GITHUB_HTML_URL"]), wizard_https_url_error, input_func, destination)
-    destination.write(f"Create or view your GitHub personal access token: {colorize('url', GITHUB_TOKEN_SETTINGS_URL)}\n")
+    destination.write(f"Create or view your GitHub personal access token: {colorize('link', GITHUB_TOKEN_SETTINGS_URL)}\n")
     existing = bool(state.secrets.get("GITHUB_TOKEN") or state.environment_token_available)
     if existing and not wizard_ask_yes_no("Replace the GitHub token already configured?", False, input_func, destination):
         return
@@ -8874,7 +8881,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         destination.write(colorize("warning", "The setup wizard needs an interactive terminal (TTY).") + "\n")
         destination.write("Run --setup from an interactive shell or use --generate-config and edit the files manually.\n")
         _wizard_print_command(destination, "Generate a config manually with:", generate_command)
-        destination.write(f"Guide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
+        destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
         return 1
     try:
         state = build_wizard_state(selected_config, selected_dotenv, context)
@@ -8925,7 +8932,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     _wizard_print_command(destination, "Check setup again:", render_install_command(doctor_arguments, context))
     start_label = "After Doctor passes, start monitoring:" if doctor_exit not in (None, 0) else "Start monitoring:"
     _wizard_print_command(destination, start_label, render_install_command(monitor_arguments, context))
-    destination.write(f"Guide: {colorize('url', QUICK_START_GUIDE_URL)}\n")
+    destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
     if doctor_exit == 0:
         try:
             start_now = wizard_ask_yes_no("Start monitoring now? Monitoring will continue until Ctrl+C.", True, input_func, destination)
@@ -8956,7 +8963,7 @@ def run_zero_argument_welcome(parser, input_func=input, input_stream=None, strea
     _wizard_print_command(destination, "Easiest start (guided setup wizard):", f"{prefix} --setup", setup_suffix)
     _wizard_print_command(destination, "Check setup before monitoring:", f"{prefix} --doctor <github_target>")
     destination.write(f"Full options: {colorize('section', prefix + ' --help')}\n")
-    destination.write(f"\nGuide:        {colorize('url', QUICK_START_GUIDE_URL)}\n")
+    destination.write(f"\nGuide:        {colorize('link', QUICK_START_GUIDE_URL)}\n")
     if not interactive:
         return 1
     destination.write("\n")
