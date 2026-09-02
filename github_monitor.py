@@ -7826,7 +7826,7 @@ def doctor_check_environment(report, module_finder=None):
             report.add("Environment", "PASS", f"Optional dependency {package_name} is installed", f"Used only for {feature}")
         else:
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
-            report.add("Environment", "WARN", f"Optional dependency {package_name} is not installed", f"{feature[:1].upper() + feature[1:]} will not work while other features remain available", f"Install it with: {install_command}")
+            report.add("Environment", "WARN", f"Optional dependency {package_name} is not installed", f"{feature[:1].upper() + feature[1:]} will not work. Every other feature is unaffected", f"Install it with: {install_command}")
 
 
 # Returns whether a URL is a complete credential-free HTTPS endpoint
@@ -8064,7 +8064,7 @@ def doctor_add_path_check(report, label, path):
     else:
         parent = doctor_existing_parent(selected)
         writable = parent.is_dir() and os.access(parent, os.W_OK)
-        detail = f"Path: {selected} | Existing parent: {parent}"
+        detail = f"Path: {selected}"
     if writable:
         report.add("Configuration", "PASS", f"{label} appears writable", detail)
     else:
@@ -8171,24 +8171,27 @@ def render_doctor_check(check, stream=None):
     destination.write(f"{marker} {sanitize_doctor_text(check.label)}\n")
     if check.detail:
         destination.write(f"  {sanitize_doctor_text(check.detail)}\n")
-    if check.status != "PASS":
+    if check.fix and check.status != "PASS":
         destination.write(f"  {colorize('info', f'To fix: {sanitize_doctor_text(check.fix)}')}\n")
         # The closing summary already points at the doctor page, so a row links only to a page of its own
         if check.guide:
-            destination.write(f"  Guide: {colorize('link', sanitize_doctor_text(check.guide))}\n")
+            destination.write(f"  {colorize('info', f'Guide: {sanitize_doctor_text(check.guide)}')}\n")
 
 
-# Renders fixed-order report sections with exactly one blank line between them
+# The fixed section order the report renders in, chosen so each section depends only on the ones above it
+DOCTOR_SECTIONS = ("Environment", "Configuration", "Authentication", "Connectivity", "Target", "Monitoring", "Notifications")
+
+
+# Renders every non-empty section in the fixed order with exactly one blank line between them
 def render_doctor_sections(report, stream=None):
     destination = sys.stdout if stream is None else stream
-    current_section = None
-    for check in report.checks:
-        if check.section == "Optional delivery tests":
+    for section in DOCTOR_SECTIONS:
+        section_checks = [check for check in report.checks if check.section == section]
+        if not section_checks:
             continue
-        if check.section != current_section:
-            destination.write(f"\n{colorize('section', check.section)}\n")
-            current_section = check.section
-        render_doctor_check(check, destination)
+        destination.write(f"\n{colorize('section', section)}\n")
+        for check in section_checks:
+            render_doctor_check(check, destination)
 
 
 # Returns whether stdin supports separate interactive delivery approvals
@@ -8253,7 +8256,7 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
             else:
                 check = report.add("Optional delivery tests", "FAIL", "Doctor test email delivery failed", "The approved test email could not be delivered", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
         else:
-            check = report.add("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test", "Run doctor again and approve the email test when ready", SMTP_GUIDE_URL)
+            check = report.add("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test. Run doctor again and approve the email test when ready")
         render_doctor_check(check, destination)
     if report.webhook_ready:
         provider = webhook_provider_display_name()
@@ -8265,7 +8268,7 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
             else:
                 check = report.add("Optional delivery tests", "FAIL", f"Doctor test webhook through {provider} delivery failed", "The approved test webhook could not be delivered", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
         else:
-            check = report.add("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test", "Run doctor again and approve the webhook test when ready", WEBHOOK_GUIDE_URL)
+            check = report.add("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test. Run doctor again and approve the webhook test when ready")
         render_doctor_check(check, destination)
 
 
@@ -8279,7 +8282,7 @@ def render_doctor_summary(report, stream=None):
         destination.write(colorize("warning", f"  All critical checks passed with {report.warning_count} warning(s). Review the warnings above.") + "\n")
     else:
         destination.write(colorize("boolean_true", "  All checks passed. You are good to go!") + "\n")
-    destination.write(f"\nGuide: {colorize('link', DOCTOR_GUIDE_URL)}\n")
+    destination.write("\n" + colorize("info", f"Guide: {DOCTOR_GUIDE_URL}") + "\n")
 
 
 # Runs the complete read-only preflight and returns its healthcheck exit code
@@ -8303,10 +8306,10 @@ def run_doctor_preflight(args, parser, request_get=None, github_factory=None, co
         while isinstance(colour_stream, (Logger, TerminalStream)):
             colour_stream = colour_stream.terminal
         init_color_output(colour_stream)
-        progress.show("authentication")
-        doctor_check_authentication(report, request_get)
         progress.show("connectivity")
         doctor_check_connectivity(report, request_get)
+        progress.show("authentication")
+        doctor_check_authentication(report, request_get)
         progress.show("the monitored profile")
         doctor_check_target(report, github_factory)
         progress.show("monitoring feeds")
@@ -9146,14 +9149,14 @@ def wizard_collect_file_destinations(state, input_func=input, getpass_func=None,
 def wizard_edit_section(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
     destination = sys.stdout if stream is None else stream
     sections = (
-        ("Target", "Target and persistence", "Change the GitHub profile, whether it is saved and monitoring feature choices."),
+        ("Target", "Target", "Change the GitHub profile that is monitored and the monitoring feature choices."),
         ("Polling", "Polling interval", "Change how often GitHub is checked."),
         ("Authentication", "Authentication", "Change GitHub endpoints or the access token."),
-        ("Email", "Email notifications", "Change email delivery and alert choices."),
-        ("Webhook", "Webhook alerts", "Change Discord or ntfy delivery and alert choices."),
+        ("Email", "Email notifications", "Change SMTP details and email events."),
+        ("Webhook", "Webhook alerts", "Change Discord or ntfy details and events."),
         ("Destinations", "Output files", "Change log and CSV output settings."),
         ("FileDestinations", "File destinations", "Change the configuration or dotenv output path."),
-        ("return", "Return to summary", "Keep every current answer and show the summary again."),
+        ("return", "Return to summary", "Keep every current answer."),
     )
     selected = wizard_ask_choice("Which setup section should be changed?", sections, "Target", input_func, destination)
     if selected == "return":
@@ -9368,12 +9371,10 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     if show_banner:
         _write_startup_banner(destination)
     if not terminal_is_interactive:
-        generate_command = render_install_command(["--generate-config", str(selected_config)], context, include_paths=False)
         destination.write(colorize("header", "Setup Wizard\n") + "\n")
-        destination.write(colorize("warning", "The setup wizard needs an interactive terminal (TTY).") + "\n")
+        destination.write("The setup wizard needs an interactive terminal (TTY).\n")
         destination.write("Run --setup from an interactive shell or use --generate-config and edit the files manually.\n")
-        _wizard_print_command(destination, "Generate a config manually with:", generate_command)
-        destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
+        destination.write(f"Guide: {QUICK_START_GUIDE_URL}\n")
         return 1
     try:
         selected_config = wizard_validate_destination(selected_config, "Configuration destination")

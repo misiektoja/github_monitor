@@ -295,7 +295,7 @@ def test_missing_colorama_is_reported_on_windows(gm_module, monkeypatch):
 
     missing = next(check for check in report.checks if "colorama" in check.label)
     assert missing.status == "WARN"
-    assert missing.detail == "Coloured output in the classic Windows Command Prompt will not work while other features remain available"
+    assert missing.detail == "Coloured output in the classic Windows Command Prompt will not work. Every other feature is unaffected"
     assert "-m pip install colorama" in missing.fix
 
 
