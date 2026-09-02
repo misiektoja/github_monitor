@@ -355,43 +355,45 @@ COLORED_OUTPUT = True
 #   "bright_cyan bold", "yellow", "red underline", "bright_magenta bold underline", "red bold blink"
 # Valid colour names: black, red, green, yellow, blue, magenta, cyan, white,
 # and their bright_ variants (bright_red, bright_green, ...).
-COLOR_THEME = {
-    # Headings and commands the wizard tells you to run
-    "header": "bright_cyan",
-    "section": "bright_white",
-    # Identity
-    "username": "bright_cyan underline",
-    "id": "bright_magenta",
-    # Presence and visibility status values
-    "status_online": "green",
-    "status_offline": "red",
-    "status_other": "white",
-    # GitHub objects
-    "repository": "green",
-    "event": "bright_green",
-    "commit": "bright_yellow",
-    "branch": "bright_magenta",
-    "duration": "green",
-    # Misc
-    "timestamp_label": "",
-    "timestamp_value": "cyan",
-    "info": "cyan",
-    "warning": "yellow",
-    "error": "red",
-    "signal": "yellow",
-    "email": "bright_cyan",
-    "webhook": "bright_blue",
-    # Dates
-    "date": "magenta",
-    "date_range": "magenta",
-    # Boolean values
-    "boolean_true": "green",
-    "boolean_false": "red",
-    # Counters and differences
-    "count_up": "green",
-    "count_down": "red",
-    "link": "blue underline",
-}
+# The defaults below are what the tool uses while this block stays commented out. Uncomment it to override
+# them and keep only the lines you want to change, so the rest keep following the tool's own defaults.
+# COLOR_THEME = {
+#     # Headings and commands the wizard tells you to run
+#     "header": "bright_cyan",
+#     "section": "bright_white",
+#     # Identity
+#     "username": "bright_cyan underline",
+#     "id": "bright_magenta",
+#     # Presence and visibility status values
+#     "status_online": "green",
+#     "status_offline": "red",
+#     "status_other": "white",
+#     # GitHub objects
+#     "repository": "green",
+#     "event": "bright_green",
+#     "commit": "bright_yellow",
+#     "branch": "bright_magenta",
+#     "duration": "green",
+#     # Misc
+#     "timestamp_label": "",
+#     "timestamp_value": "cyan",
+#     "info": "cyan",
+#     "warning": "yellow",
+#     "error": "red",
+#     "signal": "yellow",
+#     "email": "bright_cyan",
+#     "webhook": "bright_blue",
+#     # Dates
+#     "date": "magenta",
+#     "date_range": "magenta",
+#     # Boolean values
+#     "boolean_true": "green",
+#     "boolean_false": "red",
+#     # Counters and differences
+#     "count_up": "green",
+#     "count_down": "red",
+#     "link": "blue underline",
+# }
 
 # Max characters per line when printing to screen to avoid line wrapping
 # Does not affect log file output
@@ -5583,11 +5585,14 @@ def apply_early_output_config():
 # Settings an older version wrote that this version no longer defines, ignored instead of rejected
 RETIRED_CONFIG_SETTINGS = frozenset(())
 
+# Settings the template ships commented out so the built-in default applies, still accepted from a config file
+COMMENTED_CONFIG_SETTINGS = frozenset({"COLOR_THEME"})
+
 
 # Collects the setting names the built-in configuration template defines
 def _config_allowed_names():
     template_tree = ast.parse(CONFIG_BLOCK, "<built-in-config>", "exec")
-    return frozenset(statement.targets[0].id for statement in template_tree.body if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name))
+    return frozenset(statement.targets[0].id for statement in template_tree.body if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name)) | COMMENTED_CONFIG_SETTINGS
 
 
 # Parses allowlisted literal config assignments without executing any file content
