@@ -8580,7 +8580,7 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
                     state.secrets.pop("GITHUB_TOKEN", None)
                 return
             continue
-        destination.write(colorize("info", "Validating the GitHub token before saving ...") + "\n")
+        destination.write("  Checking the token with GitHub ...\n")
         try:
             login = validator(token, state.values["GITHUB_API_URL"])
         except Exception as exc:

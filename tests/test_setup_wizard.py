@@ -109,6 +109,30 @@ def test_wizard_rejects_invalid_human_input(gm_module):
     assert gm_module.wizard_normalize_target("bad--") == ""
 
 
+# Verifies the wait for GitHub is announced the way the sibling wizards announce theirs
+def test_the_token_check_says_it_is_waiting_on_github(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    output = io.StringIO()
+    token = "github_pat_private_wizard_value"
+
+    gm_module.run_setup_wizard(
+        wizard_parser(),
+        Path(directory.name) / "monitor.conf",
+        Path(directory.name) / ".env-monitor",
+        input_func=scripted_reader(minimal_setup_answers()),
+        getpass_func=scripted_secret_reader([token]),
+        stream=output,
+        interactive=True,
+        token_validator=lambda entered, _url: "octocat" if entered == token else "",
+    )
+
+    transcript = output.getvalue()
+    assert "  Checking the token with GitHub ...\n" in transcript
+    # Announced before the answer arrives, which is the whole point of the line
+    assert transcript.index("Checking the token with GitHub") < transcript.index("GitHub token is valid for user")
+
+
 # Drives the real wizard path and verifies reviewed values are split across safe files
 def test_setup_wizard_writes_reviewed_config_and_secrets(gm_module, request):
     directory = make_test_directory()
