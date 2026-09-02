@@ -3146,9 +3146,9 @@ class StartupSummaryRow:
     log: bool = True
 
 
-# Groups every resolved secret name into the dotenv, environment and configuration buckets the summary prints
+# Groups every resolved secret name into the four buckets the summary prints, one per source that can supply one
 def startup_secret_buckets():
-    from_dotenv, from_environment, from_config = [], [], []
+    from_dotenv, from_environment, from_config, from_command_line = [], [], [], []
     for name, source in sorted(SECRET_SOURCES.items()):
         if not secret_is_set(globals().get(name)):
             continue
@@ -3156,9 +3156,11 @@ def startup_secret_buckets():
             from_dotenv.append(name)
         elif source == "environment":
             from_environment.append(name)
+        elif source == "command line":
+            from_command_line.append(name)
         else:
             from_config.append(name)
-    return from_dotenv, from_environment, from_config
+    return from_dotenv, from_environment, from_config, from_command_line
 
 
 # Renders the --help examples: one heading per task, then a comment and the command it describes
@@ -3206,7 +3208,7 @@ def build_startup_summary(target, config_path, env_path, output_path):
     webhook_categories = _startup_webhook_notification_categories()
     email_state = "On (" + ", ".join(email_categories) + ")" if email_categories else "Off"
     webhook_state = "On (" + ", ".join(webhook_categories) + ")" if webhook_categories else "Off"
-    from_dotenv, from_environment, from_config = startup_secret_buckets()
+    from_dotenv, from_environment, from_config, from_command_line = startup_secret_buckets()
     return [
         StartupSummaryRow("Target", str(target), concise=True),
         StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
@@ -3229,6 +3231,7 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Secrets from dotenv", ", ".join(from_dotenv) if from_dotenv else "None"),
         StartupSummaryRow("Secrets from environment", ", ".join(from_environment) if from_environment else "None"),
         StartupSummaryRow("Secrets from config file", ", ".join(from_config) if from_config else "None"),
+        StartupSummaryRow("Secrets from command line", ", ".join(from_command_line) if from_command_line else "None"),
         StartupSummaryRow("TLS verification", "On" if VERIFY_SSL else "Off, server certificates are not checked", concise=not VERIFY_SSL),
         StartupSummaryRow("ASCII log separators", f"{ascii_log_separators_enabled()} (mode: {ASCII_LOG_SEPARATORS})"),
         StartupSummaryRow("Coloured output", f"{COLOR_ENABLED} (setting: {COLORED_OUTPUT})"),

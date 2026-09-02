@@ -117,7 +117,7 @@ def test_placeholder_secrets_are_not_reported_as_configured(gm_module, monkeypat
     gm_module.load_startup_secrets(str(dotenv), {"WEBHOOK_URL", "SMTP_PASSWORD"})
 
     assert gm_module.SECRET_SOURCES == {"GITHUB_TOKEN": "dotenv file"}
-    assert gm_module.startup_secret_buckets() == (["GITHUB_TOKEN"], [], [])
+    assert gm_module.startup_secret_buckets() == (["GITHUB_TOKEN"], [], [], [])
 
 
 # Verifies the summary rows name only the secrets that carry a real value
@@ -126,7 +126,7 @@ def test_the_summary_rows_skip_placeholder_secrets(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "GITHUB_TOKEN", "real-token-value")
     monkeypatch.setattr(gm_module, "WEBHOOK_URL", "your_webhook_url")
 
-    assert gm_module.startup_secret_buckets() == (["GITHUB_TOKEN"], [], [])
+    assert gm_module.startup_secret_buckets() == (["GITHUB_TOKEN"], [], [], [])
 
 
 # Verifies explicit debug mode is active while an invalid config is being loaded
@@ -203,3 +203,30 @@ def test_a_placeholder_webhook_url_switches_the_channel_off(gm_module, monkeypat
 # Verifies a real destination still leaves the webhook channel on
 def test_a_configured_webhook_url_keeps_the_channel_on(gm_module, monkeypatch, request, restored_globals):
     assert webhook_state_after_startup(gm_module, monkeypatch, request, "https://ntfy.sh/some-topic") is True
+
+
+# Verifies each source that can supply a secret gets its own bucket, so none of them is filed under another
+@pytest.mark.parametrize("source, position", [("dotenv file", 0), ("environment", 1), ("configuration file", 2), ("command line", 3)])
+def test_each_secret_source_lands_in_its_own_bucket(gm_module, monkeypatch, source, position):
+    for name in gm_module.SECRET_KEYS:
+        monkeypatch.setattr(gm_module, name, "your_placeholder", raising=False)
+    monkeypatch.setattr(gm_module, "SECRET_SOURCES", {"GITHUB_TOKEN": source})
+    monkeypatch.setattr(gm_module, "GITHUB_TOKEN", "real-token-value")
+
+    buckets = gm_module.startup_secret_buckets()
+
+    assert buckets[position] == ["GITHUB_TOKEN"]
+    assert [names for index, names in enumerate(buckets) if index != position] == [[], [], []]
+
+
+# Verifies the summary reports a command-line secret under the command line rather than the configuration file
+def test_a_command_line_secret_is_not_reported_as_a_config_file_secret(gm_module, monkeypatch):
+    for name in gm_module.SECRET_KEYS:
+        monkeypatch.setattr(gm_module, name, "your_placeholder", raising=False)
+    monkeypatch.setattr(gm_module, "SECRET_SOURCES", {"GITHUB_TOKEN": "command line"})
+    monkeypatch.setattr(gm_module, "GITHUB_TOKEN", "real-token-value")
+
+    rows = {row.label: row.value for row in gm_module.build_startup_summary("someuser", None, None, None)}
+
+    assert rows["Secrets from command line"] == "GITHUB_TOKEN"
+    assert rows["Secrets from config file"] == "None"
