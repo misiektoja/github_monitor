@@ -730,7 +730,8 @@ def test_setup_cli_pseudo_terminal_transcript_has_stable_order_and_spacing(gm_mo
             break
         chunks.append(chunk)
     os.close(master)
-    transcript = b"".join(chunks).decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "")
+    # A pty makes stdout a terminal, so the wizard colours its headings and the ordering checks need the plain text
+    transcript = gm_module.ANSI_ESCAPE_RE.sub("", b"".join(chunks).decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", ""))
 
     assert process.returncode == 0, transcript
     assert transcript.index("Setup Wizard") < transcript.index("GitHub username or profile URL") < transcript.index("Setup summary\n") < transcript.index("Saved files\n") < transcript.index("Next steps\n")
