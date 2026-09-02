@@ -7770,7 +7770,7 @@ def doctor_check_authentication(report, request_get=None):
 # Adds one bounded connectivity check for the configured startup endpoint
 def doctor_check_connectivity(report, request_get=None):
     if not validate_github_endpoint_url(CHECK_INTERNET_URL):
-        report.add("Connectivity", "FAIL", "Connectivity check URL is invalid", sanitize_error_text(CHECK_INTERNET_URL) or "No URL configured", "Set CHECK_INTERNET_URL to a complete HTTPS URL")
+        report.add("Connectivity", "FAIL", "The connectivity endpoint URL is invalid", sanitize_error_text(CHECK_INTERNET_URL) or "No URL configured", "Set CHECK_INTERNET_URL to a complete HTTPS URL")
         return
     get_request = req.get if request_get is None else request_get
     try:
@@ -7779,12 +7779,14 @@ def doctor_check_connectivity(report, request_get=None):
         status = getattr(response, "status_code", None)
         debug_http_response("GET", CHECK_INTERNET_URL, "doctor connectivity", status)
     except Exception as exc:
-        report.add("Connectivity", "FAIL", "Configured connectivity endpoint is unreachable", f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check network, DNS, proxy and CHECK_INTERNET_URL settings")
+        # The row names the endpoint, so the technical cause goes where the other tools put it
+        debug_print("Doctor connectivity check", url=diagnostic_endpoint(CHECK_INTERNET_URL), outcome="failed", error=f"{type(exc).__name__}: {sanitize_error_text(exc)}")
+        report.add("Connectivity", "FAIL", "The connectivity endpoint could not be reached", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}", "Check network, DNS, proxy and CHECK_INTERNET_URL settings")
         return
     if isinstance(status, int) and status < 500:
-        report.add("Connectivity", "PASS", "Configured connectivity endpoint responded", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}")
+        report.add("Connectivity", "PASS", "The connectivity endpoint is reachable", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}")
     else:
-        report.add("Connectivity", "FAIL", "Configured connectivity endpoint returned an error", f"HTTP {status}", "Retry later or correct CHECK_INTERNET_URL")
+        report.add("Connectivity", "FAIL", "The connectivity endpoint returned an error", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)} answered HTTP {status}", "Retry later or correct CHECK_INTERNET_URL")
 
 
 # Adds a target lookup and retains the fetched profile for feed checks

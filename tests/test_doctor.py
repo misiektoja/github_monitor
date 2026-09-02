@@ -251,8 +251,8 @@ def test_doctor_offline_transcript_names_failed_paths(gm_module, monkeypatch):
     transcript = output.getvalue()
     assert result == 1
     assert "[FAIL] GitHub token validation failed" in transcript
-    assert "[FAIL] Configured connectivity endpoint is unreachable" in transcript
-    assert "ConnectionError" in transcript
+    assert "[FAIL] The connectivity endpoint could not be reached" in transcript
+    assert f"Endpoint: {gm_module.diagnostic_endpoint(gm_module.CHECK_INTERNET_URL)}" in transcript
     assert "[FAIL] GitHub target could not be checked" in transcript
 
 
@@ -821,3 +821,21 @@ def test_the_summary_is_rendered_after_the_delivery_tests(gm_module):
         assert max(offers) < min(summaries), f"{function.name} renders the summary before the delivery tests"
 
     assert checked, "no doctor entry point runs the delivery tests and then the summary"
+
+
+# Verifies the connectivity row carries the label and the endpoint detail shared with the sibling monitors
+def test_the_connectivity_row_names_the_shared_endpoint(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "CHECK_INTERNET_URL", "https://probe.example/ping")
+
+    def offline_request(*args, **kwargs):
+        raise gm_module.req.ConnectionError("offline for doctor")
+
+    passing_report = gm_module.DoctorReport()
+    gm_module.doctor_check_connectivity(passing_report, request_get=lambda *args, **kwargs: SimpleNamespace(status_code=204))
+    failing_report = gm_module.DoctorReport()
+    gm_module.doctor_check_connectivity(failing_report, request_get=offline_request)
+
+    passing = passing_report.checks[0]
+    failing = failing_report.checks[0]
+    assert (passing.status, passing.label, passing.detail) == ("PASS", "The connectivity endpoint is reachable", "Endpoint: https://probe.example/ping")
+    assert (failing.status, failing.label, failing.detail) == ("FAIL", "The connectivity endpoint could not be reached", "Endpoint: https://probe.example/ping")
