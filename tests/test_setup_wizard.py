@@ -488,6 +488,30 @@ def test_setup_wizard_hands_off_to_doctor_then_monitoring(gm_module, request):
     assert output.getvalue().count("[Y/n]: ") >= 2
 
 
+# Verifies setup reached from the no-argument welcome still starts monitoring, which relies on the default launcher
+def test_zero_argument_welcome_setup_starts_monitoring(gm_module, request, monkeypatch):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    monkeypatch.chdir(directory.name)
+    output = io.StringIO()
+    launched = []
+
+    monkeypatch.setattr(gm_module, "validate_github_token", lambda _token, _url: "octocat")
+    monkeypatch.setattr(gm_module, "run_doctor_preflight", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(gm_module.getpass, "getpass", lambda _prompt="": "private-token")
+    monkeypatch.setattr(gm_module, "launch_wizard_monitoring", lambda arguments: launched.append(arguments) or 0)
+
+    exit_code = gm_module.run_zero_argument_welcome(
+        wizard_parser(),
+        scripted_reader(["y", *minimal_setup_answers("y", "y")]),
+        FakeTTY(),
+        output,
+    )
+
+    assert exit_code == 0
+    assert launched == [["--config-file", str(Path(directory.name) / gm_module.DEFAULT_CONFIG_FILENAME), "--env-file", str(Path(directory.name) / ".env")]]
+
+
 # Verifies non-interactive setup explains the safe manual alternative and writes nothing
 def test_setup_wizard_non_interactive_fallback_is_explicit(gm_module, request):
     directory = make_test_directory()

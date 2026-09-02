@@ -9077,8 +9077,9 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         except WizardCancelled:
             start_now = False
             destination.write(colorize("warning", "Setup is saved. Start monitoring with the command above when ready.") + "\n")
-        if start_now and monitor_launcher is not None:
-            return int(monitor_launcher(monitor_arguments) or 0)
+        if start_now:
+            launcher = launch_wizard_monitoring if monitor_launcher is None else monitor_launcher
+            return int(launcher(monitor_arguments) or 0)
     return 0
 
 
@@ -9570,7 +9571,7 @@ def main():
             parser.error("--setup can only be combined with --config-file, --env-file, --verbose or --debug")
         if isinstance(args.env_file, str) and args.env_file.casefold() == "none":
             parser.error("--setup requires a dotenv destination and cannot use --env-file none")
-        sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, monitor_launcher=launch_wizard_monitoring, show_banner=False))
+        sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, show_banner=False))
 
     if args.set_github_token and args.github_token:
         parser.error("--set-github-token cannot be combined with -t/--github-token")
