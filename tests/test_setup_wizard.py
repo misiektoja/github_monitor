@@ -1209,3 +1209,12 @@ def test_zero_argument_welcome_closes_with_a_blank_line(gm_module):
 # Verifies the guide link opens the setup page the sibling monitors link, with no section fragment
 def test_the_welcome_guide_link_opens_the_shared_setup_page(gm_module):
     assert gm_module.QUICK_START_GUIDE_URL.endswith("/setup-and-first-run/")
+
+
+# Verifies a config destination switched off is refused, rather than writing settings to a file named 'none'
+def test_setup_refuses_a_config_destination_switched_off(tmp_path):
+    result = subprocess.run([sys.executable, str(PROJECT_ROOT / "github_monitor.py"), "--setup", "--config-file", "none"], cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 2
+    assert "--setup requires a config destination and cannot use --config-file none" in result.stderr
+    assert not (tmp_path / "none").exists()

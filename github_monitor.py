@@ -524,6 +524,9 @@ csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
 
 CLI_CONFIG_PATH = None
 
+# Set when --config-file none switches discovery off, so no later lookup can find a file the run rejected
+CONFIG_DISCOVERY_DISABLED = False
+
 # Maximum length for event body text (issue bodies, comment bodies, etc.) before truncation
 # Text longer than this will be truncated with safe HTML tag closing
 MAX_EVENT_BODY_LENGTH = 3500
@@ -2957,12 +2960,20 @@ def command_writes_dotenv(arguments=()):
     return any(str(argument) == "--setup" or str(argument).startswith("--set-") for argument in arguments)
 
 
+# True when a command writes the config file itself, so it refuses a --config-file that switches discovery off
+def command_writes_config(arguments=()):
+    return any(str(argument) == "--setup" for argument in arguments)
+
+
 # Returns the --config-file and --env-file arguments this run was given, skipping any the caller already passed
 def active_path_arguments(arguments=()):
     given = {str(argument) for argument in arguments}
     paths = []
-    if CLI_CONFIG_PATH and "--config-file" not in given:
-        paths.extend(("--config-file", str(CLI_CONFIG_PATH)))
+    active_config = CLI_CONFIG_PATH or ("none" if CONFIG_DISCOVERY_DISABLED else None)
+    # The "none" sentinel is carried so the printed command checks the setup this run checked, except into a
+    # command that writes the config file, since those refuse the sentinel at their own argument gate
+    if active_config and "--config-file" not in given and not (str(active_config).casefold() == "none" and command_writes_config(arguments)):
+        paths.extend(("--config-file", str(active_config)))
     # The "none" sentinel is carried so the printed command checks the setup this run checked, except into a
     # command that writes the dotenv file, since those refuse the sentinel at their own argument gate
     if DOTENV_FILE and "--env-file" not in given and not (str(DOTENV_FILE).casefold() == "none" and command_writes_dotenv(arguments)):
@@ -7703,17 +7714,17 @@ def validate_github_endpoint_url(value):
 
 # Adds configuration, dotenv, private-setting and core value checks
 def doctor_check_configuration(report, args, parser):
-    global CLI_CONFIG_PATH, LOCAL_TIMEZONE
-    config_discovery_disabled = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
-    if args.config_file and not config_discovery_disabled:
+    global CLI_CONFIG_PATH, CONFIG_DISCOVERY_DISABLED, LOCAL_TIMEZONE
+    CONFIG_DISCOVERY_DISABLED = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
+    if args.config_file and not CONFIG_DISCOVERY_DISABLED:
         CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
-    elif config_discovery_disabled:
+    elif CONFIG_DISCOVERY_DISABLED:
         CLI_CONFIG_PATH = None
-    cfg_path = None if config_discovery_disabled else find_config_file(CLI_CONFIG_PATH)
+    cfg_path = None if CONFIG_DISCOVERY_DISABLED else find_config_file(CLI_CONFIG_PATH)
     configured_settings = set()
     config_errors = []
     retired_settings = set()
-    if config_discovery_disabled:
+    if CONFIG_DISCOVERY_DISABLED:
         report.add("Configuration", "PASS", "No configuration file selected", "Using built-in defaults and command-line overrides")
     elif CLI_CONFIG_PATH and not cfg_path:
         report.add("Configuration", "FAIL", "Configuration file was not found", f"Requested path: {CLI_CONFIG_PATH}", "Correct --config-file or generate a new configuration with --generate-config")
@@ -9235,7 +9246,7 @@ def launch_wizard_monitoring(arguments):
 
 # Parses command-line settings and starts the requested GitHub Monitor action
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS, TARGET_GITHUB_USERNAME, WEBHOOK_ENABLED
+    global CLI_CONFIG_PATH, CONFIG_DISCOVERY_DISABLED, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS, TARGET_GITHUB_USERNAME, WEBHOOK_ENABLED
 
     if "--debug" in sys.argv:
         DEBUG_MODE = True
@@ -9672,6 +9683,8 @@ def main():
         incompatible = [name for name, value in vars(args).items() if name not in allowed and value not in (None, False)]
         if incompatible:
             parser.error("--setup can only be combined with --config-file, --env-file, --verbose or --debug")
+        if isinstance(args.config_file, str) and args.config_file.casefold() == "none":
+            parser.error("--setup requires a config destination and cannot use --config-file none")
         if isinstance(args.env_file, str) and args.env_file.casefold() == "none":
             parser.error("--setup requires a dotenv destination and cannot use --env-file none")
         sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, show_banner=False))
@@ -9697,13 +9710,13 @@ def main():
         print_doctor_next_steps(terminal_surface_stream(sys.stdout), args.username, doctor_exit)
         sys.exit(doctor_exit)
 
-    config_discovery_disabled = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
-    if args.config_file and not config_discovery_disabled:
+    CONFIG_DISCOVERY_DISABLED = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
+    if args.config_file and not CONFIG_DISCOVERY_DISABLED:
         CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
-    elif config_discovery_disabled:
+    elif CONFIG_DISCOVERY_DISABLED:
         CLI_CONFIG_PATH = None
 
-    cfg_path = None if config_discovery_disabled else find_config_file(CLI_CONFIG_PATH)
+    cfg_path = None if CONFIG_DISCOVERY_DISABLED else find_config_file(CLI_CONFIG_PATH)
     configured_settings = set()
 
     if not cfg_path and CLI_CONFIG_PATH:
