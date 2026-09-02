@@ -127,3 +127,16 @@ PROGRESS_LINES = (
 @pytest.mark.parametrize("line", PROGRESS_LINES)
 def test_the_progress_lines_use_the_shared_checking_wording(line):
     assert line in (PROJECT_ROOT / "github_monitor.py").read_text(encoding="utf-8"), line
+
+
+# Verifies the replace question names the secret the way every sibling one-shot command names its own
+def test_set_github_token_replace_question_uses_the_shared_wording(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module.req, "get", Mock(return_value=FakeResponse(200, {"login": "octocat"})))
+    with make_test_directory() as directory_name:
+        destination = Path(directory_name) / ".env"
+        destination.write_text("GITHUB_TOKEN=old-value\n", encoding="utf-8")
+        prompts = []
+
+        gm_module.run_set_github_token(env_file=destination, interactive=True, input_func=lambda prompt: prompts.append(prompt) or "y", getpass_func=lambda prompt: "github_pat_private")
+
+        assert prompts == [f"Replace the saved GitHub token in '{destination.resolve()}'? [y/N]: "]

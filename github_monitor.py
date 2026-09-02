@@ -6217,7 +6217,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     prompt = input if input_func is None else input_func
     if dotenv_contains_key(destination, "GITHUB_TOKEN"):
         try:
-            confirmed = read_interactively(prompt, f"Replace GITHUB_TOKEN in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
+            confirmed = read_interactively(prompt, f"Replace the saved GitHub token in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
             print()
             raise RecoveryError(secret_entry_cancelled_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL)) from None
@@ -7637,7 +7637,7 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
             WEBHOOK_PROVIDER = detected_provider
             verbose_print(f"Selected webhook provider {detected_provider} from the destination URL")
             if report_warnings:
-                print(f"* Warning: Configured webhook provider did not match the URL. Using {detected_provider}.")
+                print(f"* Warning: Configured webhook provider did not match the URL. Using {webhook_provider_display_name(detected_provider)}.")
 
 
 # Applies monitoring, output and email command-line overrides to effective settings
@@ -8283,7 +8283,7 @@ def run_doctor_preflight(args, parser, request_get=None, github_factory=None, co
         doctor_check_authentication(report, request_get)
         progress.show("connectivity")
         doctor_check_connectivity(report, request_get)
-        progress.show("target")
+        progress.show("the monitored profile")
         doctor_check_target(report, github_factory)
         progress.show("monitoring feeds")
         doctor_check_monitoring(report, contribution_checker)
@@ -9970,7 +9970,7 @@ def main():
 
     # Checked before the token, so a first run is told the simplest missing thing first
     if not args.username:
-        advice = make_recovery_advice("target.missing", "A GitHub username is required", "Add the GitHub username to the monitoring command", False, "The positional GITHUB_USERNAME argument was empty", QUICK_START_GUIDE_URL)
+        advice = make_recovery_advice("target.missing", "No GitHub username was provided", "Add the GitHub username to the monitoring command", False, "The positional GITHUB_USERNAME argument was empty", QUICK_START_GUIDE_URL)
         print_recovery_advice(advice)
         sys.exit(1)
 

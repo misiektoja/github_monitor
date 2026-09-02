@@ -251,5 +251,5 @@ def test_a_missing_username_is_reported_before_the_token():
 
     output = result.stdout + result.stderr
     assert result.returncode == 1
-    assert "* Error: A GitHub username is required" in output
+    assert "* Error: No GitHub username was provided" in output
     assert "No usable GitHub token is configured" not in output
