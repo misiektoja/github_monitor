@@ -853,8 +853,10 @@ _LABEL_STYLES = (
 _FROM_TO_COUNT_RE = re.compile(r"(from\s+)(\d+)(\s+to\s+)(\d+)")
 _DIFF_COUNT_UP_RE = re.compile(r"(\(\+\d+\))")
 _DIFF_COUNT_DOWN_RE = re.compile(r"(\(-\d+\))")
-# The separator is a space in prose and an equals sign in the key=value diagnostic fields
-_USER_TAG_RE = re.compile(r"((?:GitHub user|for user|by user|of user|Monitoring GitHub user|\buser):?)([\t ]+|=)([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))")
+# The separator is a space in prose and an equals sign in the key=value diagnostic fields.
+# A bare "user" needs a colon or an equals sign and a login is never followed by a colon, so labels
+# such as "user lists:" and "fetch user details:" stay uncoloured
+_USER_TAG_RE = re.compile(r"((?:GitHub|for|by|of|fetch)[\t ]+user:?|\buser[:=])([\t ]+|(?<==))([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?![A-Za-z0-9:-])")
 _QUOTED_CONTEXT_RE = re.compile(r"\b(repo|user)\s+$", re.IGNORECASE)
 _DURATION_RE = re.compile(r"~?\b[0-9]{1,20}[ \t]{1,20}(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b", re.IGNORECASE)
 _LONG_DATE_RE = re.compile(r"\b(?:\w{3}\s+)?\d{1,2}\s+\w{3}(?:\s+\d{2,4})?[\s,]*\d{2}:\d{2}(:\d{2})?(\s*[AP]M)?\b", re.IGNORECASE)

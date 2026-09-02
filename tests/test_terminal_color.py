@@ -506,6 +506,14 @@ def test_target_username_uses_the_username_colour_everywhere(colored, line):
     assert colored["repository"] not in result
 
 
+# Verifies prose following the word "user" is not mistaken for a login
+@pytest.mark.parametrize("line", ["- Stargazer/watcher user lists:\tFetched for 16/16 repositories", "* Cannot fetch user details: boom", "Old user name:\t\t\tOcto Cat", "* Monitored user refresh failed"])
+def test_prose_after_the_word_user_is_not_coloured(colored, line):
+    result = monitor._colorize_line(line)
+    assert monitor.ANSI_ESCAPE_RE.sub("", result) == line
+    assert colored["username"] not in result
+
+
 # Verifies display names with spaces are complete
 def test_display_name_still_uses_the_name_colour(colored):
     result = monitor._colorize_line("Username:\t\t\tOcto Cat 🐙")
