@@ -456,6 +456,8 @@ def test_doctor_notification_checks_gate_disabled_and_invalid_channels(gm_module
     disabled = gm_module.DoctorReport()
     gm_module.doctor_check_notifications(disabled)
     assert [check.label for check in disabled.checks] == ["Email notifications are disabled", "Webhook alerts are disabled"]
+    # The webhook label says everything, so the row carries no detail that only repeats it
+    assert [check.detail for check in disabled.checks] == ["No SMTP connection was attempted and no email was sent", ""]
     monkeypatch.setattr(gm_module, "PROFILE_NOTIFICATION", True)
     monkeypatch.setattr(gm_module, "WEBHOOK_ENABLED", True)
     monkeypatch.setattr(gm_module, "WEBHOOK_PROFILE_NOTIFICATION", True)
@@ -716,3 +718,36 @@ def test_valid_settings_take_no_configuration_rows(gm_module, monkeypatch):
     labels = {check.label for check in report.checks}
     assert labels.isdisjoint({"GitHub API URL is valid", "GitHub web URL is valid", "Polling interval is valid", "Saved GitHub target is valid", "Connectivity timeout is valid", "Recent event window is valid", "GitHub retry policy is valid", "Liveness interval is valid", "Event type selection is valid", "Event type selection is not required", "Log separator mode is valid"})
     assert "Local timezone is valid" in labels
+    assert ("Local timezone is valid", f"Time zone: {gm_module.LOCAL_TIMEZONE}") in {(check.label, check.detail) for check in report.checks}
+
+
+# Verifies every doctor detail keeps to the agreed shapes: it never repeats its label, gives an instruction or joins values with a pipe
+def test_doctor_details_keep_to_the_agreed_shapes(gm_module):
+    import ast
+    import inspect
+
+    # Renders one detail argument as text, standing in {} for the parts an f-string fills at runtime
+    def detail_text(node):
+        if isinstance(node, ast.Constant):
+            return node.value if isinstance(node.value, str) else None
+        if isinstance(node, ast.JoinedStr):
+            return "".join(part.value if isinstance(part, ast.Constant) else "{}" for part in node.values)
+        return None
+
+    offenders = []
+    for node in ast.walk(ast.parse(inspect.getsource(gm_module))):
+        if not isinstance(node, ast.Call) or ast.unparse(node.func) not in {"make_doctor_check", "report.add"} or len(node.args) < 4:
+            continue
+        label, text = node.args[2], detail_text(node.args[3])
+        if text is None:
+            continue
+        if isinstance(label, ast.Constant) and text == label.value:
+            offenders.append(f"{node.lineno}: the detail repeats its label")
+        if text.startswith(("Use ", "Set ", "Run ")):
+            offenders.append(f"{node.lineno}: the detail gives an instruction, which belongs in the fix line")
+        if " | " in text:
+            offenders.append(f"{node.lineno}: the detail joins two values with a pipe")
+        if text.endswith("."):
+            offenders.append(f"{node.lineno}: the detail ends with a full stop")
+
+    assert not offenders, "doctor details outside the agreed shapes:\n" + "\n".join(offenders)

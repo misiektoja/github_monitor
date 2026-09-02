@@ -7681,7 +7681,7 @@ def doctor_check_configuration(report, args, parser):
             report.add("Configuration", "PASS", source_labels[source], ", ".join(names))
             source_rows += 1
     if not source_rows:
-        report.add("Configuration", "PASS", "No secrets loaded", "No private setting source contributed a usable value")
+        report.add("Configuration", "PASS", "No secrets loaded", "Nothing was read from a dotenv file, the environment, the configuration file or the command line")
     if VERIFY_SSL:
         report.add("Configuration", "PASS", "TLS certificate verification is on", "Every outbound request checks the server certificate")
     else:
@@ -7701,13 +7701,13 @@ def doctor_check_configuration(report, args, parser):
                 debug_swallowed_exception("Doctor timezone detection", exc)
             if detected_timezone and is_valid_timezone(detected_timezone):
                 LOCAL_TIMEZONE = detected_timezone
-                report.add("Configuration", "PASS", "Local timezone can be detected", detected_timezone)
+                report.add("Configuration", "PASS", "Local timezone can be detected", f"Time zone: {detected_timezone}")
             else:
                 report.add("Configuration", "FAIL", "Automatic timezone detection failed", "tzlocal did not return a supported timezone", "Set LOCAL_TIMEZONE to a valid pytz timezone")
     elif is_valid_timezone(LOCAL_TIMEZONE):
-        report.add("Configuration", "PASS", "Local timezone is valid", str(LOCAL_TIMEZONE))
+        report.add("Configuration", "PASS", "Local timezone is valid", f"Time zone: {LOCAL_TIMEZONE}")
     else:
-        report.add("Configuration", "FAIL", "Local timezone is invalid", sanitize_error_text(LOCAL_TIMEZONE), "Set LOCAL_TIMEZONE to a valid pytz timezone")
+        report.add("Configuration", "FAIL", "Local timezone is invalid", f"Time zone: {sanitize_error_text(LOCAL_TIMEZONE)}", "Set LOCAL_TIMEZONE to a valid pytz timezone")
     if not (type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0):
         report.add("Configuration", "FAIL", "Polling interval is invalid", str(GITHUB_CHECK_INTERVAL), "Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds")
     if TARGET_GITHUB_USERNAME and not wizard_normalize_target(TARGET_GITHUB_USERNAME):
@@ -7718,7 +7718,7 @@ def doctor_check_configuration(report, args, parser):
         report.add("Configuration", "FAIL", "Recent event window is invalid", str(EVENTS_NUMBER), "Set EVENTS_NUMBER to a positive integer")
     retry_policy_valid = type(NET_MAX_RETRIES) is int and NET_MAX_RETRIES > 0 and isinstance(NET_BASE_BACKOFF_SEC, (int, float)) and not isinstance(NET_BASE_BACKOFF_SEC, bool) and NET_BASE_BACKOFF_SEC >= 0
     if not retry_policy_valid:
-        report.add("Configuration", "FAIL", "GitHub retry policy is invalid", f"NET_MAX_RETRIES={NET_MAX_RETRIES} | NET_BASE_BACKOFF_SEC={NET_BASE_BACKOFF_SEC}", "Use a positive retry count and a non-negative base backoff")
+        report.add("Configuration", "FAIL", "GitHub retry policy is invalid", f"NET_MAX_RETRIES is {NET_MAX_RETRIES} and NET_BASE_BACKOFF_SEC is {NET_BASE_BACKOFF_SEC}", "Use a positive retry count and a non-negative base backoff")
     if not (isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0):
         report.add("Configuration", "FAIL", "Liveness interval is invalid", str(LIVENESS_CHECK_INTERVAL), "Set LIVENESS_CHECK_INTERVAL to zero or a positive number of seconds")
     event_types_valid = isinstance(EVENTS_TO_MONITOR, (list, tuple)) and any(isinstance(value, str) and value.strip() for value in EVENTS_TO_MONITOR)
@@ -7761,7 +7761,7 @@ def doctor_check_connectivity(report, request_get=None):
         report.add("Connectivity", "FAIL", "Configured connectivity endpoint is unreachable", f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check network, DNS, proxy and CHECK_INTERNET_URL settings")
         return
     if isinstance(status, int) and status < 500:
-        report.add("Connectivity", "PASS", "Configured connectivity endpoint responded", f"{diagnostic_endpoint(CHECK_INTERNET_URL)} returned HTTP {status}")
+        report.add("Connectivity", "PASS", "Configured connectivity endpoint responded", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}")
     else:
         report.add("Connectivity", "FAIL", "Configured connectivity endpoint returned an error", f"HTTP {status}", "Retry later or correct CHECK_INTERNET_URL")
 
@@ -7858,9 +7858,9 @@ def doctor_check_output_paths(report):
     if CSV_FILE:
         doctor_add_path_check(report, "CSV destination", CSV_FILE)
     else:
-        report.add("Configuration", "PASS", "CSV logging is disabled", "No CSV file will be written")
+        report.add("Configuration", "PASS", "CSV logging is disabled")
     if DISABLE_LOGGING:
-        report.add("Configuration", "PASS", "Output logging is disabled", "No log file will be written")
+        report.add("Configuration", "PASS", "Output logging is disabled")
     elif report.target_name:
         doctor_add_path_check(report, "Log destination", resolve_output_log_path(report.target_name))
     else:
@@ -7913,7 +7913,7 @@ def doctor_check_notifications(report):
         else:
             doctor_add_smtp_login_check(report)
     if not WEBHOOK_ENABLED:
-        report.add("Notifications", "PASS", "Webhook alerts are disabled", "No webhook was sent")
+        report.add("Notifications", "PASS", "Webhook alerts are disabled")
         return
     selected_webhook_types = any((WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION))
     if not selected_webhook_types and not WEBHOOK_ERROR_NOTIFICATION:
