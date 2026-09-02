@@ -276,8 +276,8 @@ def test_interrupting_the_launch_offer_keeps_the_saved_setup(gm_module, request)
     assert config_path.is_file()
 
 
-# Verifies existing files receive unique mode-0600 backups and unrelated dotenv data survives
-def test_setup_save_backs_up_both_files_and_migrates_config_secrets(gm_module, request):
+# Verifies an existing configuration is backed up mode-0600, the replaced dotenv is not copied and unrelated dotenv data survives
+def test_setup_save_backs_up_only_the_config_and_migrates_config_secrets(gm_module, request):
     directory = make_test_directory()
     request.addfinalizer(directory.cleanup)
     config_path = Path(directory.name) / "monitor.conf"
@@ -291,12 +291,11 @@ def test_setup_save_backs_up_both_files_and_migrates_config_secrets(gm_module, r
     state.values["GITHUB_CHECK_INTERVAL"] = 300
     state.secrets["GITHUB_TOKEN"] = "new-private-token"
 
-    backups = gm_module.save_wizard_files(state)
+    config_backup = gm_module.save_wizard_files(state)
 
-    assert len(backups) == 2
-    assert backups[0].read_text(encoding="utf-8") == config_original
-    assert backups[1].read_text(encoding="utf-8") == dotenv_original
-    assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups)
+    assert config_backup.read_text(encoding="utf-8") == config_original
+    assert stat.S_IMODE(config_backup.stat().st_mode) == 0o600
+    assert [entry.name for entry in Path(directory.name).iterdir() if entry.name.endswith(".bak")] == [config_backup.name]
     assert "GITHUB_TOKEN" not in config_path.read_text(encoding="utf-8")
     dotenv_content = dotenv_path.read_text(encoding="utf-8")
     assert 'UNRELATED="keep"' in dotenv_content

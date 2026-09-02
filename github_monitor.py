@@ -9219,15 +9219,15 @@ def write_generated_config(output_file, content, force=False, interactive=None, 
     return backup_path, True
 
 
-# Saves both wizard files only after validation, backup and temporary writes succeed
+# Saves both wizard files only after validation, the configuration backup and temporary writes succeed
 def save_wizard_files(state):
     for path in (state.config_path, state.dotenv_path):
         if not path.parent.is_dir():
             raise FileNotFoundError(f"Parent directory does not exist: {path.parent}")
     config_content = render_wizard_config(state)
     dotenv_content = render_wizard_dotenv(state)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    backups = (backup_wizard_file(state.config_path, timestamp), backup_wizard_file(state.dotenv_path, timestamp))
+    # Only the configuration is backed up: a copy of the credentials being replaced is the one thing not worth keeping
+    config_backup = backup_wizard_file(state.config_path)
     # A dotenv with nothing in it is noise beside the config, so an empty one is never created
     destinations = [(state.config_path, config_content)]
     if dotenv_content.strip() or state.dotenv_path.exists():
@@ -9245,7 +9245,7 @@ def save_wizard_files(state):
             temporary_path.unlink(missing_ok=True)
     for path, _ in destinations:
         debug_print("Setup file write succeeded", path=path)
-    return backups
+    return config_backup
 
 
 # Builds the exact install-aware argument list used after setup
@@ -9304,7 +9304,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         if not wizard_review_setup(state, input_func, getpass_func, destination, token_validator):
             destination.write("\n" + colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
             return 1
-        backups = save_wizard_files(state)
+        config_backup = save_wizard_files(state)
     except WizardCancelled:
         destination.write(colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
         return 1
@@ -9313,14 +9313,11 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         destination.write("\n")
         destination.write(apply_color_to_text(render_recovery_advice(advice)) + "\n")
         return 1
-    config_backup, dotenv_backup = backups
     saved_rows = [("Configuration:", state.config_path)]
     if config_backup is not None:
         saved_rows.append(("Backup:", config_backup))
     if state.dotenv_path.exists():
         saved_rows.append(("Secrets:" if state.secrets else "Dotenv:", state.dotenv_path))
-    if dotenv_backup is not None:
-        saved_rows.append(("Dotenv backup:", dotenv_backup))
     saved_width = max(len(label) for label, _ in saved_rows) + 1
     _wizard_heading(destination, "Saved files", "header")
     for label, path in saved_rows:
