@@ -36,6 +36,9 @@ DOCTOR_GUIDE_URL = f"{DOCUMENTATION_URL}/troubleshooting/#doctor-preflight"
 # Shared doctor labels for the two delivery channels, kept identical to the sibling monitors
 SMTP_READY_CHECK_LABEL = "SMTP connection and login succeeded"
 WEBHOOK_READY_CHECK_LABEL = "Webhook URL, headers and alert choices look valid"
+
+# The label every sibling monitor uses when email alerts are on but the settings they would use cannot deliver
+EMAIL_UNUSABLE_CHECK_LABEL = "Email alerts are enabled but unusable"
 MIN_PYTHON_VERSION = (3, 10)
 
 # ---------------------------
@@ -2618,25 +2621,33 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
     return result
 
 
-# Validates the shared SMTP destination, credentials and message fields
-def validate_email_settings(subject="Doctor test", body="Doctor test", body_html=""):
+# Reports the first unusable email setting as a doctor detail and an action that names the same settings
+def email_settings_problem():
     fqdn_re = re.compile(r'(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}\.?$)')
     email_re = re.compile(r'[^@]+@[^@]+\.[^@]+')
     try:
         ipaddress.ip_address(str(SMTP_HOST))
     except ValueError:
         if not fqdn_re.search(str(SMTP_HOST)):
-            return "SMTP_HOST must be a valid IP address or fully qualified domain name"
+            return ("SMTP_HOST is not a valid IP address or hostname", "Correct SMTP_HOST or turn the email alerts off")
     try:
         port = int(SMTP_PORT)
         if not (1 <= port <= 65535):
             raise ValueError
     except ValueError:
-        return "SMTP_PORT must be a number from 1 through 65535"
+        return ("SMTP_PORT is not a port number between 1 and 65535", "Correct SMTP_PORT or turn the email alerts off")
     if not email_re.search(str(SENDER_EMAIL)) or not email_re.search(str(RECEIVER_EMAIL)):
-        return "SENDER_EMAIL and RECEIVER_EMAIL must be valid email addresses"
+        return ("SENDER_EMAIL or RECEIVER_EMAIL is not an email address", "Correct SENDER_EMAIL and RECEIVER_EMAIL or turn the email alerts off")
     if not SMTP_USER or not isinstance(SMTP_USER, str) or SMTP_USER == "your_smtp_user" or not SMTP_PASSWORD or not isinstance(SMTP_PASSWORD, str) or SMTP_PASSWORD == "your_smtp_password":
-        return "SMTP_USER and SMTP_PASSWORD must contain usable credentials"
+        return ("SMTP_USER or SMTP_PASSWORD is empty or still set to its placeholder", "Set SMTP_USER and SMTP_PASSWORD or turn the email alerts off")
+    return None
+
+
+# Validates the shared SMTP destination, credentials and message fields
+def validate_email_settings(subject="Doctor test", body="Doctor test", body_html=""):
+    problem = email_settings_problem()
+    if problem is not None:
+        return problem[0]
     if not subject or not isinstance(subject, str):
         return "The email subject must be a non-empty string"
     if not body and not body_html:
@@ -7874,14 +7885,19 @@ def doctor_add_smtp_login_check(report):
     report.add("Notifications", "PASS", SMTP_READY_CHECK_LABEL, f"Alerts: {', '.join(_startup_email_notification_categories())}. No email was sent during this passive check")
 
 
+# Adds the doctor row for email alerts whose settings cannot deliver, worded the same way by every sibling monitor
+def doctor_add_email_unusable_check(report, detail, fix):
+    report.add("Notifications", "WARN", EMAIL_UNUSABLE_CHECK_LABEL, detail, fix, SMTP_GUIDE_URL)
+
+
 # Adds channel readiness checks and stores structural delivery-test readiness
 def doctor_check_notifications(report):
     if not doctor_email_alerts_enabled():
         report.add("Notifications", "PASS", "Email notifications are disabled", "No SMTP connection was attempted and no email was sent")
     else:
-        email_error = validate_email_settings()
-        if email_error is not None:
-            report.add("Notifications", "WARN", "Email alerts are enabled but unusable", email_error, "Correct SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL", SMTP_GUIDE_URL)
+        problem = email_settings_problem()
+        if problem is not None:
+            doctor_add_email_unusable_check(report, *problem)
         else:
             doctor_add_smtp_login_check(report)
     if not WEBHOOK_ENABLED:

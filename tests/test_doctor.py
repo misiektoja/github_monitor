@@ -665,6 +665,25 @@ def test_the_email_ready_row_reports_the_sign_in_and_the_alerts(gm_module, monke
     assert closed == [True]
 
 
+# Verifies email alerts that cannot deliver are one WARN whose detail and action name the same settings
+def test_unusable_email_settings_warn_and_name_the_same_settings(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    configure_email(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "SMTP_PASSWORD", "your_smtp_password")
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", Mock(side_effect=AssertionError("SMTP was contacted")))
+    report = gm_module.DoctorReport()
+
+    gm_module.doctor_check_notifications(report)
+
+    email_check = report.checks[0]
+    assert email_check.status == "WARN"
+    assert email_check.label == gm_module.EMAIL_UNUSABLE_CHECK_LABEL
+    assert email_check.detail == "SMTP_USER or SMTP_PASSWORD is empty or still set to its placeholder"
+    assert email_check.fix == "Set SMTP_USER and SMTP_PASSWORD or turn the email alerts off"
+    assert email_check.guide == gm_module.SMTP_GUIDE_URL
+    assert report.email_ready is False
+
+
 # Verifies a rejected SMTP sign-in fails the check instead of reporting the channel as ready
 def test_a_rejected_smtp_sign_in_fails_the_check(gm_module, monkeypatch):
     configure_healthy_doctor(gm_module, monkeypatch)
