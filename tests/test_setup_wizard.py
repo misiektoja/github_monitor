@@ -1181,3 +1181,7 @@ def test_zero_argument_welcome_closes_with_a_blank_line(gm_module):
 
     assert exit_code == 1
     assert output.getvalue().endswith(f"{gm_module.QUICK_START_GUIDE_URL}\n\n")
+
+# Verifies the guide link opens the setup page the sibling monitors link, with no section fragment
+def test_the_welcome_guide_link_opens_the_shared_setup_page(gm_module):
+    assert gm_module.QUICK_START_GUIDE_URL.endswith("/setup-and-first-run/")

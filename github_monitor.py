@@ -22,7 +22,7 @@ VERSION = "2.7"
 
 PROJECT_URL = "https://github.com/misiektoja/github_monitor"
 DOCUMENTATION_URL = "https://misiektoja.github.io/github_monitor"
-QUICK_START_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#quick-start"
+QUICK_START_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/"
 CONFIG_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#configuration-file"
 AUTH_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#github-personal-access-token"
 GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
