@@ -7171,7 +7171,6 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Liveness check, timestamp:\t")
             alive_counter = 0
 
-        verbose_print(f"Monitoring check #{check_number} completed for {user}")
         debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL)
         debug_monitor_wait_timing("normal monitoring interval", GITHUB_CHECK_INTERVAL)
         time.sleep(GITHUB_CHECK_INTERVAL)

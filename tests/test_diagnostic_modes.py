@@ -53,9 +53,17 @@ def test_diagnostic_printers_keep_broad_runtime_coverage():
     calls = [node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
 
     assert calls.count("debug_print") >= 70
-    assert calls.count("verbose_print") >= 15
+    assert calls.count("verbose_print") >= 14
     assert source.count("debug_github_operation(") >= 40
     assert "except Exception:" not in source
+
+
+# Verifies the completed check stays a debug trace, since one verbose line per cycle buried the events worth reading
+def test_the_completed_check_is_a_debug_only_trace():
+    source = (PROJECT_ROOT / "github_monitor.py").read_text(encoding="utf-8")
+
+    assert "Monitoring check #" not in source
+    assert "debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL)" in source
 
 
 # Verifies disabled diagnostic modes suppress every shared diagnostic printer
