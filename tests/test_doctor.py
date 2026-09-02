@@ -878,6 +878,30 @@ def test_the_connectivity_row_names_the_shared_endpoint(gm_module, monkeypatch):
     assert (failing.fix, failing.guide) == ("Check network, DNS, proxy and CHECK_INTERNET_URL settings", "")
 
 
+# Verifies a timed out endpoint keeps the wording the recovery advice gives every other surface
+def test_the_connectivity_row_names_a_timeout(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "CHECK_INTERNET_URL", "https://probe.example/ping")
+
+    def slow_request(*args, **kwargs):
+        raise gm_module.req.Timeout("too slow for doctor")
+
+    report = gm_module.DoctorReport()
+    gm_module.doctor_check_connectivity(report, request_get=slow_request)
+
+    assert (report.checks[0].status, report.checks[0].label) == ("FAIL", "The connectivity endpoint did not answer in time")
+
+
+@pytest.mark.parametrize("status", [204, 403, 500, 504])
+# Verifies the check reports reachability like the sibling monitors, which never read the status code
+def test_the_connectivity_row_passes_on_any_answer(gm_module, monkeypatch, status):
+    monkeypatch.setattr(gm_module, "CHECK_INTERNET_URL", "https://probe.example/ping")
+
+    report = gm_module.DoctorReport()
+    gm_module.doctor_check_connectivity(report, request_get=lambda *args, **kwargs: SimpleNamespace(status_code=status))
+
+    assert (report.checks[0].status, report.checks[0].label) == ("PASS", "The connectivity endpoint is reachable")
+
+
 # Verifies a report read on its own ends with the command that starts monitoring, carrying this run's files
 def test_the_report_ends_with_the_command_that_starts_monitoring(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", "/etc/github.conf")

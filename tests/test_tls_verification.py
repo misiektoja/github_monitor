@@ -112,7 +112,7 @@ OUTBOUND_CALLS = sorted(set(re.findall(r"(?:(?:req|requests|WEBHOOK_SESSION)\.(?
 
 # Verifies the sweep below is actually looking at call sites rather than passing on an empty list
 def test_the_outbound_request_sweep_finds_the_call_sites():
-    assert len(OUTBOUND_CALLS) >= 8, OUTBOUND_CALLS
+    assert len(OUTBOUND_CALLS) >= 7, OUTBOUND_CALLS
 
 
 @pytest.mark.parametrize("call", OUTBOUND_CALLS)

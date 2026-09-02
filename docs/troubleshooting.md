@@ -12,7 +12,7 @@ Doctor is read-only by default. It checks the effective configuration after conf
 
 * Environment: Python support, required dependencies and optional dependencies.
 * Configuration: selected files, secret names and sources, [TLS verification](configuration.md#tls-verification), GitHub URLs, timezone, the timing and count settings, log separator mode and the log and CSV files monitoring would write.
-* Authentication and connectivity: live token validation plus the configured connectivity endpoint.
+* Authentication and connectivity: live token validation plus the configured connectivity endpoint. The connectivity row reports whether that endpoint answers at all, the same test monitoring runs at startup, so a temporary error returned by the server is not reported as a broken setup.
 * Target and monitoring: target access, repository, starred repository and event feeds and optional contribution tracking.
 * Notifications: whether email and webhook alerts are disabled, unusable or ready.
 

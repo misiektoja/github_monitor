@@ -1287,18 +1287,29 @@ def smtp_ssl_context():
     return context
 
 
+# The last connectivity failure, so a quiet caller can classify it instead of the check printing it
+LAST_CONNECTIVITY_ERROR = None
+
+
 # Checks internet connectivity using the effective runtime URL and timeout
-def check_internet(url=None, timeout=None):
+def check_internet(url=None, timeout=None, quiet=False, operation="startup connectivity", request_get=None):
+    global LAST_CONNECTIVITY_ERROR
     selected_url = CHECK_INTERNET_URL if url is None else url
     selected_timeout = CHECK_INTERNET_TIMEOUT if timeout is None else timeout
+    get_request = req.get if request_get is None else request_get
+    LAST_CONNECTIVITY_ERROR = None
     try:
-        debug_http_request("GET", selected_url, "startup connectivity", selected_timeout)
-        response = req.get(selected_url, timeout=selected_timeout, verify=VERIFY_SSL)
-        debug_http_response("GET", selected_url, "startup connectivity", getattr(response, "status_code", "unknown"))
+        debug_http_request("GET", selected_url, operation, selected_timeout)
+        response = get_request(selected_url, timeout=selected_timeout, verify=VERIFY_SSL)
+        # Any answer proves the network path works, so the status code is left to the checks that call the API
+        debug_http_response("GET", selected_url, operation, getattr(response, "status_code", "unknown"))
         return True
     except req.RequestException as e:
-        debug_swallowed_exception("Startup connectivity request", e)
-        print_recovery_advice(classify_recovery_error(e, "connectivity"))
+        LAST_CONNECTIVITY_ERROR = e
+        debug_swallowed_exception(f"{operation[:1].upper() + operation[1:]} request", e)
+        # Quiet callers render the failure themselves, which doctor needs so nothing lands on its progress line
+        if not quiet:
+            print_recovery_advice(classify_recovery_error(e, "connectivity"))
         return False
 
 
@@ -7967,21 +7978,13 @@ def doctor_check_connectivity(report, request_get=None):
     if not validate_github_endpoint_url(CHECK_INTERNET_URL):
         report.add("Connectivity", "FAIL", "The connectivity endpoint URL is invalid", sanitize_error_text(CHECK_INTERNET_URL) or "No URL configured", "Set CHECK_INTERNET_URL to a complete HTTPS URL")
         return
-    get_request = req.get if request_get is None else request_get
-    try:
-        debug_http_request("GET", CHECK_INTERNET_URL, "doctor connectivity", CHECK_INTERNET_TIMEOUT)
-        response = get_request(CHECK_INTERNET_URL, timeout=CHECK_INTERNET_TIMEOUT, allow_redirects=False, verify=VERIFY_SSL)
-        status = getattr(response, "status_code", None)
-        debug_http_response("GET", CHECK_INTERNET_URL, "doctor connectivity", status)
-    except Exception as exc:
-        # The row names the endpoint, so the technical cause goes where the other tools put it
-        debug_print("Doctor connectivity check", url=diagnostic_endpoint(CHECK_INTERNET_URL), outcome="failed", error=f"{type(exc).__name__}: {sanitize_error_text(exc)}")
-        report.add("Connectivity", "FAIL", "The connectivity endpoint could not be reached", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}", CONNECTIVITY_ENDPOINT_FIX)
-        return
-    if isinstance(status, int) and status < 500:
+    # The same check the monitor runs at startup, so doctor cannot disagree with it about the same endpoint
+    if check_internet(quiet=True, operation="doctor connectivity", request_get=request_get):
         report.add("Connectivity", "PASS", "The connectivity endpoint is reachable", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}")
-    else:
-        report.add("Connectivity", "FAIL", "The connectivity endpoint returned an error", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)} answered HTTP {status}", "Retry later or correct CHECK_INTERNET_URL")
+        return
+    # The row names the endpoint, so the technical cause goes where the other tools put it
+    advice = classify_recovery_error(LAST_CONNECTIVITY_ERROR, "connectivity")
+    report.add("Connectivity", "FAIL", advice.summary, f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}", advice.fix, advice.guide_url)
 
 
 # Adds a target lookup and retains the fetched profile for feed checks
