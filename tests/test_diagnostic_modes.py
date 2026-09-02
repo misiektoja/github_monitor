@@ -224,7 +224,8 @@ def test_config_and_secret_resolution_transcript(gm_module, monkeypatch, capsys,
     assert "Secret resolution: name=GITHUB_TOKEN, source=dotenv file" in output
     assert "Secret resolution: name=SMTP_PASSWORD, source=configuration file" in output
     assert "Secret resolution: name=NTFY_ACCESS_TOKEN, source=environment" in output
-    assert "Loaded 2 settings from the configuration file" in output
+    # The settings count is a mechanical detail, so it belongs to debug rather than to the verbose narration
+    assert "Loaded 2 settings from the configuration file" not in output
     for secret in ("config-private-value", "dotenv-private-token", "private-diagnostic-topic", "environment-private-token"):
         assert secret not in output
 
@@ -296,7 +297,8 @@ def test_broken_target_transcript_exercises_real_cli_path(gm_module, monkeypatch
         assert "PyGithub: operation=user profile lookup" in output
         assert "Technical detail:" in output
     else:
-        assert "Loaded 9 settings from the configuration file" in output
+        # --list-repos exits before the notification gates, so verbose has only the recovery block to show here
+        assert "Loaded 9 settings from the configuration file" not in output
         assert "[DEBUG " not in output
 
 

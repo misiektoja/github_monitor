@@ -5630,7 +5630,6 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
         if retired_settings and report_errors:
             print(f"* Note: {describe_retired_settings(retired_settings, chr(39) + str(config_path) + chr(39))}")
         debug_print("Configuration applied", path=config_path, settings=len(parsed_values), retired=len(retired_settings))
-        verbose_print(f"Loaded {len(parsed_values)} settings from the configuration file")
         return True
     except SyntaxError as exc:
         detail = f"Config file '{config_path}' has invalid Python syntax"
@@ -9630,6 +9629,7 @@ def main():
         FINAL_LOG_PATH = None
 
     if SMTP_HOST.startswith("your_smtp_server_"):
+        verbose_print("Email notifications are off because SMTP_HOST is still the shipped placeholder")
         EVENT_NOTIFICATION = False
         PROFILE_NOTIFICATION = False
         REPO_NOTIFICATION = False
