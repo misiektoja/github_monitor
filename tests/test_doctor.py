@@ -335,7 +335,8 @@ def test_doctor_bootstrap_reports_unsupported_python(gm_module, monkeypatch):
     transcript = output.getvalue()
     assert result == 1
     assert "[FAIL] Python 3.9.18 is unsupported" in transcript
-    assert "To fix: Install Python 3.10 or newer" in transcript
+    assert f"  Minimum supported version: {gm_module.MINIMUM_PYTHON_VERSION_TEXT}" in transcript
+    assert f"To fix: Install Python {gm_module.MINIMUM_PYTHON_VERSION_TEXT} or newer" in transcript
     assert "1 check(s) failed, 0 warning(s)." in transcript
 
 

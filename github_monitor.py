@@ -39,7 +39,10 @@ WEBHOOK_READY_CHECK_LABEL = "Webhook URL, headers and alert choices look valid"
 
 # The label every sibling monitor uses when email alerts are on but the settings they would use cannot deliver
 EMAIL_UNUSABLE_CHECK_LABEL = "Email alerts are enabled but unusable"
-MIN_PYTHON_VERSION = (3, 10)
+
+# Declared once so the startup gate, the packaging metadata and the doctor environment check cannot disagree
+MINIMUM_PYTHON_VERSION = (3, 10)
+MINIMUM_PYTHON_VERSION_TEXT = ".".join(str(part) for part in MINIMUM_PYTHON_VERSION)
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -553,24 +556,23 @@ def _write_plain_startup_banner(destination):
 
 # Renders an environment-only doctor report when Python cannot run the full module
 def bootstrap_doctor_python_report(stream=None):
-    if sys.version_info >= MIN_PYTHON_VERSION:
+    if sys.version_info >= MINIMUM_PYTHON_VERSION:
         return None
     destination = sys.stdout if stream is None else stream
     version = ".".join(str(part) for part in sys.version_info[:3])
-    minimum = ".".join(str(part) for part in MIN_PYTHON_VERSION)
-    install_command = f"Install Python {minimum} or newer"
+    install_command = f"Install Python {MINIMUM_PYTHON_VERSION_TEXT} or newer"
     _write_plain_startup_banner(destination)
     destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
-    destination.write(f"Doctor\n\nEnvironment\n[FAIL] Python {version} is unsupported\n  Minimum supported version: {minimum}\nTo fix: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
+    destination.write(f"Doctor\n\nEnvironment\n[FAIL] Python {version} is unsupported\n  Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}\nTo fix: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
     destination.write(f"\nSummary\n  1 check(s) failed, 0 warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
     destination.flush()
     return 1
 
 
-if sys.version_info < MIN_PYTHON_VERSION:
+if sys.version_info < MINIMUM_PYTHON_VERSION:
     if "--doctor" in sys.argv:
         sys.exit(bootstrap_doctor_python_report())
-    print("* Error: Python version 3.10 or higher required !")
+    print(f"* Error: Python version {MINIMUM_PYTHON_VERSION_TEXT} or higher required !")
     sys.exit(1)
 
 
@@ -595,8 +597,7 @@ def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
     destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
     destination.write("Doctor\n\nEnvironment\n")
     version = ".".join(str(part) for part in sys.version_info[:3])
-    minimum = ".".join(str(part) for part in MIN_PYTHON_VERSION)
-    destination.write(f"[PASS] Python {version} is supported\n  Minimum supported version: {minimum}\n")
+    destination.write(f"[PASS] Python {version} is supported\n  Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}\n")
     failures = 0
     warnings = 0
     for package_name, _ in required:
@@ -7593,11 +7594,10 @@ def doctor_dependency_available(module_name, module_finder=None):
 # Adds Python, required dependency, optional dependency and install checks
 def doctor_check_environment(report, module_finder=None):
     version = platform.python_version()
-    minimum = ".".join(str(part) for part in MIN_PYTHON_VERSION)
-    if sys.version_info >= MIN_PYTHON_VERSION:
-        report.add("Environment", "PASS", f"Python {version} is supported", f"Minimum supported version: {minimum}")
+    if sys.version_info >= MINIMUM_PYTHON_VERSION:
+        report.add("Environment", "PASS", f"Python {version} is supported", f"Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}")
     else:
-        report.add("Environment", "FAIL", f"Python {version} is unsupported", f"Minimum supported version: {minimum}", f"Install Python {minimum} or newer")
+        report.add("Environment", "FAIL", f"Python {version} is unsupported", f"Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}", f"Install Python {MINIMUM_PYTHON_VERSION_TEXT} or newer")
     required = (("requests", "requests"), ("urllib3", "urllib3"), ("python-dateutil", "dateutil"), ("pytz", "pytz"), ("PyGithub", "github"))
     for package_name, module_name in required:
         if doctor_dependency_available(module_name, module_finder):
