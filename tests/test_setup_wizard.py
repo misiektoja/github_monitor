@@ -153,7 +153,7 @@ def test_setup_wizard_writes_reviewed_config_and_secrets(gm_module, request):
     dotenv_content = dotenv_path.read_text(encoding="utf-8")
     assert gm_module.parse_config_content(config_content, str(config_path))["GITHUB_CHECK_INTERVAL"] == 1800
     assert gm_module.parse_config_content(config_content, str(config_path))["TARGET_GITHUB_USERNAME"] == "octocat"
-    assert f"DOTENV_FILE = {str(dotenv_path)!r}" in config_content
+    assert f"DOTENV_FILE = {str(dotenv_path.resolve())!r}" in config_content
     assert "GITHUB_TOKEN" not in config_content
     assert token in dotenv_content
     assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
@@ -482,7 +482,7 @@ def test_setup_wizard_hands_off_to_doctor_then_monitoring(gm_module, request):
     assert exit_code == 0
     assert doctor_calls[0].doctor is True
     assert doctor_calls[0].username is None
-    assert monitor_calls == [["--config-file", str(config_path), "--env-file", str(dotenv_path)]]
+    assert monitor_calls == [["--config-file", str(config_path.resolve()), "--env-file", str(dotenv_path.resolve())]]
     assert "Run doctor now? It writes no files and offers real delivery tests only with separate approval." in output.getvalue()
     assert "Start monitoring now? Monitoring will continue until Ctrl+C." in output.getvalue()
     assert output.getvalue().count("[Y/n]: ") >= 2
@@ -509,7 +509,7 @@ def test_zero_argument_welcome_setup_starts_monitoring(gm_module, request, monke
     )
 
     assert exit_code == 0
-    assert launched == [["--config-file", str(Path(directory.name) / gm_module.DEFAULT_CONFIG_FILENAME), "--env-file", str(Path(directory.name) / ".env")]]
+    assert launched == [["--config-file", str((Path(directory.name) / gm_module.DEFAULT_CONFIG_FILENAME).resolve()), "--env-file", str((Path(directory.name) / ".env").resolve())]]
 
 
 # Verifies non-interactive setup explains the safe manual alternative and writes nothing
@@ -596,12 +596,13 @@ def test_saved_target_shortens_commands_without_removing_positional_override(gm_
     config_path = Path(directory.name) / "monitor.conf"
     dotenv_path = Path(directory.name) / ".env-monitor"
     config_path.write_text("TARGET_GITHUB_USERNAME = 'saved-user'\n", encoding="utf-8")
+    dotenv_path.write_text("", encoding="utf-8")
 
     state = gm_module.build_wizard_state(config_path, dotenv_path)
 
     assert state.target == "saved-user"
     assert state.persist_target is True
-    assert gm_module.wizard_monitor_arguments(state) == ["--config-file", str(config_path), "--env-file", str(dotenv_path)]
+    assert gm_module.wizard_monitor_arguments(state) == ["--config-file", str(config_path.resolve()), "--env-file", str(dotenv_path.resolve())]
     state.target = "positional-user"
     state.persist_target = False
     assert gm_module.wizard_monitor_arguments(state)[0] == "positional-user"
