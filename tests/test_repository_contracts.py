@@ -12,7 +12,11 @@ yaml = pytest.importorskip("yaml")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIRECTORY = PROJECT_ROOT / ".github" / "workflows"
+DOCS_DIRECTORY = PROJECT_ROOT / "docs"
 REPOSITORY_URL = "https://github.com/misiektoja/github_monitor"
+
+# The published page set. Splitting the README moved every section onto exactly one of these, so the list is pinned here
+DOCUMENTATION_PAGES = ("index.md", "installation.md", "setup-and-first-run.md", "configuration.md", "usage.md", "troubleshooting.md", "testing.md", "about.md")
 
 
 # Every markdown file that links into the repository, and which a moved or renamed section can silently break
@@ -26,11 +30,14 @@ ISSUE_TEMPLATES = (".github/ISSUE_TEMPLATE/config.yml", ".github/ISSUE_TEMPLATE/
 def page_anchors(path):
     text = path.read_text(encoding="utf-8")
     anchors = set(re.findall(r'<a id="([^"]+)"></a>', text))
+    in_fence = False
     for line in text.splitlines():
-        if not line.startswith("#"):
-            continue
-        title = line.lstrip("#").strip()
-        anchors.add("".join(character for character in title.casefold().replace(" ", "-") if character.isalnum() or character in "-_"))
+        # A commented shell command inside a fence starts with '#' too, and would otherwise register as a real anchor
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and line.startswith("#"):
+            title = line.lstrip("#").strip()
+            anchors.add("".join(character for character in title.casefold().replace(" ", "-") if character.isalnum() or character in "-_"))
     return anchors
 
 
@@ -107,21 +114,6 @@ class TestGovernanceDocuments:
                     broken.append(f"{relative_path} -> {target}")
 
         assert not broken, f"repository documents linking at missing targets: {broken}"
-
-    # The Guide: lines are the only documentation a stuck user is handed, and a renamed section breaks them in silence
-    def test_runtime_guide_urls_resolve_to_a_real_document_and_anchor(self):
-        prefix = f"{REPOSITORY_URL}/blob/main/"
-        guide_names = sorted(name for name in vars(gm) if name.endswith("_GUIDE_URL"))
-        assert guide_names, "no runtime guide constants were found"
-
-        for name in guide_names:
-            url = getattr(gm, name)
-            assert url.startswith(prefix), f"{name} does not point into this repository: {url}"
-            relative_path, _separator, anchor = url.removeprefix(prefix).partition("#")
-            document = PROJECT_ROOT / relative_path
-            assert document.is_file(), f"{name} points at a missing document: {relative_path}"
-            if anchor:
-                assert anchor in page_anchors(document), f"{name} points at a missing anchor in {relative_path}: #{anchor}"
 
     # The support document must route each request type to a channel that exists
     def test_support_document_routes_every_request_type(self):
@@ -219,3 +211,105 @@ class TestWorkflowSupplyChain:
     def test_dependabot_watches_actions_and_python_dependencies(self):
         updates = read_yaml_asset(".github/dependabot.yml")["updates"]
         assert {"github-actions", "pip"} <= {entry["package-ecosystem"] for entry in updates}
+
+
+# Returns the page slugs the MkDocs navigation lists, in navigation order
+def navigation_pages():
+    navigation = read_asset("mkdocs.yml").split("nav:", 1)[1]
+    return re.findall(r":\s*([a-z0-9-]+\.md)\s*$", navigation, flags=re.MULTILINE)
+
+
+# Returns the headings of one documentation page as (level, title) pairs, ignoring fenced code
+def page_headings(path):
+    headings = []
+    in_fence = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and (match := re.match(r"^(#{1,6})\s+(.+?)\s*$", stripped)):
+            headings.append((len(match.group(1)), match.group(2)))
+    return headings
+
+
+# Resolves one published site URL to the documentation page that has to serve it
+def documentation_page_for(url):
+    suffix = url.removeprefix(gm.DOCUMENTATION_URL).lstrip("/")
+    relative_path, _separator, anchor = suffix.partition("#")
+    slug = relative_path.strip("/")
+    return (DOCS_DIRECTORY / "index.md" if not slug else DOCS_DIRECTORY / f"{slug}.md"), anchor
+
+
+class TestDocumentationSite:
+    # A page missing from the navigation is unreachable, and a navigation entry without a page fails only at build time
+    def test_the_navigation_and_the_page_set_agree(self):
+        listed = navigation_pages()
+        on_disk = sorted(path.name for path in DOCS_DIRECTORY.glob("*.md"))
+
+        assert listed, "the navigation lists no pages"
+        assert sorted(listed) == sorted(DOCUMENTATION_PAGES), f"the navigation no longer matches the pinned page set: {listed}"
+        assert on_disk == sorted(DOCUMENTATION_PAGES), f"the published pages no longer match the pinned page set: {on_disk}"
+
+    # Splitting a README can leave a page with two titles, which no build step and no link test notices
+    def test_every_page_has_exactly_one_title(self):
+        for name in DOCUMENTATION_PAGES:
+            titles = [title for level, title in page_headings(DOCS_DIRECTORY / name) if level == 1]
+            assert len(titles) == 1, f"{name} has {len(titles)} top-level titles: {titles}"
+
+    # The same section landing on two pages splits the reader's answer in half and both copies then drift
+    def test_no_section_appears_on_two_pages(self):
+        seen = {}
+        duplicated = []
+        for name in DOCUMENTATION_PAGES:
+            for level, title in page_headings(DOCS_DIRECTORY / name):
+                if level != 2:
+                    continue
+                if title in seen:
+                    duplicated.append(f"{title!r} on {seen[title]} and {name}")
+                seen[title] = name
+
+        assert not duplicated, f"sections published on two pages: {duplicated}"
+
+    # A cross-page reference written while the section was still in one README is the migration's most likely leftover
+    def test_every_documentation_link_resolves(self):
+        broken = []
+        for name in DOCUMENTATION_PAGES:
+            page = DOCS_DIRECTORY / name
+            for target in re.findall(r"\]\((?!https?:|mailto:)([^)]+)\)", page.read_text(encoding="utf-8")):
+                page_part, _, anchor = target.partition("#")
+                target_page = page if not page_part else (DOCS_DIRECTORY / page_part)
+                if page_part and not target_page.is_file():
+                    broken.append(f"{name} -> {target}")
+                    continue
+                if anchor and anchor not in page_anchors(target_page):
+                    broken.append(f"{name} -> {target}")
+
+        assert not broken, f"documentation pages linking at missing targets: {broken}"
+
+    # The Guide: lines are the only documentation a stuck user is handed, and a renamed section breaks them in silence
+    def test_runtime_guide_urls_resolve_to_a_real_page_and_anchor(self):
+        guide_names = sorted(name for name in vars(gm) if name.endswith("_GUIDE_URL"))
+        assert guide_names, "no runtime guide constants were found"
+
+        for name in guide_names:
+            url = getattr(gm, name)
+            assert url.startswith(gm.DOCUMENTATION_URL + "/"), f"{name} does not point at the documentation site: {url}"
+            page, anchor = documentation_page_for(url)
+            assert page.is_file(), f"{name} points at a missing page: {page.name}"
+            if anchor:
+                assert anchor in page_anchors(page), f"{name} points at a missing anchor on {page.name}: #{anchor}"
+
+    # The runtime links and the published site have to name the same origin, or every Guide: line lands off-site
+    def test_the_site_url_matches_the_runtime_documentation_url(self):
+        assert f"site_url: {gm.DOCUMENTATION_URL}/" in read_asset("mkdocs.yml")
+
+    # Asserting the job name passes on a workflow whose build step was renamed or removed, so the run: lines are what count
+    def test_the_documentation_build_is_a_ci_gate(self):
+        commands = re.findall(r"^\s*run:\s*(.+)$", read_asset(".github/workflows/tests.yml"), flags=re.MULTILINE)
+        assert any("mkdocs build --strict" in command for command in commands), "CI does not build the documentation site"
+        assert any("docs/requirements.txt" in command for command in commands), "CI does not install the documentation dependencies"
+
+    # A site nothing deploys is a site the runtime guide links point at and nobody can read
+    def test_the_site_publishes_through_a_workflow(self):
+        commands = re.findall(r"^\s*run:\s*(.+)$", read_asset(".github/workflows/docs.yml"), flags=re.MULTILINE)
+        assert any("mkdocs gh-deploy" in command and "--strict" in command for command in commands), "no workflow deploys the documentation site"

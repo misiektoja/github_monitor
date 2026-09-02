@@ -21,16 +21,17 @@ wcwidth (optional, needed by TRUNCATE_CHARS)
 VERSION = "2.7"
 
 PROJECT_URL = "https://github.com/misiektoja/github_monitor"
-README_URL = f"{PROJECT_URL}/blob/main/README.md"
-QUICK_START_GUIDE_URL = f"{README_URL}#quick-start"
-CONFIG_GUIDE_URL = f"{README_URL}#configuration"
-AUTH_GUIDE_URL = f"{README_URL}#github-personal-access-token"
+DOCUMENTATION_URL = "https://misiektoja.github.io/github_monitor"
+QUICK_START_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#quick-start"
+CONFIG_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#configuration-file"
+AUTH_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#github-personal-access-token"
 GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
-NOTIFICATION_GUIDE_URL = f"{README_URL}#email-notifications"
-DEBUG_GUIDE_URL = f"{README_URL}#debugging-and-recovery"
-TLS_GUIDE_URL = f"{README_URL}#tls-verification"
-SUPPORT_GUIDE_URL = f"{PROJECT_URL}/blob/main/SUPPORT.md"
-DOCTOR_GUIDE_URL = f"{SUPPORT_GUIDE_URL}#doctor-preflight"
+SMTP_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#smtp-settings"
+WEBHOOK_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#webhook-settings"
+DEBUG_GUIDE_URL = f"{DOCUMENTATION_URL}/troubleshooting/#verbose-and-debug-output"
+TLS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#tls-verification"
+SUPPORT_GUIDE_URL = f"{DOCUMENTATION_URL}/about/#support"
+DOCTOR_GUIDE_URL = f"{DOCUMENTATION_URL}/troubleshooting/#doctor-preflight"
 
 # Shared doctor labels for the two delivery channels, kept identical to the sibling monitors
 SMTP_READY_CHECK_LABEL = "SMTP connection and login succeeded"
@@ -2956,7 +2957,7 @@ def classify_recovery_error(error, context="unknown", install_context=None):
         retryable = status is None or (isinstance(status, int) and status >= 500)
         return make_recovery_advice("github.api_error", "GitHub returned an API error", f"Try again or run {debug_command} for sanitized technical detail", retryable, detail, DEBUG_GUIDE_URL)
     if isinstance(error, smtplib.SMTPAuthenticationError):
-        return make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", "Check SMTP_USER and replace SMTP_PASSWORD before sending another test", False, detail, NOTIFICATION_GUIDE_URL)
+        return make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", "Check SMTP_USER and replace SMTP_PASSWORD before sending another test", False, detail, SMTP_GUIDE_URL)
     if isinstance(error, PermissionError):
         return make_recovery_advice("file.unwritable", "A required file could not be written", "Check the destination path and file permissions", False, detail, CONFIG_GUIDE_URL)
     if isinstance(error, FileNotFoundError):
@@ -2965,9 +2966,9 @@ def classify_recovery_error(error, context="unknown", install_context=None):
     if selected_context == "github_token":
         return make_recovery_advice("auth.github_token_invalid", "GitHub token setup could not be completed", f"Correct the problem then run: {token_command}", False, detail, AUTH_GUIDE_URL)
     if selected_context == "webhook":
-        return make_recovery_advice("webhook.invalid", "Webhook setup could not be completed", f"Check the HTTPS destination then run: {webhook_command}", False, detail, NOTIFICATION_GUIDE_URL)
+        return make_recovery_advice("webhook.invalid", "Webhook setup could not be completed", f"Check the HTTPS destination then run: {webhook_command}", False, detail, WEBHOOK_GUIDE_URL)
     if selected_context == "email":
-        return make_recovery_advice("smtp.configuration", "The SMTP server could not be reached", "Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", True, detail, NOTIFICATION_GUIDE_URL)
+        return make_recovery_advice("smtp.configuration", "The SMTP server could not be reached", "Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", True, detail, SMTP_GUIDE_URL)
     if selected_context == "config":
         # The parser already names the line and setting, so the summary carries it instead of only --debug
         reason = sanitize_error_text(error)
@@ -7757,7 +7758,7 @@ def doctor_add_smtp_login_check(report):
         smtp_object = smtp_connect_and_login(SMTP_SSL, smtp_timeout=5)
     except Exception as exc:
         advice = classify_recovery_error(exc, "email")
-        report.add("Notifications", "FAIL", advice.summary, advice.detail, advice.fix, advice.guide_url or NOTIFICATION_GUIDE_URL)
+        report.add("Notifications", "FAIL", advice.summary, advice.detail, advice.fix, advice.guide_url or SMTP_GUIDE_URL)
         return
     finally:
         smtp_quit_quietly(smtp_object)
@@ -7772,7 +7773,7 @@ def doctor_check_notifications(report):
     else:
         email_error = validate_email_settings()
         if email_error is not None:
-            report.add("Notifications", "WARN", "Email alerts are enabled but unusable", email_error, "Correct SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL", NOTIFICATION_GUIDE_URL)
+            report.add("Notifications", "WARN", "Email alerts are enabled but unusable", email_error, "Correct SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL", SMTP_GUIDE_URL)
         else:
             doctor_add_smtp_login_check(report)
     if not WEBHOOK_ENABLED:
@@ -7780,20 +7781,20 @@ def doctor_check_notifications(report):
         return
     selected_webhook_types = any((WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION))
     if not selected_webhook_types and not WEBHOOK_ERROR_NOTIFICATION:
-        report.add("Notifications", "WARN", "Webhook alerts have no usable alert choices", "The channel is enabled but no selected alert can fire", "Enable at least one webhook alert type or disable WEBHOOK_ENABLED", NOTIFICATION_GUIDE_URL)
+        report.add("Notifications", "WARN", "Webhook alerts have no usable alert choices", "The channel is enabled but no selected alert can fire", "Enable at least one webhook alert type or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL)
         return
     if not validate_webhook_url(WEBHOOK_URL):
-        report.add("Notifications", "WARN", "Webhook alerts have no valid destination", "WEBHOOK_URL must be a complete supported HTTPS destination", "Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", NOTIFICATION_GUIDE_URL)
+        report.add("Notifications", "WARN", "Webhook alerts have no valid destination", "WEBHOOK_URL must be a complete supported HTTPS destination", "Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL)
         return
     provider = normalized_webhook_provider()
     customization_error = validate_webhook_customization(provider)
     header_error = validate_webhook_headers(provider)
     if not provider:
-        report.add("Notifications", "WARN", "Webhook provider is invalid", sanitize_error_text(WEBHOOK_PROVIDER), "Set WEBHOOK_PROVIDER to discord or ntfy", NOTIFICATION_GUIDE_URL)
+        report.add("Notifications", "WARN", "Webhook provider is invalid", sanitize_error_text(WEBHOOK_PROVIDER), "Set WEBHOOK_PROVIDER to discord or ntfy", WEBHOOK_GUIDE_URL)
     elif customization_error is not None:
-        report.add("Notifications", "WARN", "Webhook customization is invalid", customization_error, "Correct WEBHOOK_TEMPLATE, WEBHOOK_USERNAME, WEBHOOK_AVATAR_URL or WEBHOOK_TRANSFORMS", NOTIFICATION_GUIDE_URL)
+        report.add("Notifications", "WARN", "Webhook customization is invalid", customization_error, "Correct WEBHOOK_TEMPLATE, WEBHOOK_USERNAME, WEBHOOK_AVATAR_URL or WEBHOOK_TRANSFORMS", WEBHOOK_GUIDE_URL)
     elif header_error is not None:
-        report.add("Notifications", "WARN", "Webhook headers are invalid", header_error, "Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", NOTIFICATION_GUIDE_URL)
+        report.add("Notifications", "WARN", "Webhook headers are invalid", header_error, "Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", WEBHOOK_GUIDE_URL)
     else:
         report.webhook_ready = True
         report.add("Notifications", "PASS", f"{WEBHOOK_READY_CHECK_LABEL} for {webhook_provider_display_name()}", f"Alerts: {', '.join(_startup_webhook_notification_categories())}. The private link was not displayed. No webhook was sent during this passive check")
@@ -7879,9 +7880,9 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
             if result == 0:
                 check = DoctorCheck("Optional delivery tests", "PASS", "Test email was delivered", f"Destination: {RECEIVER_EMAIL}")
             else:
-                check = DoctorCheck("Optional delivery tests", "FAIL", "Test email delivery failed", "The SMTP delivery function returned an error", "Review the SMTP error above and correct the email settings", NOTIFICATION_GUIDE_URL)
+                check = DoctorCheck("Optional delivery tests", "FAIL", "Test email delivery failed", "The SMTP delivery function returned an error", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
         else:
-            check = DoctorCheck("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test", "Run doctor again and approve the email test when ready", NOTIFICATION_GUIDE_URL)
+            check = DoctorCheck("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test", "Run doctor again and approve the email test when ready", SMTP_GUIDE_URL)
         report.checks.append(check)
         render_doctor_check(check, destination)
     if report.webhook_ready:
@@ -7892,9 +7893,9 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
             if result == 0:
                 check = DoctorCheck("Optional delivery tests", "PASS", f"Test webhook through {provider} was delivered", f"Destination host: {diagnostic_endpoint(WEBHOOK_URL, host_only=True)}")
             else:
-                check = DoctorCheck("Optional delivery tests", "FAIL", f"Test webhook through {provider} failed", "The webhook delivery function returned an error", "Review the webhook error above and correct the destination settings", NOTIFICATION_GUIDE_URL)
+                check = DoctorCheck("Optional delivery tests", "FAIL", f"Test webhook through {provider} failed", "The webhook delivery function returned an error", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
         else:
-            check = DoctorCheck("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test", "Run doctor again and approve the webhook test when ready", NOTIFICATION_GUIDE_URL)
+            check = DoctorCheck("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test", "Run doctor again and approve the webhook test when ready", WEBHOOK_GUIDE_URL)
         report.checks.append(check)
         render_doctor_check(check, destination)
 

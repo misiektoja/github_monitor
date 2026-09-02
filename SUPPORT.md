@@ -1,8 +1,8 @@
 # Getting help
 
-Start with the [README](README.md). [Requirements](README.md#requirements), [Installation](README.md#installation) and [Quick Start](README.md#quick-start) cover most first-run problems, and [Configuration](README.md#configuration) explains every setting the tool reads.
+Start with the [documentation](https://misiektoja.github.io/github_monitor/). [Installation](https://misiektoja.github.io/github_monitor/installation/) and [Setup & First Run](https://misiektoja.github.io/github_monitor/setup-and-first-run/) cover most first-run problems, [Configuration](https://misiektoja.github.io/github_monitor/configuration/) explains every setting the tool reads and [Troubleshooting](https://misiektoja.github.io/github_monitor/troubleshooting/) covers what to do when a check fails.
 
-For a new install, run `github_monitor --setup`. Review the complete summary before saving. The wizard keeps private values in a separate dotenv file then offers the read-only doctor preflight after authentication is complete. If no interactive terminal is available, run `github_monitor --generate-config github_monitor.conf` and follow the manual setup steps in the README.
+For a new install, run `github_monitor --setup`. Review the complete summary before saving. The wizard keeps private values in a separate dotenv file then offers the read-only doctor preflight after authentication is complete. If no interactive terminal is available, run `github_monitor --generate-config github_monitor.conf` and follow the manual setup steps in [Setup & First Run](https://misiektoja.github.io/github_monitor/setup-and-first-run/).
 
 ## Check your setup first
 

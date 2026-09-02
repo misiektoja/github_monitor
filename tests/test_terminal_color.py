@@ -488,10 +488,10 @@ def test_every_theme_part_is_used():
     assert not set(monitor.DEFAULT_COLOR_THEME) - looked_up
 
 
-# Verifies the README theme table lists every shipped key once
+# Verifies the published theme table lists every shipped key once
 def test_documented_theme_keys_match_the_built_in_theme():
-    readme = Path(monitor.__file__).with_name("README.md").read_text(encoding="utf-8")
-    section = readme.split('<a id="terminal-colours"></a>', 1)[1].split('<a id="github-personal-access-token"></a>', 1)[0]
+    usage = (Path(monitor.__file__).parent / "docs" / "usage.md").read_text(encoding="utf-8")
+    section = usage.split("## Terminal Colours", 1)[1].split("## Coloring Log Output with GRC", 1)[0]
     documented = re.findall(r"^\| `([a-z_]+)` \|", section, re.M)
     assert len(documented) == len(set(documented))
     assert set(documented) == set(monitor.DEFAULT_COLOR_THEME)

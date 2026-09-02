@@ -22,7 +22,15 @@ pip install -e '.[lint]'
 python -m ruff check github_monitor.py tests
 ```
 
-CI runs both on every push and pull request, across Python 3.10 through 3.14,
+Build the documentation site the way CI does, which fails on a broken link or a
+missing page:
+
+```bash
+pip install -r docs/requirements.txt
+mkdocs build --strict
+```
+
+CI runs all three on every push and pull request, across Python 3.10 through 3.14,
 and again before anything is published to PyPI.
 
 ## Layout
@@ -38,7 +46,7 @@ and again before anything is published to PyPI.
 | `test_install_method_commands.py` | PyPI and downloaded-script detection with portable plus exact POSIX and Windows commands |
 | `test_profile_fields.py` | Addition, removal and failure handling for nullable profile fields |
 | `test_recovery_errors.py` | Closed recovery codes, classification, retryability and layered secret redaction that leaves ordinary output intact |
-| `test_repository_contracts.py` | Governance documents, issue templates, action pinning, release gating and the CI contract |
+| `test_repository_contracts.py` | Governance documents, issue templates, action pinning, release gating, the CI contract and the documentation site: its pinned page set, one title per page, no section on two pages, resolving links and the runtime guide URLs |
 | `test_repository_metadata.py` | Governance files, citation, funding, line endings, the declared editor style, the pinned linter and release integrity |
 | `test_repository_monitoring.py` | Discussion collection, repository snapshots, open and closed notifications, event formatting |
 | `test_setup_wizard.py` | Buffered setup, section editing, target and duration normalization, config and dotenv separation, backups, doctor and monitoring handoffs, non-interactive fallback and pseudo-terminal transcripts |

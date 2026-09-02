@@ -32,16 +32,23 @@ python -m pytest
 python -m ruff check github_monitor.py tests
 ```
 
+The documentation site is built the same way CI builds it, which fails on a broken link or a missing page:
+
+```sh
+pip install -r docs/requirements.txt
+mkdocs build --strict
+```
+
 The default suite is offline. It never contacts GitHub and network calls are replaced with local test doubles. See [tests/README.md](tests/README.md) for what each test file covers.
 
-CI runs the same two checks on every push and pull request, across Python 3.10 through 3.14. The linter is pinned in the `lint` extra so a new ruff release cannot fail a build on a rule that did not exist when the change was written; the pre-commit hook pins the same version.
+CI runs the same three checks on every push and pull request, across Python 3.10 through 3.14. The linter is pinned in the `lint` extra so a new ruff release cannot fail a build on a rule that did not exist when the change was written; the pre-commit hook pins the same version.
 
 A change to the monitoring loop, authentication or GitHub data handling is not verified by the offline suite alone. Exercise it against a real account and say so in the pull request, without usernames or credentials.
 
 ## What a change needs
 
 - **Tests.** New behavior needs a test. A bug fix needs a test that fails without it. Match the existing files in `tests/`.
-- **Documentation.** User-facing behavior belongs in [README.md](README.md), which is the reference for this project. Document a new configuration setting or command-line option in the section that covers its feature.
+- **Documentation.** User-facing behavior belongs on the [documentation site](https://misiektoja.github.io/github_monitor/), whose pages live in [docs/](docs). Document a new configuration setting or command-line option on the page that covers its feature. The README is a landing page and stays one.
 - **A release-notes entry.** Add it under the unreleased section of [RELEASE_NOTES.md](RELEASE_NOTES.md), following the existing category and prefix style. Write it for a user, not as an implementation log.
 - **A Conventional Commits message.** Use the scope the repository already uses for that area.
 

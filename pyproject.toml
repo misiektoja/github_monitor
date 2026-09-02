@@ -41,6 +41,7 @@ lint = ["ruff==0.16.4"]
 
 [project.urls]
 Homepage = "https://github.com/misiektoja/github_monitor"
+Documentation = "https://misiektoja.github.io/github_monitor/"
 Source   = "https://github.com/misiektoja/github_monitor"
 Changelog= "https://github.com/misiektoja/github_monitor/blob/main/RELEASE_NOTES.md"
 

@@ -15,7 +15,7 @@
 
 ## Documentation and release notes
 
-- [ ] `README.md` updated, for user-facing behavior
+- [ ] `docs/` updated, for user-facing behavior
 - [ ] `RELEASE_NOTES.md` entry added under the unreleased section
 
 ## Notes
