@@ -410,3 +410,22 @@ def test_only_debug_mode_keeps_the_screen(gm_module, monkeypatch, request, resto
         gm_module.main()
 
     assert cleared == [expected]
+
+
+# Verifies the one-shot commands keep whatever is already on the screen, so their output stays scrollable
+@pytest.mark.parametrize(("argv", "expected"), ((["github_monitor", "--doctor"], True), (["github_monitor", "--set-github-token"], True), (["github_monitor", "--send-test-email"], True), (["github_monitor", "--help"], True), (["github_monitor", "misiektoja"], False)))
+def test_one_shot_commands_keep_the_terminal_history(gm_module, monkeypatch, argv, expected):
+    monkeypatch.setattr(gm_module.sys, "argv", argv)
+
+    assert gm_module.keep_terminal_history() is expected
+
+
+# Verifies a redirected stdout is never cleared, so no escape sequence or TERM warning reaches the captured output
+def test_a_redirected_stdout_is_never_cleared(gm_module, monkeypatch):
+    commands = []
+    monkeypatch.setattr(gm_module.sys.stdout, "isatty", lambda: False, raising=False)
+    monkeypatch.setattr(gm_module.os, "system", lambda command: commands.append(command))
+
+    gm_module.clear_screen(True)
+
+    assert commands == []
