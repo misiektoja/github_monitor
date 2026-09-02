@@ -524,7 +524,7 @@ def test_doctor_configuration_honours_disabled_discovery(gm_module, monkeypatch)
     gm_module.doctor_check_configuration(report, args, Mock())
 
     assert finder.call_count == 0
-    assert any(check.label == "Configuration discovery is disabled" and check.status == "PASS" for check in report.checks)
+    assert any(check.label == "No configuration file selected" and check.detail == "Using built-in defaults and command-line overrides" and check.status == "PASS" for check in report.checks)
 
 
 # Verifies approved delivery failure changes the final healthcheck exit state

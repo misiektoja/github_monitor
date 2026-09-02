@@ -7630,7 +7630,7 @@ def doctor_check_configuration(report, args, parser):
     config_errors = []
     retired_settings = set()
     if config_discovery_disabled:
-        report.add("Configuration", "PASS", "Configuration discovery is disabled", "No configuration file was requested")
+        report.add("Configuration", "PASS", "No configuration file selected", "Using built-in defaults and command-line overrides")
     elif CLI_CONFIG_PATH and not cfg_path:
         report.add("Configuration", "FAIL", "Configuration file was not found", f"Requested path: {CLI_CONFIG_PATH}", "Correct --config-file or generate a new configuration with --generate-config")
     elif cfg_path:
@@ -7640,7 +7640,7 @@ def doctor_check_configuration(report, args, parser):
         else:
             report.add("Configuration", "FAIL", "Configuration file could not be loaded", config_errors[0] if config_errors else f"Path: {cfg_path}", "Keep only documented SETTING = value lines with plain literal values or regenerate the file")
     else:
-        report.add("Configuration", "PASS", "No configuration file selected", "Built-in defaults and other configured sources remain available")
+        report.add("Configuration", "PASS", "No configuration file selected", "Using built-in defaults and command-line overrides")
     if retired_settings:
         listed = ", ".join(sorted(retired_settings))
         report.add("Configuration", "WARN", "Retired configuration settings were ignored", listed, "Remove the retired settings from the configuration file")
@@ -7653,13 +7653,13 @@ def doctor_check_configuration(report, args, parser):
         report.add("Configuration", "FAIL", "Repository selection cannot take effect", "--repos requires repository detail tracking", "Add --track-repos-changes or remove --repos")
     apply_monitoring_cli_overrides(args, parser, strict=False)
     if DOTENV_FILE and DOTENV_FILE.casefold() == "none":
-        report.add("Configuration", "PASS", "Dotenv loading is disabled", "No dotenv file was requested")
+        report.add("Configuration", "PASS", "No dotenv file selected", "Using environment variables and other configured sources")
     elif env_path and os.path.isfile(env_path) and not dotenv_errors:
         report.add("Configuration", "PASS", "Dotenv file loaded", f"Path: {env_path}")
     elif dotenv_errors:
         report.add("Configuration", "WARN", "Dotenv file could not be loaded", dotenv_errors[0], "Correct --env-file, install python-dotenv or disable dotenv loading with --env-file none")
     else:
-        report.add("Configuration", "PASS", "No dotenv file selected", "Exported environment variables and config values remain available")
+        report.add("Configuration", "PASS", "No dotenv file selected", "Using environment variables and other configured sources")
     source_order = ("dotenv file", "environment", "configuration file", "built-in configuration", "command line")
     source_labels = {"dotenv file": "Secrets loaded from the dotenv file", "environment": "Secrets loaded from the environment", "configuration file": "Secrets loaded from the configuration file", "built-in configuration": "Secrets loaded from the built-in configuration", "command line": "Secrets loaded from the command line"}
     source_rows = 0
@@ -9233,7 +9233,7 @@ def main():
         "--config-file",
         dest="config_file",
         metavar="PATH",
-        help="Location of the optional config file",
+        help="Location of the optional config file (auto-search if not set, disable with 'none')",
     )
     conf.add_argument(
         "--generate-config",
