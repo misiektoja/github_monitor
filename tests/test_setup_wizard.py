@@ -874,3 +874,16 @@ def test_smtp_sign_in_reports_incomplete_settings(gm_module, monkeypatch):
 def test_smtp_sign_in_refuses_a_blank_password(gm_module):
     with pytest.raises(ValueError, match="No SMTP password"):
         gm_module.smtp_sign_in("")
+
+
+# Verifies Ctrl+C at the welcome offer reports one line instead of a traceback
+def test_interrupting_the_welcome_offer_reports_a_cancellation(gm_module):
+    output = io.StringIO()
+
+    def interrupt():
+        raise KeyboardInterrupt
+
+    exit_code = gm_module.run_zero_argument_welcome(wizard_parser(), interrupt, FakeTTY(), output, setup_runner=lambda *args, **kwargs: pytest.fail("the wizard ran after being interrupted"))
+
+    assert exit_code == 1
+    assert "Setup cancelled." in output.getvalue()

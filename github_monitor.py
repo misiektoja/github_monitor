@@ -8940,7 +8940,12 @@ def run_zero_argument_welcome(parser, input_func=input, input_stream=None, strea
     if not interactive:
         return 1
     destination.write("\n")
-    if not wizard_ask_yes_no("Run the guided setup wizard now?", True, input_func, destination):
+    try:
+        start_setup = wizard_ask_yes_no("Run the guided setup wizard now?", True, input_func, destination)
+    except WizardCancelled:
+        destination.write(colorize("warning", "Setup cancelled.") + "\n")
+        return 1
+    if not start_setup:
         return 0
     destination.write("\n")
     runner = run_setup_wizard if setup_runner is None else setup_runner
