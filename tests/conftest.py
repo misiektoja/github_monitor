@@ -35,6 +35,17 @@ def gm_module():
     return gm
 
 
+@pytest.fixture
+# Restores every module-level setting a real startup run mutates, so one test cannot leak into the next
+def restored_globals():
+    snapshot = {name: value for name, value in vars(gm).items() if name.isupper()}
+    yield
+    for name, value in snapshot.items():
+        setattr(gm, name, value)
+    for name in [name for name in vars(gm) if name.isupper() and name not in snapshot]:
+        delattr(gm, name)
+
+
 @pytest.fixture(autouse=True)
 # Resets module globals used by offline helpers to deterministic values
 def deterministic_globals(monkeypatch):

@@ -860,6 +860,8 @@ Debug mode answers "what did the tool do?" Every line is timestamped, names the 
 [DEBUG 23:53:52] Webhook delivery: channel=discord, outcome=OK, attempt=2/2
 ```
 
+A `--debug` run leaves the terminal as it was instead of clearing it, so the output you are comparing against stays on screen. `--verbose` clears it like an ordinary run.
+
 The fields carry the endpoint, timeout, masked credential, response status, retry decision, file path and monitoring timing used by the relevant operation:
 
 ```sh

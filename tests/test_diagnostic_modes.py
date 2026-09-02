@@ -313,3 +313,27 @@ def test_the_shared_summary_rows_match_the_sibling_tools(gm_module):
     assert [row.label for row in rows if row.label in SHARED_ROW_ORDER] == list(SHARED_ROW_ORDER)
     # The renderer pads "<label>:" into a 30-character column, so a longer label swallows the separating space
     assert max(len(row.label) for row in rows) <= 28
+
+
+# Verifies only debug keeps the screen, since a cleared terminal loses the run being compared against
+@pytest.mark.parametrize(("flag", "expected"), (("--debug", False), ("--verbose", True)))
+def test_only_debug_mode_keeps_the_screen(gm_module, monkeypatch, request, restored_globals, flag, expected):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config = Path(directory.name) / "github_monitor.conf"
+    config.write_text('CLEAR_SCREEN = True\nDISABLE_LOGGING = True\nGITHUB_TOKEN = "test-token-value"\n', encoding="utf-8")
+    cleared = []
+    monkeypatch.setattr(gm_module, "clear_screen", lambda enabled=True: cleared.append(bool(enabled)))
+    monkeypatch.setattr(gm_module, "CLEAR_SCREEN", True)
+    monkeypatch.setattr(gm_module, "DEBUG_MODE", False)
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", False)
+    monkeypatch.setattr(gm_module.sys.stdout, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(gm_module, "check_internet", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(gm_module, "github_monitor_user", Mock(side_effect=SystemExit(0)))
+    monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", "misiektoja", "--config-file", str(config), "--env-file", "none", flag])
+
+    with pytest.raises(SystemExit):
+        gm_module.main()
+
+    assert cleared == [expected]

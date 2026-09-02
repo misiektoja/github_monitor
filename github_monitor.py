@@ -8962,8 +8962,6 @@ def launch_wizard_monitoring(arguments):
 def main():
     global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS, TARGET_GITHUB_USERNAME, WEBHOOK_ENABLED
 
-    if "--verbose" in sys.argv:
-        VERBOSE_MODE = True
     if "--debug" in sys.argv:
         DEBUG_MODE = True
 
@@ -9020,10 +9018,9 @@ def main():
         signal.signal(signal.SIGTERM, signal_handler)
 
     keep_cli_history = any(flag in sys.argv for flag in ("--doctor", "--set-github-token", "--set-webhook-url"))
-    if CLEAR_SCREEN and (VERBOSE_MODE or DEBUG_MODE):
-        verbose_print("Terminal clearing was skipped so diagnostic output remains visible")
-        debug_print("Terminal screen clear skipped because diagnostic mode is active")
-    clear_screen(CLEAR_SCREEN and sys.stdout.isatty() and not (VERBOSE_MODE or DEBUG_MODE) and not keep_cli_history)
+    if CLEAR_SCREEN and DEBUG_MODE:
+        debug_print("Terminal screen clear skipped because debug mode is active")
+    clear_screen(CLEAR_SCREEN and sys.stdout.isatty() and not DEBUG_MODE and not keep_cli_history)
     print_startup_banner()
 
     parser = argparse.ArgumentParser(

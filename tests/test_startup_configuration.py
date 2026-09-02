@@ -196,10 +196,10 @@ def webhook_state_after_startup(gm_module, monkeypatch, request, webhook_url):
 
 
 # Verifies an unedited webhook destination switches the channel off instead of being treated as configured
-def test_a_placeholder_webhook_url_switches_the_channel_off(gm_module, monkeypatch, request):
+def test_a_placeholder_webhook_url_switches_the_channel_off(gm_module, monkeypatch, request, restored_globals):
     assert webhook_state_after_startup(gm_module, monkeypatch, request, "your_webhook_url") is False
 
 
 # Verifies a real destination still leaves the webhook channel on
-def test_a_configured_webhook_url_keeps_the_channel_on(gm_module, monkeypatch, request):
+def test_a_configured_webhook_url_keeps_the_channel_on(gm_module, monkeypatch, request, restored_globals):
     assert webhook_state_after_startup(gm_module, monkeypatch, request, "https://ntfy.sh/some-topic") is True
