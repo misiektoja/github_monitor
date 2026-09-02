@@ -485,7 +485,7 @@ def test_doctor_optional_delivery_tests_require_separate_approval(gm_module, mon
 
     transcript = output.getvalue()
     assert "Send one test email now? This will deliver a real message [y/N]: " in transcript
-    assert "[PASS] Test email was delivered" in transcript
+    assert "[PASS] Doctor test email delivered" in transcript
     assert "Send one test webhook through Discord now? This will publish a real notification [y/N]: " in transcript
     assert "[SKIP] Test webhook through Discord was not sent" in transcript
     assert email_sender.call_count == 1
@@ -539,7 +539,7 @@ def test_doctor_approved_delivery_failure_is_unhealthy(gm_module, monkeypatch):
     gm_module.doctor_run_optional_delivery_tests(report, lambda: "yes", FakeTTY(), output, Mock(return_value=1), None)
 
     assert report.failure_count == 1
-    assert "[FAIL] Test email delivery failed" in output.getvalue()
+    assert "[FAIL] Doctor test email delivery failed" in output.getvalue()
 
 
 # Verifies transient cursor output appears only for a TTY and is erased cleanly
@@ -797,7 +797,7 @@ def test_a_failed_delivery_test_reaches_the_summary(gm_module, monkeypatch):
 
     gm_module.doctor_run_optional_delivery_tests(report, lambda: "yes", FakeTTY(), output, Mock(return_value=1), Mock(return_value=0))
 
-    assert [(check.section, check.status, check.label) for check in report.checks] == [("Optional delivery tests", "FAIL", "Test email delivery failed")]
+    assert [(check.section, check.status, check.label) for check in report.checks] == [("Optional delivery tests", "FAIL", "Doctor test email delivery failed")]
     assert report.failure_count == 1
     summary = io.StringIO()
     gm_module.render_doctor_summary(report, summary)

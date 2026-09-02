@@ -286,3 +286,23 @@ def test_webhook_delivery_refuses_a_destination_that_stopped_validating(gm_modul
     with pytest.raises(gm_module.req.exceptions.InvalidURL):
         gm_module.post_webhook_request(json={"content": "body"})
     webhook_post.assert_not_called()
+
+
+# Verifies both test commands carry the subject, title and body shared with the sibling monitors
+def test_the_test_messages_use_the_shared_wording(gm_module, monkeypatch):
+    email = Mock(return_value=0)
+    delivery = Mock(return_value=0)
+    monkeypatch.setattr(gm_module, "check_internet", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gm_module, "clear_screen", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gm_module, "send_email", email)
+    monkeypatch.setattr(gm_module, "send_webhook", delivery)
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
+
+    for flag in ("--send-test-email", "--send-test-webhook"):
+        monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", flag, "--config-file", "none", "--env-file", "none"])
+        with pytest.raises(SystemExit) as exit_error:
+            gm_module.main()
+        assert exit_error.value.code == 0
+
+    assert email.call_args.args[:2] == ("github_monitor: test email", "This test email was sent by --send-test-email. Your SMTP settings work.")
+    assert delivery.call_args.args[:2] == ("github_monitor: test webhook", "This test notification was sent by --send-test-webhook. Your webhook settings work.")

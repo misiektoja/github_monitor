@@ -8035,11 +8035,11 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
     if report.email_ready:
         approved = ask_doctor_approval("Send one test email now? This will deliver a real message", input_func, destination)
         if approved:
-            result = send_email_func("github_monitor doctor test", "This real test message confirms that doctor can deliver email.", "", SMTP_SSL, smtp_timeout=5)
+            result = send_email_func("github_monitor: doctor test email", "This test email was sent after approval in --doctor. Your SMTP delivery settings work.", "", SMTP_SSL, smtp_timeout=5)
             if result == 0:
-                check = report.add("Optional delivery tests", "PASS", "Test email was delivered", f"Destination: {RECEIVER_EMAIL}")
+                check = report.add("Optional delivery tests", "PASS", "Doctor test email delivered", f"Destination: {RECEIVER_EMAIL}")
             else:
-                check = report.add("Optional delivery tests", "FAIL", "Test email delivery failed", "The SMTP delivery function returned an error", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
+                check = report.add("Optional delivery tests", "FAIL", "Doctor test email delivery failed", "The SMTP delivery function returned an error", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
         else:
             check = report.add("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test", "Run doctor again and approve the email test when ready", SMTP_GUIDE_URL)
         render_doctor_check(check, destination)
@@ -8047,11 +8047,11 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
         provider = webhook_provider_display_name()
         approved = ask_doctor_approval(f"Send one test webhook through {provider} now? This will publish a real notification", input_func, destination)
         if approved:
-            result = send_webhook_func("GitHub Monitor doctor test", "This real test notification confirms that doctor can deliver webhooks.", "event", force=True)
+            result = send_webhook_func("github_monitor: doctor test webhook", "This test notification was sent after approval in --doctor. Your webhook delivery settings work.", "event", force=True)
             if result == 0:
-                check = report.add("Optional delivery tests", "PASS", f"Test webhook through {provider} was delivered", f"Destination host: {diagnostic_endpoint(WEBHOOK_URL, host_only=True)}")
+                check = report.add("Optional delivery tests", "PASS", f"Doctor test webhook through {provider} delivered", f"Destination host: {diagnostic_endpoint(WEBHOOK_URL, host_only=True)}")
             else:
-                check = report.add("Optional delivery tests", "FAIL", f"Test webhook through {provider} failed", "The webhook delivery function returned an error", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
+                check = report.add("Optional delivery tests", "FAIL", f"Doctor test webhook through {provider} delivery failed", "The webhook delivery function returned an error", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
         else:
             check = report.add("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test", "Run doctor again and approve the webhook test when ready", WEBHOOK_GUIDE_URL)
         render_doctor_check(check, destination)
@@ -9743,7 +9743,7 @@ def main():
 
     if args.send_test_email:
         print("* Sending test email notification ...\n")
-        if send_email("github_monitor: test email", "This is test email - your SMTP settings seems to be correct !", "", SMTP_SSL, smtp_timeout=5) == 0:
+        if send_email("github_monitor: test email", "This test email was sent by --send-test-email. Your SMTP settings work.", "", SMTP_SSL, smtp_timeout=5) == 0:
             print("* Email sent successfully !")
         else:
             sys.exit(1)
@@ -9751,7 +9751,7 @@ def main():
 
     if args.send_test_webhook:
         print("* Sending test webhook notification ...\n")
-        if send_webhook("GitHub Monitor test", "Your webhook alerts are set up correctly.", "event", force=True) == 0:
+        if send_webhook("github_monitor: test webhook", "This test notification was sent by --send-test-webhook. Your webhook settings work.", "event", force=True) == 0:
             print("* Webhook sent successfully !")
         else:
             sys.exit(1)
