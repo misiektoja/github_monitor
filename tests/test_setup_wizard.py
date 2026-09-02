@@ -804,6 +804,28 @@ def email_answers():
     return ["y", "smtp.example.test", "587", "", "monitor@example.test", "monitor@example.test", "alerts@example.test"]
 
 
+# Verifies a CSV answer without an extension is saved as a .csv file while an explicit extension is left alone
+def test_the_csv_answer_gains_a_csv_extension_when_it_has_none(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+
+    for typed, expected in (("activity", "activity.csv"), ("activity.csv", "activity.csv"), ("activity.txt", "activity.txt")):
+        gm_module.wizard_collect_destinations(state, scripted_reader(["y", typed]), io.StringIO())
+        assert state.values["CSV_FILE"] == expected
+
+
+# Verifies a declined email section clears the mail server, so the written config cannot contradict the summary
+def test_a_declined_email_section_clears_the_mail_server(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+    state.values.update({"SMTP_HOST": "smtp.saved.test", "SMTP_USER": "saved@example.test", "SENDER_EMAIL": "saved@example.test", "RECEIVER_EMAIL": "alerts@example.test"})
+    state.secrets["SMTP_PASSWORD"] = "saved-password"
+
+    gm_module.wizard_collect_email(state, scripted_reader(["n"]), scripted_secret_reader([""]), io.StringIO())
+
+    defaults = gm_module._config_template_defaults()
+    assert all(state.values[name] == defaults[name] for name in gm_module.WIZARD_SMTP_CONFIG_KEYS)
+    assert "SMTP_PASSWORD" not in state.secrets
+
+
 # Verifies the mail server questions are asked in the shared order with the saved values offered back
 def test_setup_email_prefills_saved_answers_in_the_shared_order(gm_module, request, monkeypatch):
     state = fresh_wizard_state(gm_module, request)
@@ -1079,7 +1101,7 @@ def test_an_existing_config_is_replaced_only_after_it_is_agreed_to(gm_module, re
 
     backups = [path for path in Path(directory.name).iterdir() if path.name.startswith("monitor.conf.")]
     assert exit_code == 0
-    assert "exists. Replace it with a fresh configuration built from defaults" in output.getvalue()
+    assert "exists. A timestamped backup is kept. Rebuild it from your answers" in output.getvalue()
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == "# earlier config\n"
 

@@ -5882,6 +5882,20 @@ def _config_allowed_names():
     return frozenset(statement.targets[0].id for statement in template_tree.body if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name)) | COMMENTED_CONFIG_SETTINGS
 
 
+# Returns the literal values the built-in config template ships with, used to clear a section the user declined
+def _config_template_defaults():
+    template_tree = ast.parse(CONFIG_BLOCK, "<built-in-config>", "exec")
+    defaults = {}
+    for statement in template_tree.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1 or not isinstance(statement.targets[0], ast.Name):
+            continue
+        try:
+            defaults[statement.targets[0].id] = ast.literal_eval(statement.value)
+        except ValueError:
+            continue
+    return defaults
+
+
 # Parses allowlisted literal config assignments without executing any file content
 def parse_config_content(content, filename="<config>", retired_out=None, reference_values=None):
     tree = ast.parse(content, filename, "exec")
@@ -8351,7 +8365,7 @@ def wizard_validate_destination(path, label):
 def wizard_choose_config_destination(config_path, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
     selected = Path(config_path)
-    while selected.exists() and not wizard_ask_yes_no(f"Configuration file '{selected}' exists. Replace it with a fresh configuration built from defaults and create a timestamped backup?", False, input_func, destination):
+    while selected.exists() and not wizard_ask_yes_no(f"Configuration file '{selected}' exists. A timestamped backup is kept. Rebuild it from your answers, starting from its current settings?", False, input_func, destination):
         alternative = wizard_ask_text("Another config destination or leave empty to cancel", input_func=input_func, stream=destination)
         if not alternative:
             return None
@@ -8721,8 +8735,21 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
         return
 
 
+# Returns one declined section to the built-in template values, so nothing the user turned down is written
+def wizard_clear_section(state, config_keys, secret_keys=()):
+    defaults = _config_template_defaults()
+    for name in config_keys:
+        if name in defaults:
+            state.values[name] = defaults[name]
+        else:
+            state.values.pop(name, None)
+    for name in secret_keys:
+        state.secrets.pop(name, None)
+
+
 # Switches every email alert off together, so an abandoned answer cannot leave half a mail server configured
 def wizard_disable_email(state):
+    wizard_clear_section(state, WIZARD_SMTP_CONFIG_KEYS, ("SMTP_PASSWORD",))
     for name in WIZARD_EMAIL_NOTIFICATION_KEYS:
         state.values[name] = False
 
@@ -8837,6 +8864,7 @@ def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None
 
 # Switches the channel and every alert it owns off together, so a half-configured webhook cannot be written
 def wizard_disable_webhook(state):
+    wizard_clear_section(state, ("WEBHOOK_PROVIDER",), ("WEBHOOK_URL", "NTFY_ACCESS_TOKEN"))
     state.values["WEBHOOK_ENABLED"] = False
     for name in WIZARD_SECTION_KEYS["Webhook"]:
         if name.endswith("_NOTIFICATION"):
@@ -8944,12 +8972,20 @@ def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=No
         state.values[name] = usable and (preset == "all" or name in recommended)
 
 
+# Adds the .csv extension when the answer carries none, so a bare name still names a CSV file
+def wizard_normalize_csv_path(answer):
+    text = str(answer).strip()
+    if not text or Path(text).suffix:
+        return text
+    return text + ".csv"
+
+
 # Collects log and CSV output destinations
 def wizard_collect_destinations(state, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
     state.values["DISABLE_LOGGING"] = not wizard_ask_yes_no("Write the normal per-target log file?", not bool(state.values["DISABLE_LOGGING"]), input_func, destination)
     csv_default = str(state.values["CSV_FILE"] or "")
-    state.values["CSV_FILE"] = wizard_ask_text("Optional CSV output path (blank disables it)", csv_default, input_func=input_func, stream=destination)
+    state.values["CSV_FILE"] = wizard_normalize_csv_path(wizard_ask_text("Optional CSV output path (blank disables it)", csv_default, input_func=input_func, stream=destination))
     state.values["DOTENV_FILE"] = str(state.dotenv_path)
 
 
