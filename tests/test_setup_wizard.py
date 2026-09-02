@@ -1240,3 +1240,25 @@ def test_setup_refuses_a_config_destination_switched_off(tmp_path):
     assert result.returncode == 2
     assert "--setup requires a config destination and cannot use --config-file none" in result.stderr
     assert not (tmp_path / "none").exists()
+
+
+# Verifies the token outcome lines carry the same two-space indent the sibling monitors give them
+def test_setup_token_outcome_lines_are_indented_under_the_notice(gm_module, request):
+    token = "github_pat_private_wizard_value"
+
+    # The hidden prompt shares this stream and ends without a newline, so only the outcome lines are compared
+    def outcome_line(secrets, validator, fragment):
+        state = fresh_wizard_state(gm_module, request)
+        stream = io.StringIO()
+        gm_module.wizard_collect_authentication(state, scripted_reader(["", "", "n"]), scripted_secret_reader(secrets), stream, validator)
+        plain = gm_module.ANSI_ESCAPE_RE.sub("", stream.getvalue())
+        return next(line for line in plain.splitlines() if fragment in line)
+
+    def reject(_entered, _url):
+        raise gm_module.GitHubTokenConfigurationError("GitHub rejected the configured token")
+
+    accepted = outcome_line([token], lambda _entered, _url: "octocat", "valid for user")
+    refused = outcome_line(["truncated"], reject, "validation failed")
+
+    assert accepted == "  GitHub token is valid for user: octocat"
+    assert refused.startswith("  Token validation failed: "), refused

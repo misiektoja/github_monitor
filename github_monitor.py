@@ -8730,14 +8730,14 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
         try:
             login = validator(token, state.values["GITHUB_API_URL"])
         except Exception as exc:
-            destination.write(colorize("error", f"Token validation failed: {sanitize_error_text(exc)}") + "\n")
+            destination.write(colorize("error", f"  Token validation failed: {sanitize_error_text(exc)}") + "\n")
             # A token GitHub keeps rejecting cannot be corrected from inside the loop, so the wizard must be leavable here too
             if not wizard_offer_retry("GitHub token", input_func=input_func, stream=destination):
                 return
             continue
         state.secrets["GITHUB_TOKEN"] = token
         state.authenticated_login = str(login)
-        destination.write(f"GitHub token is valid for user: {colorize('username', state.authenticated_login)}\n")
+        destination.write(f"  GitHub token is valid for user: {colorize('username', state.authenticated_login)}\n")
         return
 
 
