@@ -488,6 +488,10 @@ def test_doctor_optional_delivery_tests_require_separate_approval(gm_module, mon
     assert "[PASS] Doctor test email delivered" in transcript
     assert "Send one test webhook through Discord now? This will publish a real notification [y/N]: " in transcript
     assert "[SKIP] Test webhook through Discord was not sent" in transcript
+    # The detail and fix lines carry the sentences the sibling tools print on one detail line
+    assert "  One real test email was sent after confirmation" in transcript
+    assert "  You declined the real delivery test" in transcript
+    assert "Run doctor again and approve the webhook test when ready" in transcript
     assert email_sender.call_count == 1
     assert webhook_sender.call_count == 0
     assert report.failure_count == 0
@@ -540,6 +544,8 @@ def test_doctor_approved_delivery_failure_is_unhealthy(gm_module, monkeypatch):
 
     assert report.failure_count == 1
     assert "[FAIL] Doctor test email delivery failed" in output.getvalue()
+    assert "  The approved test email could not be delivered" in output.getvalue()
+    assert "Review the SMTP error above" in output.getvalue()
 
 
 # Verifies transient cursor output appears only for a TTY and is erased cleanly

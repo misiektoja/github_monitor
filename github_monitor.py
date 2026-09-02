@@ -8124,9 +8124,9 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
         if approved:
             result = send_email_func("github_monitor: doctor test email", "This test email was sent after approval in --doctor. Your SMTP delivery settings work.", "", SMTP_SSL, smtp_timeout=5)
             if result == 0:
-                check = report.add("Optional delivery tests", "PASS", "Doctor test email delivered", f"Destination: {RECEIVER_EMAIL}")
+                check = report.add("Optional delivery tests", "PASS", "Doctor test email delivered", "One real test email was sent after confirmation")
             else:
-                check = report.add("Optional delivery tests", "FAIL", "Doctor test email delivery failed", "The SMTP delivery function returned an error", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
+                check = report.add("Optional delivery tests", "FAIL", "Doctor test email delivery failed", "The approved test email could not be delivered", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
         else:
             check = report.add("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test", "Run doctor again and approve the email test when ready", SMTP_GUIDE_URL)
         render_doctor_check(check, destination)
@@ -8136,9 +8136,9 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
         if approved:
             result = send_webhook_func("github_monitor: doctor test webhook", "This test notification was sent after approval in --doctor. Your webhook delivery settings work.", "event", force=True)
             if result == 0:
-                check = report.add("Optional delivery tests", "PASS", f"Doctor test webhook through {provider} delivered", f"Destination host: {diagnostic_endpoint(WEBHOOK_URL, host_only=True)}")
+                check = report.add("Optional delivery tests", "PASS", f"Doctor test webhook through {provider} delivered", "One real test webhook was sent after confirmation")
             else:
-                check = report.add("Optional delivery tests", "FAIL", f"Doctor test webhook through {provider} delivery failed", "The webhook delivery function returned an error", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
+                check = report.add("Optional delivery tests", "FAIL", f"Doctor test webhook through {provider} delivery failed", "The approved test webhook could not be delivered", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
         else:
             check = report.add("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test", "Run doctor again and approve the webhook test when ready", WEBHOOK_GUIDE_URL)
         render_doctor_check(check, destination)
