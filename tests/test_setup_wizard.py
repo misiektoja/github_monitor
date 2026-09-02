@@ -307,11 +307,11 @@ def test_setup_blank_webhook_url_is_worded_as_a_blank_one(gm_module, request):
     state.values["WEBHOOK_ERROR_NOTIFICATION"] = True
     output = io.StringIO()
 
-    gm_module.wizard_collect_webhook(state, scripted_reader(["y", "", "", "y"]), scripted_secret_reader([""]), output)
+    gm_module.wizard_collect_webhook(state, scripted_reader(["y", "", "y"]), scripted_secret_reader([""]), output)
 
     transcript = output.getvalue()
     assert "Continue without the webhook URL? Webhook alerts stay off until one is set [y/N]: " in transcript
-    assert "not a valid" not in transcript
+    assert "does not look like" not in transcript
     assert state.values["WEBHOOK_ENABLED"] is False
     assert state.values["WEBHOOK_ERROR_NOTIFICATION"] is False
     assert "WEBHOOK_URL" not in state.secrets
@@ -323,10 +323,10 @@ def test_setup_malformed_webhook_url_can_be_abandoned(gm_module, request):
     state.values["WEBHOOK_ERROR_NOTIFICATION"] = True
     output = io.StringIO()
 
-    gm_module.wizard_collect_webhook(state, scripted_reader(["y", "", "", "n"]), scripted_secret_reader(["not-a-url"]), output)
+    gm_module.wizard_collect_webhook(state, scripted_reader(["y", "", "n"]), scripted_secret_reader(["not-a-url"]), output)
 
     transcript = output.getvalue()
-    assert "That is not a valid Discord webhook URL." in transcript
+    assert "That does not look like a complete HTTPS webhook URL. Copy it from the webhook service and try again." in transcript
     assert "Try entering the webhook URL again? [Y/n]: " in transcript
     assert state.values["WEBHOOK_ENABLED"] is False
     assert state.values["WEBHOOK_ERROR_NOTIFICATION"] is False
@@ -675,3 +675,122 @@ def test_setup_save_failure_leaves_no_temporary_files(gm_module, monkeypatch, re
         gm_module.save_wizard_files(state)
 
     assert [entry.name for entry in Path(directory.name).iterdir() if entry.name.endswith(".tmp")] == []
+
+
+# Returns the visible answers for one complete mail server section
+def email_answers():
+    return ["y", "smtp.example.test", "587", "", "monitor@example.test", "monitor@example.test", "alerts@example.test"]
+
+
+# Verifies the mail server questions are asked in the shared order with the saved values offered back
+def test_setup_email_prefills_saved_answers_in_the_shared_order(gm_module, request, monkeypatch):
+    state = fresh_wizard_state(gm_module, request)
+    state.values.update({"SMTP_HOST": "smtp.saved.test", "SMTP_USER": "saved@example.test", "SENDER_EMAIL": "saved@example.test", "RECEIVER_EMAIL": "alerts@example.test"})
+    state.secrets["SMTP_PASSWORD"] = "saved-password"
+    monkeypatch.setattr(gm_module, "wizard_verify_smtp", lambda values, secrets: None)
+    output = io.StringIO()
+
+    gm_module.wizard_collect_email(state, scripted_reader(["y", "", "", "", "", "", "", ""]), scripted_secret_reader([""]), output)
+
+    transcript = output.getvalue()
+    assert transcript.index("SMTP host [smtp.saved.test]: ") < transcript.index("SMTP port [587]: ") < transcript.index("Enable TLS/SSL for SMTP?")
+    assert transcript.index("Enable TLS/SSL for SMTP?") < transcript.index("SMTP username [saved@example.test]: ") < transcript.index("Sender email [saved@example.test]: ")
+    assert transcript.index("Sender email [saved@example.test]: ") < transcript.index("Receiver email [alerts@example.test]: ") < transcript.index("SMTP password: ")
+    assert "Set or replace the SMTP password now?" not in transcript
+    assert state.secrets["SMTP_PASSWORD"] == "saved-password"
+
+
+# Verifies the wizard signs in with exactly the answers just given, so a wrong password is caught during setup
+def test_setup_email_signs_in_with_the_collected_mail_server(gm_module, request, monkeypatch):
+    state = fresh_wizard_state(gm_module, request)
+    attempts = []
+    monkeypatch.setattr(gm_module, "wizard_verify_smtp", lambda values, secrets: attempts.append((dict(values), dict(secrets))) or None)
+    output = io.StringIO()
+
+    gm_module.wizard_collect_email(state, scripted_reader(email_answers() + [""]), scripted_secret_reader(["private-password"]), output)
+
+    assert len(attempts) == 1
+    values, secrets = attempts[0]
+    assert [values[name] for name in gm_module.WIZARD_SMTP_CONFIG_KEYS] == ["smtp.example.test", 587, True, "monitor@example.test", "monitor@example.test", "alerts@example.test"]
+    assert secrets["SMTP_PASSWORD"] == "private-password"
+    assert "The mail server accepted the sign-in. No email was sent." in output.getvalue()
+    assert state.values["PROFILE_NOTIFICATION"] is True
+    assert state.values["ERROR_NOTIFICATION"] is True
+    assert state.values["CONTRIB_NOTIFICATION"] is False
+
+
+# Verifies a refused sign-in offers the mail server questions again rather than saving settings that cannot work
+def test_setup_refused_mail_server_sign_in_offers_another_attempt(gm_module, request, monkeypatch):
+    state = fresh_wizard_state(gm_module, request)
+    advice = gm_module.make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", "Use an app password", False, "535 authentication failed")
+    results = [advice, None]
+    monkeypatch.setattr(gm_module, "wizard_verify_smtp", lambda values, secrets: results.pop(0))
+    output = io.StringIO()
+
+    gm_module.wizard_collect_email(state, scripted_reader(email_answers() + ["y"] + email_answers()[1:] + [""]), scripted_secret_reader(["wrong-password", "right-password"]), output)
+
+    transcript = output.getvalue()
+    assert "The SMTP server rejected the configured credentials: 535 authentication failed" in transcript
+    assert "To fix: Use an app password" in transcript
+    assert transcript.count("SMTP host") == 2
+    assert state.secrets["SMTP_PASSWORD"] == "right-password"
+    assert state.values["ERROR_NOTIFICATION"] is True
+
+
+# Verifies giving up on a refused sign-in switches every email alert off instead of saving settings that cannot work
+def test_setup_abandoned_mail_server_sign_in_switches_email_off(gm_module, request, monkeypatch):
+    state = fresh_wizard_state(gm_module, request)
+    advice = gm_module.make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", "Use an app password", False, "535 authentication failed")
+    monkeypatch.setattr(gm_module, "wizard_verify_smtp", lambda values, secrets: advice)
+    output = io.StringIO()
+
+    gm_module.wizard_collect_email(state, scripted_reader(email_answers() + ["n"]), scripted_secret_reader(["wrong-password"]), output)
+
+    assert "Email notifications stay off until the mail server accepts the settings." in output.getvalue()
+    assert all(state.values[name] is False for name in gm_module.WIZARD_EMAIL_NOTIFICATION_KEYS)
+
+
+# Verifies an unreachable mail server keeps the answers, since being offline is the usual reason a correct setup fails here
+def test_setup_unreachable_mail_server_keeps_the_answers(gm_module, request, monkeypatch):
+    state = fresh_wizard_state(gm_module, request)
+    advice = gm_module.make_recovery_advice("smtp.configuration", "The SMTP server could not be reached", "Check SMTP_HOST", True)
+    monkeypatch.setattr(gm_module, "wizard_verify_smtp", lambda values, secrets: advice)
+    output = io.StringIO()
+
+    gm_module.wizard_collect_email(state, scripted_reader(email_answers() + ["n", ""]), scripted_secret_reader(["private-password"]), output)
+
+    assert "The settings were kept without being checked. Run --doctor to check the sign-in again." in output.getvalue()
+    assert state.values["SMTP_HOST"] == "smtp.example.test"
+    assert state.values["ERROR_NOTIFICATION"] is True
+
+
+# Verifies the custom preset only offers alerts the current tracking settings can produce
+def test_setup_custom_email_preset_skips_untracked_alerts(gm_module, request, monkeypatch):
+    state = fresh_wizard_state(gm_module, request)
+    state.values.update({"TRACK_REPOS_CHANGES": False, "TRACK_CONTRIB_CHANGES": False})
+    monkeypatch.setattr(gm_module, "wizard_verify_smtp", lambda values, secrets: None)
+    output = io.StringIO()
+
+    gm_module.wizard_collect_email(state, scripted_reader(email_answers() + ["3", "y", "n", "y"]), scripted_secret_reader(["private-password"]), output)
+
+    transcript = output.getvalue()
+    assert "Email on detailed repository changes?" not in transcript
+    assert "Email on daily contribution changes?" not in transcript
+    assert state.values["PROFILE_NOTIFICATION"] is True
+    assert state.values["EVENT_NOTIFICATION"] is False
+    assert state.values["ERROR_NOTIFICATION"] is True
+    assert state.values["REPO_NOTIFICATION"] is False
+
+
+# Verifies a saved ntfy token can be disabled without being displayed and is removed from the dotenv file
+def test_setup_saved_ntfy_token_can_be_disabled(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+    state.secrets["NTFY_ACCESS_TOKEN"] = "tk_saved_token"
+    state.dotenv_path.write_text('NTFY_ACCESS_TOKEN = "tk_saved_token"\nWEBHOOK_URL = "https://ntfy.sh/private-topic"\n', encoding="utf-8")
+    output = io.StringIO()
+
+    gm_module.wizard_collect_ntfy_access_token(state, scripted_reader(["3"]), scripted_secret_reader([]), output)
+
+    assert state.secrets["NTFY_ACCESS_TOKEN"] == ""
+    assert "tk_saved_token" not in output.getvalue()
+    assert "NTFY_ACCESS_TOKEN" not in gm_module.render_wizard_dotenv(state)

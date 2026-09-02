@@ -7827,6 +7827,14 @@ WIZARD_SECTION_KEYS = {
 WIZARD_SECRET_KEYS = {"Authentication": ("GITHUB_TOKEN",), "Email": ("SMTP_PASSWORD",), "Webhook": ("WEBHOOK_URL", "NTFY_ACCESS_TOKEN")}
 WIZARD_CONFIG_ORDER = tuple(name for names in WIZARD_SECTION_KEYS.values() for name in names)
 
+# The mail server settings the wizard collects, and how long its sign-in check waits for the server
+WIZARD_SMTP_CONFIG_KEYS = ("SMTP_HOST", "SMTP_PORT", "SMTP_SSL", "SMTP_USER", "SENDER_EMAIL", "RECEIVER_EMAIL")
+WIZARD_SMTP_TIMEOUT = 5
+
+# The alert settings each channel owns, so one preset answer can switch the whole channel on
+WIZARD_EMAIL_NOTIFICATION_KEYS = ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION")
+WIZARD_WEBHOOK_NOTIFICATION_KEYS = ("WEBHOOK_PROFILE_NOTIFICATION", "WEBHOOK_EVENT_NOTIFICATION", "WEBHOOK_REPO_NOTIFICATION", "WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION", "WEBHOOK_CONTRIB_NOTIFICATION", "WEBHOOK_ERROR_NOTIFICATION")
+
 
 # Writes one coloured wizard heading at the requested level
 def _wizard_heading(destination, text, part="section"):
@@ -7974,10 +7982,10 @@ def wizard_read_answer(prompt, input_func=input, stream=None):
 
 
 # Reads one hidden wizard answer while forcing debug output off around the secret path
-def wizard_read_secret(prompt, getpass_func=None, stream=None):
+def wizard_read_secret(label, getpass_func=None, stream=None):
     global DEBUG_MODE
     destination = sys.stdout if stream is None else stream
-    destination.write(colorize("info", prompt))
+    destination.write(colorize("info", f"{label}: "))
     destination.flush()
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
     previous_debug_mode = DEBUG_MODE
@@ -8046,6 +8054,12 @@ def wizard_ask_text(label, default="", validator=None, input_func=input, stream=
         destination.write(colorize("warning", f"That value is not valid: {error}") + "\n")
         if not wizard_offer_retry(label, input_func=input_func, stream=destination):
             return str(default)
+
+
+# Returns a saved value fit to show as a prompt default, so a shipped placeholder is never offered back
+def wizard_default(value):
+    text = str(value or "")
+    return "" if not text.strip() or text.startswith("your_") else text
 
 
 # Returns a concise validation error for one general HTTPS service endpoint
@@ -8167,7 +8181,7 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
         return
     validator = validate_github_token if token_validator is None else token_validator
     while True:
-        token = wizard_read_secret("GitHub token: ", getpass_func, destination)
+        token = wizard_read_secret("GitHub token", getpass_func, destination)
         if not token:
             # Monitoring cannot run without it, so leaving it unset has to be a decision rather than a fallthrough
             if not wizard_offer_retry("GitHub token", "Nothing can be monitored until one is set", input_func, destination):
@@ -8192,38 +8206,118 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
         return
 
 
+# Switches every email alert off together, so an abandoned answer cannot leave half a mail server configured
+def wizard_disable_email(state):
+    for name in WIZARD_EMAIL_NOTIFICATION_KEYS:
+        state.values[name] = False
+
+
+# Reports which email alerts the current tracking settings can actually produce
+def wizard_available_email_alerts(state, prefix=""):
+    return {
+        f"{prefix}PROFILE_NOTIFICATION": True,
+        f"{prefix}EVENT_NOTIFICATION": not state.values["DO_NOT_MONITOR_GITHUB_EVENTS"],
+        f"{prefix}REPO_NOTIFICATION": bool(state.values["TRACK_REPOS_CHANGES"]),
+        f"{prefix}REPO_UPDATE_DATE_NOTIFICATION": bool(state.values["TRACK_REPOS_CHANGES"]),
+        f"{prefix}CONTRIB_NOTIFICATION": bool(state.values["TRACK_CONTRIB_CHANGES"]),
+        f"{prefix}ERROR_NOTIFICATION": True,
+    }
+
+
+# Signs in to the collected mail server without sending anything, so a refused login is caught during setup
+def wizard_verify_smtp(values, secrets):
+    names = WIZARD_SMTP_CONFIG_KEYS + ("SMTP_PASSWORD",)
+    previous = {name: globals()[name] for name in names}
+    smtp_object = None
+    try:
+        globals().update({name: values[name] for name in WIZARD_SMTP_CONFIG_KEYS})
+        # A password kept from an earlier run is the one the sign-in has to prove
+        globals()["SMTP_PASSWORD"] = secrets.get("SMTP_PASSWORD") or previous["SMTP_PASSWORD"]
+        smtp_object = smtp_connect_and_login(SMTP_SSL, smtp_timeout=WIZARD_SMTP_TIMEOUT)
+        return None
+    except Exception as exc:
+        return classify_recovery_error(exc, "email")
+    finally:
+        if smtp_object is not None:
+            smtp_quit_quietly(smtp_object)
+        globals().update(previous)
+
+
+# Reports the outcome of the sign-in check: True to continue, False to ask again, None to switch email off
+def wizard_smtp_sign_in_accepted(state, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("  Checking the sign-in with the mail server ...\n")
+    advice = wizard_verify_smtp(state.values, state.secrets)
+    if advice is None:
+        destination.write("  The mail server accepted the sign-in. No email was sent.\n")
+        return True
+    destination.write(colorize("warning", f"  {advice.summary}: {advice.detail}" if advice.detail else f"  {advice.summary}") + "\n")
+    destination.write(f"  To fix: {advice.fix}\n")
+    if wizard_offer_retry("mail server settings", input_func=input_func, stream=destination):
+        return False
+    if advice.retryable:
+        # Being offline is the usual reason a correct setup fails here, so the answers are kept rather than discarded
+        destination.write("  The settings were kept without being checked. Run --doctor to check the sign-in again.\n")
+        return True
+    destination.write(colorize("warning", "  Email notifications stay off until the mail server accepts the settings.") + "\n")
+    return None
+
+
 # Collects optional email delivery settings and alert choices
 def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None):
     destination = sys.stdout if stream is None else stream
     configured_destination = not str(state.values["SMTP_HOST"]).startswith("your_smtp_server_")
     enabled_default = any(bool(state.values[name]) for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION")) or bool(state.values["ERROR_NOTIFICATION"] and configured_destination)
     if not wizard_ask_yes_no("Configure email notifications?", enabled_default, input_func, destination):
-        for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"):
-            state.values[name] = False
+        wizard_disable_email(state)
         return
-    state.values["SMTP_HOST"] = wizard_ask_text("SMTP host", "" if str(state.values["SMTP_HOST"]).startswith("your_") else state.values["SMTP_HOST"], input_func=input_func, stream=destination)
-    state.values["SMTP_PORT"] = int(wizard_ask_text("SMTP port", state.values["SMTP_PORT"], lambda value: "" if str(value).isdigit() and 1 <= int(value) <= 65535 else "enter a number from 1 through 65535", input_func, destination))
-    state.values["SMTP_USER"] = wizard_ask_text("SMTP username", "" if str(state.values["SMTP_USER"]).startswith("your_") else state.values["SMTP_USER"], input_func=input_func, stream=destination)
-    if wizard_ask_yes_no("Set or replace the SMTP password now?", not bool(state.secrets.get("SMTP_PASSWORD")), input_func, destination):
-        password = wizard_read_secret("SMTP password: ", getpass_func, destination)
+    while True:
+        state.values["SMTP_HOST"] = wizard_ask_text("SMTP host", wizard_default(state.values["SMTP_HOST"]), input_func=input_func, stream=destination)
+        state.values["SMTP_PORT"] = int(wizard_ask_text("SMTP port", state.values["SMTP_PORT"], lambda value: "" if str(value).isdigit() and 1 <= int(value) <= 65535 else "enter a number from 1 through 65535", input_func, destination))
+        state.values["SMTP_SSL"] = wizard_ask_yes_no("Enable TLS/SSL for SMTP?", bool(state.values["SMTP_SSL"]), input_func, destination)
+        state.values["SMTP_USER"] = wizard_ask_text("SMTP username", wizard_default(state.values["SMTP_USER"]), input_func=input_func, stream=destination)
+        state.values["SENDER_EMAIL"] = wizard_ask_text("Sender email", wizard_default(state.values["SENDER_EMAIL"]), input_func=input_func, stream=destination)
+        state.values["RECEIVER_EMAIL"] = wizard_ask_text("Receiver email", wizard_default(state.values["RECEIVER_EMAIL"]), input_func=input_func, stream=destination)
+        # A blank answer keeps the password already saved in the dotenv file
+        password = wizard_read_secret("SMTP password", getpass_func, destination)
         if password:
             state.secrets["SMTP_PASSWORD"] = password
-    state.values["SMTP_SSL"] = wizard_ask_yes_no("Use STARTTLS for SMTP?", bool(state.values["SMTP_SSL"]), input_func, destination)
-    state.values["SENDER_EMAIL"] = wizard_ask_text("Sender email", "" if str(state.values["SENDER_EMAIL"]).startswith("your_") else state.values["SENDER_EMAIL"], input_func=input_func, stream=destination)
-    state.values["RECEIVER_EMAIL"] = wizard_ask_text("Receiver email", "" if str(state.values["RECEIVER_EMAIL"]).startswith("your_") else state.values["RECEIVER_EMAIL"], input_func=input_func, stream=destination)
-    validation_error = wizard_email_settings_error(state.values, state.secrets)
-    if validation_error:
-        destination.write(colorize("warning", f"Email settings are incomplete: {validation_error}") + "\n")
-        destination.write(colorize("warning", "Email alerts will stay disabled. Review this section to correct them.") + "\n")
-        for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"):
-            state.values[name] = False
+        validation_error = wizard_email_settings_error(state.values, state.secrets)
+        if validation_error:
+            destination.write(colorize("warning", f"  Email settings are incomplete: {validation_error}") + "\n")
+            if wizard_offer_retry("mail server settings", input_func=input_func, stream=destination):
+                continue
+            destination.write(colorize("warning", "  Email notifications stay off until every mail server setting is answered.") + "\n")
+            wizard_disable_email(state)
+            return
+        outcome = wizard_smtp_sign_in_accepted(state, input_func, destination)
+        if outcome is None:
+            wizard_disable_email(state)
+            return
+        if outcome:
+            break
+    available = wizard_available_email_alerts(state)
+    preset = wizard_ask_choice("Which email notifications should be enabled?", (
+        ("recommended", "Status and errors, recommended", "Profile changes, new GitHub events and monitoring errors."),
+        ("all", "Every supported event", "Enables every email notification the tracking settings allow."),
+        ("custom", "Custom", "Choose each notification type separately."),
+    ), "recommended", input_func, destination)
+    if preset == "custom":
+        destination.write("\n")
+        questions = (
+            ("PROFILE_NOTIFICATION", "Email on profile changes?"),
+            ("EVENT_NOTIFICATION", "Email on new GitHub events?"),
+            ("REPO_NOTIFICATION", "Email on detailed repository changes?"),
+            ("REPO_UPDATE_DATE_NOTIFICATION", "Email on repository update date changes?"),
+            ("CONTRIB_NOTIFICATION", "Email on daily contribution changes?"),
+            ("ERROR_NOTIFICATION", "Email monitoring errors?"),
+        )
+        for name, question in questions:
+            state.values[name] = available[name] and wizard_ask_yes_no(question, False, input_func, destination)
         return
-    state.values["PROFILE_NOTIFICATION"] = wizard_ask_yes_no("Email profile changes?", bool(state.values["PROFILE_NOTIFICATION"]), input_func, destination)
-    state.values["EVENT_NOTIFICATION"] = False if state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] else wizard_ask_yes_no("Email new GitHub events?", bool(state.values["EVENT_NOTIFICATION"]), input_func, destination)
-    state.values["REPO_NOTIFICATION"] = False if not state.values["TRACK_REPOS_CHANGES"] else wizard_ask_yes_no("Email detailed repository changes?", bool(state.values["REPO_NOTIFICATION"]), input_func, destination)
-    state.values["REPO_UPDATE_DATE_NOTIFICATION"] = False if not state.values["TRACK_REPOS_CHANGES"] else wizard_ask_yes_no("Email repository update date changes?", bool(state.values["REPO_UPDATE_DATE_NOTIFICATION"]), input_func, destination)
-    state.values["CONTRIB_NOTIFICATION"] = False if not state.values["TRACK_CONTRIB_CHANGES"] else wizard_ask_yes_no("Email daily contribution changes?", bool(state.values["CONTRIB_NOTIFICATION"]), input_func, destination)
-    state.values["ERROR_NOTIFICATION"] = wizard_ask_yes_no("Email monitoring errors?", True, input_func, destination)
+    recommended = ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "ERROR_NOTIFICATION")
+    for name, usable in available.items():
+        state.values[name] = usable and (preset == "all" or name in recommended)
 
 
 # Switches the channel and every alert it owns off together, so a half-configured webhook cannot be written
@@ -8234,17 +8328,59 @@ def wizard_disable_webhook(state):
             state.values[name] = False
 
 
+# Collects an optional ntfy access token without displaying or contacting the service
+def wizard_collect_ntfy_access_token(state, input_func=input, getpass_func=None, stream=None):
+    destination = sys.stdout if stream is None else stream
+    if state.secrets.get("NTFY_ACCESS_TOKEN"):
+        choice = wizard_ask_choice("Which ntfy authentication should be used?", (
+            ("keep", "Keep the saved access token", "Keeps the private value without displaying or changing it."),
+            ("replace", "Paste a new access token", "Uses a hidden prompt then saves the replacement in .env."),
+            ("remove", "Do not use an access token", "Disables the saved token. Authentication in the topic URL still works."),
+        ), "keep", input_func, destination)
+        if choice == "keep":
+            return
+        if choice == "remove":
+            state.secrets["NTFY_ACCESS_TOKEN"] = ""
+            destination.write("  The saved ntfy access token will be disabled without being displayed.\n")
+            return
+    elif not wizard_ask_yes_no("Authenticate this ntfy topic with a separate access token?", False, input_func, destination):
+        destination.write("  No separate access token selected. Authentication already present in the topic URL still works.\n")
+        return
+    while True:
+        access_token = wizard_read_secret("Paste the ntfy access token only", getpass_func, destination)
+        if not access_token or ("\r" not in access_token and "\n" not in access_token and not access_token.casefold().startswith(("bearer ", "basic "))):
+            if access_token:
+                state.secrets["NTFY_ACCESS_TOKEN"] = access_token
+            return
+        destination.write(colorize("warning", "  Paste only the access token without a Bearer or Basic prefix.") + "\n")
+        if not wizard_offer_retry("ntfy access token", input_func=input_func, stream=destination):
+            return
+
+
 # Collects optional Discord or ntfy delivery settings and alert choices
 def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=None):
     destination = sys.stdout if stream is None else stream
     if not wizard_ask_yes_no("Set up webhook alerts (Discord, ntfy etc.)?", bool(state.values["WEBHOOK_ENABLED"]), input_func, destination):
         wizard_disable_webhook(state)
         return
-    provider = wizard_ask_choice("Webhook provider", (("discord", "Discord", "Send alerts to a Discord webhook URL."), ("ntfy", "ntfy", "Send alerts to an ntfy topic URL.")), normalized_webhook_provider(state.values["WEBHOOK_PROVIDER"]) or "discord", input_func, destination)
+    provider = wizard_ask_choice("Which webhook service should receive alerts?", (
+        ("discord", "Discord", "Sends a Discord embed to one channel webhook."),
+        ("ntfy", "ntfy", "Sends a native notification to one ntfy topic URL."),
+    ), normalized_webhook_provider(state.values["WEBHOOK_PROVIDER"]) or "discord", input_func, destination)
     state.values["WEBHOOK_PROVIDER"] = provider
-    if wizard_ask_yes_no("Set or replace the webhook destination now?", not bool(state.secrets.get("WEBHOOK_URL")), input_func, destination):
+    if provider == "discord":
+        destination.write("  In Discord: Edit Channel > Integrations > Webhooks > New Webhook > Copy Webhook URL.\n")
+    else:
+        destination.write("  In ntfy: choose a hard-to-guess topic. Paste its name for ntfy.sh or use the complete HTTPS URL for a self-hosted server.\n")
+    replace_webhook = True
+    if state.secrets.get("WEBHOOK_URL"):
+        replace_webhook = wizard_ask_choice("Which webhook URL should be used?", (
+            ("keep", "Keep the saved URL", "Keeps the private value without displaying or changing it."),
+            ("replace", "Paste a new URL", "Uses a hidden prompt then saves the new private value in .env."),
+        ), "keep", input_func, destination) == "replace"
+    if replace_webhook:
         while True:
-            entered = wizard_read_secret(f"Paste the {webhook_provider_display_name(provider)} webhook URL: ", getpass_func, destination)
+            entered = wizard_read_secret("Paste the Discord webhook URL" if provider == "discord" else "Paste the ntfy topic URL or ntfy.sh topic name", getpass_func, destination)
             normalized = normalize_ntfy_topic_url(entered) if provider == "ntfy" else entered
             detected = detect_webhook_provider(normalized)
             valid = bool(normalized and validate_webhook_url(normalized) and (provider == "ntfy" or detected == "discord"))
@@ -8256,26 +8392,41 @@ def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=No
                 if not wizard_offer_retry("webhook URL", "Webhook alerts stay off until one is set", input_func, destination):
                     break
                 continue
-            destination.write(colorize("warning", f"That is not a valid {'Discord webhook URL' if provider == 'discord' else 'ntfy topic or HTTPS topic URL'}.") + "\n")
+            if provider == "ntfy":
+                destination.write(colorize("warning", "  Enter a complete HTTPS ntfy topic URL or a topic name containing up to 64 letters, numbers, dashes or underscores.") + "\n")
+            else:
+                destination.write(colorize("warning", "  That does not look like a complete HTTPS webhook URL. Copy it from the webhook service and try again.") + "\n")
             if not wizard_offer_retry("webhook URL", input_func=input_func, stream=destination):
                 break
-    if provider == "ntfy" and wizard_ask_yes_no("Set or replace an optional ntfy access token?", False, input_func, destination):
-        access_token = wizard_read_secret("ntfy access token: ", getpass_func, destination)
-        if "\r" in access_token or "\n" in access_token or access_token.casefold().startswith(("bearer ", "basic ")):
-            destination.write(colorize("warning", "The ntfy token was ignored because it contains an authorization scheme or line break.") + "\n")
-        elif access_token:
-            state.secrets["NTFY_ACCESS_TOKEN"] = access_token
+    if provider == "ntfy":
+        wizard_collect_ntfy_access_token(state, input_func, getpass_func, destination)
     if not state.secrets.get("WEBHOOK_URL"):
         wizard_disable_webhook(state)
-        destination.write(colorize("warning", "Webhook alerts will stay disabled until a destination is saved.") + "\n")
+        destination.write(colorize("warning", "  Webhook alerts will stay disabled until a destination is saved.") + "\n")
         return
     state.values["WEBHOOK_ENABLED"] = True
-    state.values["WEBHOOK_PROFILE_NOTIFICATION"] = wizard_ask_yes_no("Webhook profile changes?", bool(state.values["WEBHOOK_PROFILE_NOTIFICATION"]), input_func, destination)
-    state.values["WEBHOOK_EVENT_NOTIFICATION"] = False if state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] else wizard_ask_yes_no("Webhook new GitHub events?", bool(state.values["WEBHOOK_EVENT_NOTIFICATION"]), input_func, destination)
-    state.values["WEBHOOK_REPO_NOTIFICATION"] = False if not state.values["TRACK_REPOS_CHANGES"] else wizard_ask_yes_no("Webhook detailed repository changes?", bool(state.values["WEBHOOK_REPO_NOTIFICATION"]), input_func, destination)
-    state.values["WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION"] = False if not state.values["TRACK_REPOS_CHANGES"] else wizard_ask_yes_no("Webhook repository update date changes?", bool(state.values["WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION"]), input_func, destination)
-    state.values["WEBHOOK_CONTRIB_NOTIFICATION"] = False if not state.values["TRACK_CONTRIB_CHANGES"] else wizard_ask_yes_no("Webhook daily contribution changes?", bool(state.values["WEBHOOK_CONTRIB_NOTIFICATION"]), input_func, destination)
-    state.values["WEBHOOK_ERROR_NOTIFICATION"] = wizard_ask_yes_no("Webhook monitoring errors?", True, input_func, destination)
+    available = wizard_available_email_alerts(state, "WEBHOOK_")
+    preset = wizard_ask_choice("Which webhook alerts should be sent?", (
+        ("recommended", "Status and errors, recommended", "Profile changes, new GitHub events and monitoring errors."),
+        ("all", "Every supported alert", "Enables every webhook alert the tracking settings allow."),
+        ("custom", "Custom", "Choose each webhook alert separately."),
+    ), "recommended", input_func, destination)
+    if preset == "custom":
+        destination.write("\n")
+        questions = (
+            ("WEBHOOK_PROFILE_NOTIFICATION", "Send a webhook alert on profile changes?"),
+            ("WEBHOOK_EVENT_NOTIFICATION", "Send a webhook alert on new GitHub events?"),
+            ("WEBHOOK_REPO_NOTIFICATION", "Send a webhook alert on detailed repository changes?"),
+            ("WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION", "Send a webhook alert on repository update date changes?"),
+            ("WEBHOOK_CONTRIB_NOTIFICATION", "Send a webhook alert on daily contribution changes?"),
+            ("WEBHOOK_ERROR_NOTIFICATION", "Send a webhook alert on monitoring errors?"),
+        )
+        for name, question in questions:
+            state.values[name] = available[name] and wizard_ask_yes_no(question, False, input_func, destination)
+        return
+    recommended = ("WEBHOOK_PROFILE_NOTIFICATION", "WEBHOOK_EVENT_NOTIFICATION", "WEBHOOK_ERROR_NOTIFICATION")
+    for name, usable in available.items():
+        state.values[name] = usable and (preset == "all" or name in recommended)
 
 
 # Collects log and CSV output destinations
@@ -8410,7 +8561,11 @@ def render_wizard_dotenv(state):
         raise ValueError(f"Dotenv file '{state.dotenv_path}' could not be read: {type(exc).__name__}: {exc}") from None
     lines = existing.splitlines()
     for key, value in state.secrets.items():
-        if key not in SECRET_KEYS or not value:
+        if key not in SECRET_KEYS:
+            continue
+        if not value:
+            # A secret the wizard cleared is removed, so a disabled token cannot linger in the file
+            lines = [line for line in lines if not match_dotenv_assignment(line, key)]
             continue
         if "\r" in value or "\n" in value or "\x00" in value:
             raise ValueError(f"{key} contains an unsupported line break or null byte")
