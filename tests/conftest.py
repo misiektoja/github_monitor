@@ -59,4 +59,8 @@ def deterministic_globals(monkeypatch):
     monkeypatch.setattr(gm, "RECEIVER_EMAIL", "alerts@example.test", raising=False)
     monkeypatch.setattr(gm, "SMTP_SSL", True, raising=False)
     monkeypatch.setattr(gm, "CSV_FILE", "", raising=False)
+    # load_dotenv writes into os.environ and nothing removes it again, so a test that loads a dotenv would
+    # otherwise leak its secrets into every later test through the exported-environment lookup at startup
+    for secret in gm.SECRET_KEYS:
+        monkeypatch.delenv(secret, raising=False)
     yield

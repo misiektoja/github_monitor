@@ -52,6 +52,9 @@ and again before anything is published to PyPI.
   `monkeypatch` rather than skipping the test.
 * Restore module-level globals you change. Tests share one imported module, so a
   leaked global affects whatever runs next.
+* Exported secrets are cleared before every test, because loading a dotenv writes
+  them into `os.environ` and nothing removes them again. Set the one a test needs
+  with `monkeypatch.setenv` inside that test.
 * Replace GitHub calls and notification delivery with test doubles.
 * Never use a real GitHub personal access token, SMTP password or webhook URL.
 

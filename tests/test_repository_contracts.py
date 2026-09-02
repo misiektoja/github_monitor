@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+import github_monitor as gm
+
 yaml = pytest.importorskip("yaml")
 
 
@@ -105,6 +107,21 @@ class TestGovernanceDocuments:
                     broken.append(f"{relative_path} -> {target}")
 
         assert not broken, f"repository documents linking at missing targets: {broken}"
+
+    # The Guide: lines are the only documentation a stuck user is handed, and a renamed section breaks them in silence
+    def test_runtime_guide_urls_resolve_to_a_real_document_and_anchor(self):
+        prefix = f"{REPOSITORY_URL}/blob/main/"
+        guide_names = sorted(name for name in vars(gm) if name.endswith("_GUIDE_URL"))
+        assert guide_names, "no runtime guide constants were found"
+
+        for name in guide_names:
+            url = getattr(gm, name)
+            assert url.startswith(prefix), f"{name} does not point into this repository: {url}"
+            relative_path, _separator, anchor = url.removeprefix(prefix).partition("#")
+            document = PROJECT_ROOT / relative_path
+            assert document.is_file(), f"{name} points at a missing document: {relative_path}"
+            if anchor:
+                assert anchor in page_anchors(document), f"{name} points at a missing anchor in {relative_path}: #{anchor}"
 
     # The support document must route each request type to a channel that exists
     def test_support_document_routes_every_request_type(self):
