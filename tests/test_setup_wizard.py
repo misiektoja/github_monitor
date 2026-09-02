@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from unittest.mock import Mock
 
+import signal
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -955,3 +956,20 @@ def test_interrupting_the_welcome_offer_reports_a_cancellation(gm_module):
 
     assert exit_code == 1
     assert "Setup cancelled." in output.getvalue()
+
+
+# Verifies a prompt runs with Python's default Ctrl+C behavior, so the signal handler cannot pre-empt it
+def test_prompts_restore_the_default_interrupt_handler(gm_module):
+    observed = {}
+
+    def answer():
+        observed["during"] = signal.getsignal(signal.SIGINT)
+        return "value"
+
+    previous_handler = signal.signal(signal.SIGINT, gm_module.signal_handler)
+    try:
+        assert gm_module.wizard_read_answer("Prompt: ", answer, io.StringIO()) == "value"
+        assert observed["during"] is signal.default_int_handler
+        assert signal.getsignal(signal.SIGINT) is gm_module.signal_handler
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)

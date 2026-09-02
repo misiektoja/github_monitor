@@ -1216,6 +1216,23 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 
+# Reads one answer with Python's default Ctrl+C behavior, so the prompt reports the outcome instead of the signal handler
+def read_interactively(reader, *args, **kwargs):
+    try:
+        previous_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    except (ValueError, OSError):
+        # Handlers can only be replaced from the main thread, which is where every prompt runs
+        return reader(*args, **kwargs)
+    try:
+        return reader(*args, **kwargs)
+    finally:
+        try:
+            signal.signal(signal.SIGINT, previous_handler)
+        except (ValueError, OSError):
+            pass
+
+
 # Silences the repeated certificate warning once verification is off, so the choice is reported by the summary and the doctor instead of on every request
 def apply_tls_verification_setting():
     if not VERIFY_SSL:
@@ -5885,7 +5902,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     prompt = input if input_func is None else input_func
     if dotenv_contains_key(destination, "GITHUB_TOKEN"):
         try:
-            confirmed = prompt(f"Replace GITHUB_TOKEN in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
+            confirmed = read_interactively(prompt, f"Replace GITHUB_TOKEN in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
             confirmed = False
         if not confirmed:
@@ -5895,7 +5912,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     previous_debug_mode = DEBUG_MODE
     DEBUG_MODE = False
     try:
-        token = hidden_prompt("Enter GitHub token privately: ").strip()
+        token = read_interactively(hidden_prompt, "Enter GitHub token privately: ").strip()
     except (EOFError, KeyboardInterrupt):
         raise GitHubTokenConfigurationError("GITHUB_TOKEN entry was cancelled and the dotenv file was not changed") from None
     finally:
@@ -5931,7 +5948,7 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
     prompt = input if input_func is None else input_func
     if dotenv_contains_key(destination, "WEBHOOK_URL"):
         try:
-            confirmed = prompt(f"Replace the saved webhook URL in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
+            confirmed = read_interactively(prompt, f"Replace the saved webhook URL in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
             confirmed = False
         if not confirmed:
@@ -5940,7 +5957,7 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
     previous_debug_mode = DEBUG_MODE
     DEBUG_MODE = False
     try:
-        webhook_url = hidden_prompt("Paste the Discord or ntfy webhook URL (input hidden): ").strip()
+        webhook_url = read_interactively(hidden_prompt, "Paste the Discord or ntfy webhook URL (input hidden): ").strip()
     except (EOFError, KeyboardInterrupt):
         raise ValueError("Webhook setup was cancelled and the dotenv file was not changed") from None
     finally:
@@ -5992,7 +6009,7 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
     prompt = input if input_func is None else input_func
     if dotenv_contains_key(destination, "SMTP_PASSWORD"):
         try:
-            confirmed = prompt(f"Replace the saved SMTP password in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
+            confirmed = read_interactively(prompt, f"Replace the saved SMTP password in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
             confirmed = False
         if not confirmed:
@@ -6002,7 +6019,7 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
     previous_debug_mode = DEBUG_MODE
     DEBUG_MODE = False
     try:
-        smtp_password = str(hidden_prompt("Enter the SMTP password (input hidden): ")).strip()
+        smtp_password = str(read_interactively(hidden_prompt, "Enter the SMTP password (input hidden): ")).strip()
     except (EOFError, KeyboardInterrupt):
         raise ValueError("SMTP password setup was cancelled and the dotenv file was not changed") from None
     finally:
@@ -7857,7 +7874,7 @@ def ask_doctor_approval(prompt, input_func=input, stream=None):
     destination.write(colorize("info", f"{prompt} [y/N]: "))
     destination.flush()
     try:
-        answer = input_func()
+        answer = read_interactively(input_func)
     except (EOFError, KeyboardInterrupt):
         destination.write("\n")
         return False
@@ -8116,7 +8133,7 @@ def wizard_read_answer(prompt, input_func=input, stream=None):
     destination.write(colorize("info", prompt))
     destination.flush()
     try:
-        return str(input_func()).strip()
+        return str(read_interactively(input_func)).strip()
     except (EOFError, KeyboardInterrupt) as exc:
         destination.write("\n")
         raise WizardCancelled from exc
@@ -8132,7 +8149,7 @@ def wizard_read_secret(label, getpass_func=None, stream=None):
     previous_debug_mode = DEBUG_MODE
     DEBUG_MODE = False
     try:
-        return str(hidden_prompt("")).strip()
+        return str(read_interactively(hidden_prompt, "")).strip()
     except (EOFError, KeyboardInterrupt) as exc:
         destination.write("\n")
         raise WizardCancelled from exc
@@ -9019,9 +9036,8 @@ def main():
     if not isinstance(sys.stdout, TerminalStream):
         sys.stdout = TerminalStream(sys.stdout)
 
-    if len(sys.argv) > 1 and "--setup" not in sys.argv:
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     keep_cli_history = any(flag in sys.argv for flag in ("--doctor", "--set-github-token", "--set-webhook-url"))
     if CLEAR_SCREEN and DEBUG_MODE:
