@@ -474,6 +474,13 @@ HORIZONTAL_LINE2 = 0
 CLEAR_SCREEN = False
 VERBOSE_MODE = False
 DEBUG_MODE = False
+
+# True once monitoring has printed its header, so a verbose notice after that closes its own block
+MONITORING_ACTIVE = False
+
+# True while a verbose line is waiting for the timestamp trailer that closes its block
+PENDING_NOTICE_BLOCK = False
+
 COLORED_OUTPUT = False
 COLOR_THEME: dict = {}
 TRUNCATE_CHARS = 0
@@ -2747,7 +2754,21 @@ def verbose_notice(*messages):
         return
     for message in messages:
         verbose_print(message)
-    print_cur_ts("Timestamp:\t\t\t")
+    # Before monitoring starts the notice belongs to the startup screen, which the monitoring header closes
+    if MONITORING_ACTIVE:
+        print_cur_ts("Timestamp:\t\t\t")
+
+
+# Marks the point where output stops being the startup screen, so later notices close their own block
+def mark_monitoring_started():
+    global MONITORING_ACTIVE
+    MONITORING_ACTIVE = True
+
+
+# Closes the block of verbose lines a check printed on its own, so they are never left without a timestamp
+def close_pending_notice_block():
+    if PENDING_NOTICE_BLOCK:
+        print_cur_ts("Timestamp:\t\t\t")
 
 
 # Returns whether a configured value is a real value rather than an unedited placeholder
@@ -2818,7 +2839,11 @@ def debug_swallowed_exception(operation, error):
 
 # Reports a tracked feature that cannot produce its alert during the current cycle
 def verbose_degraded_feature(feature, alert, error=None):
+    global PENDING_NOTICE_BLOCK
     verbose_print(f"{feature} is unavailable, so {alert} cannot fire this cycle")
+    # A degraded feature can be reported from inside a report, so the check closes the block instead of this line
+    if VERBOSE_MODE and MONITORING_ACTIVE:
+        PENDING_NOTICE_BLOCK = True
     if error is not None:
         debug_swallowed_exception(feature, error)
 
@@ -3597,6 +3622,8 @@ def get_cur_ts(ts_str=""):
 
 # Prints the current date/time in human readable format with separator; eg. Sun 21 Apr 2024, 15:08:45
 def print_cur_ts(ts_str=""):
+    global PENDING_NOTICE_BLOCK
+    PENDING_NOTICE_BLOCK = False
     print(get_cur_ts(str(ts_str)))
     print(f"{'─' * HORIZONTAL_LINE1}\n{'─' * HORIZONTAL_LINE1}")
 
@@ -6367,6 +6394,8 @@ def report_unavailable_profile_field(label, value, unavailable):
 # Monitors activity of the specified GitHub user
 def github_monitor_user(user, csv_file_name):
 
+    mark_monitoring_started()
+
     try:
         if csv_file_name:
             init_csv_file(csv_file_name)
@@ -7265,6 +7294,8 @@ def github_monitor_user(user, csv_file_name):
                     events_list_of_ids_old = events_list_of_ids.copy()
             else:
                 verbose_degraded_feature("Recent events", "new event alerts")
+
+        close_pending_notice_block()
 
         alive_counter += 1
 

@@ -69,6 +69,7 @@ def test_the_completed_check_is_a_debug_only_trace():
 # Verifies a verbose notice prints its lines then closes the block with the shared timestamp trailer
 def test_a_verbose_notice_closes_its_block(gm_module, monkeypatch, capsys):
     monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm_module, "MONITORING_ACTIVE", True)
 
     gm_module.verbose_notice("first notice", "second notice")
 
@@ -77,6 +78,48 @@ def test_a_verbose_notice_closes_its_block(gm_module, monkeypatch, capsys):
     assert lines[1] == "* second notice"
     assert lines[2].startswith("Timestamp:")
     assert set(lines[3]) == {"\u2500"}
+
+
+# Verifies a notice printed before monitoring starts stays a bare line, since the monitoring header closes that block
+def test_a_verbose_notice_stays_bare_on_the_startup_screen(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm_module, "MONITORING_ACTIVE", False)
+
+    gm_module.verbose_notice("first notice")
+
+    assert capsys.readouterr().out == "* first notice\n"
+
+
+# Verifies a degraded feature reported during monitoring is closed once by the check instead of by each line
+def test_degraded_feature_lines_are_closed_once_by_the_check(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm_module, "MONITORING_ACTIVE", True)
+    monkeypatch.setattr(gm_module, "PENDING_NOTICE_BLOCK", False)
+
+    gm_module.verbose_degraded_feature("Block status", "block and unblock alerts")
+    gm_module.verbose_degraded_feature("Starred repository count", "starred repository change alerts")
+    gm_module.close_pending_notice_block()
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines[0] == "* Block status is unavailable, so block and unblock alerts cannot fire this cycle"
+    assert lines[1] == "* Starred repository count is unavailable, so starred repository change alerts cannot fire this cycle"
+    assert lines[2].startswith("Timestamp:")
+    assert set(lines[3]) == {"\u2500"}
+
+
+# Verifies a report that closes its own block absorbs a degraded line printed inside it, so no extra trailer follows
+def test_a_report_trailer_absorbs_a_degraded_line_printed_inside_it(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm_module, "MONITORING_ACTIVE", True)
+    monkeypatch.setattr(gm_module, "PENDING_NOTICE_BLOCK", False)
+
+    gm_module.verbose_degraded_feature("Event payload", "complete event notification details")
+    gm_module.print_cur_ts("Timestamp:\t\t\t")
+    capsys.readouterr()
+
+    gm_module.close_pending_notice_block()
+
+    assert capsys.readouterr().out == ""
 
 
 # Verifies a verbose notice stays silent while verbose mode is off, so the trailer cannot leak into a quiet run
