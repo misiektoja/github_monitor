@@ -213,3 +213,23 @@ def test_a_labelled_failure_keeps_the_shared_shape(gm_module, capsys):
     gm_module.print_recovery_advice(advice, verbose=False, debug=False, retry_note="retrying in 1 hour", label="Warning")
 
     assert capsys.readouterr().out.splitlines()[0] == "* Warning: GitHub returned an API error (retrying in 1 hour)"
+
+
+# Verifies the liveness banner explains itself without --verbose, so a plain run never prints a bare timestamp
+def test_the_liveness_banner_explains_itself_without_diagnostics(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "LOCAL_TIMEZONE", "UTC")
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", False)
+
+    gm_module.print_liveness_banner("Monitoring healthy for misiektoja. No tracked change since the last check")
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "* Monitoring healthy for misiektoja. No tracked change since the last check"
+    assert lines[1].startswith("Liveness check, timestamp:")
+
+
+# Verifies the monitoring loop reports its healthy banner through the shared helper
+def test_the_loop_reports_its_healthy_banner_unconditionally(gm_module):
+    source = inspect.getsource(gm_module.github_monitor_user)
+
+    assert "print_liveness_banner(f\"Monitoring healthy for {user}." in source
+    assert "verbose_print(f\"Monitoring healthy" not in source, "the healthy banner is no longer verbose-only"
