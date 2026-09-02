@@ -426,6 +426,8 @@ WEBHOOK_CONTRIB_NOTIFICATION = False
 WEBHOOK_ERROR_NOTIFICATION = True
 ```
 
+A `WEBHOOK_URL` left unset, or left at its `your_webhook_url` placeholder, switches webhook alerts off at startup instead of failing at the first alert. `--verbose` reports why.
+
 Send one test webhook without starting monitoring:
 
 ```sh

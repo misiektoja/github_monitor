@@ -2712,6 +2712,20 @@ def verbose_print(message):
         print(f"* {sanitize_error_text(message)}")
 
 
+# Prints verbose-only notices as one block, so a standalone line is not left without the timestamp trailer
+def verbose_notice(*messages):
+    if not VERBOSE_MODE or not messages:
+        return
+    for message in messages:
+        verbose_print(message)
+    print_cur_ts("Timestamp:\t\t\t")
+
+
+# Returns whether a configured value is a real value rather than an unedited placeholder
+def secret_is_set(value):
+    return isinstance(value, str) and bool(value.strip()) and not value.strip().startswith("your_")
+
+
 # Renders one diagnostic line as an operation followed by comma-separated key=value fields, dropping unset ones
 def format_diagnostic_line(operation, fields):
     rendered = ", ".join(f"{key}={value}" for key, value in fields.items() if value is not None)
@@ -3050,6 +3064,8 @@ class StartupSummaryRow:
 def startup_secret_buckets():
     from_dotenv, from_environment, from_config = [], [], []
     for name, source in sorted(SECRET_SOURCES.items()):
+        if not secret_is_set(globals().get(name)):
+            continue
         if str(source).startswith("dotenv file"):
             from_dotenv.append(name)
         elif source == "environment":
@@ -3829,8 +3845,12 @@ def reload_secrets_signal_handler(sig, frame):
             val = os.getenv(secret)
             if val is not None and val != old_val:
                 globals()[secret] = val
-                SECRET_SOURCES[secret] = "dotenv file reload"
-                debug_print("Secret resolution", name=secret, source="dotenv file reload")
+                # A placeholder written back into the dotenv file clears the secret rather than becoming one
+                if secret_is_set(val):
+                    SECRET_SOURCES[secret] = "dotenv file reload"
+                else:
+                    SECRET_SOURCES.pop(secret, None)
+                debug_print("Secret resolution", name=secret, source=SECRET_SOURCES.get(secret, "nowhere"))
                 if secret == "GITHUB_TOKEN":
                     github_token_changed = True
                 if secret == "WEBHOOK_URL":
@@ -5701,13 +5721,16 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
         value = os.getenv(secret)
         if value is not None:
             globals()[secret] = value
+        # An unedited placeholder is not a configured secret, whichever layer it arrived from
+        if not secret_is_set(globals().get(secret)):
+            continue
         if secret in environment_values:
             SECRET_SOURCES[secret] = "environment"
         elif secret in dotenv_keys and value is not None:
             SECRET_SOURCES[secret] = "dotenv file"
-        elif secret in configured_names and globals().get(secret):
+        elif secret in configured_names:
             SECRET_SOURCES[secret] = "configuration file"
-        elif isinstance(globals().get(secret), str) and globals().get(secret) and not globals().get(secret).startswith("your_"):
+        else:
             SECRET_SOURCES[secret] = "built-in configuration"
     if SECRET_SOURCES:
         for secret, source in SECRET_SOURCES.items():
@@ -6541,7 +6564,7 @@ def github_monitor_user(user, csv_file_name):
         print(f"* Error: {sanitize_error_text(e)}")
         sys.exit(1)
 
-    verbose_print(f"Initial snapshot completed for {user}")
+    verbose_notice(f"Initial snapshot completed for {user}")
     debug_monitor_wait_timing("initial monitoring interval", GITHUB_CHECK_INTERVAL)
     time.sleep(GITHUB_CHECK_INTERVAL)
     alive_counter = 0
@@ -8236,7 +8259,7 @@ def build_wizard_state(config_path, dotenv_path, install_context=None):
             raise ValueError(f"Dotenv file '{selected_dotenv}' could not be read: {type(exc).__name__}: {exc}") from None
     for name in SECRET_KEYS:
         configured = existing_values.pop(name, None)
-        if name not in secrets and isinstance(configured, str) and configured and not configured.startswith("your_"):
+        if name not in secrets and secret_is_set(configured):
             secrets[name] = configured
     values["DOTENV_FILE"] = str(selected_dotenv)
     baseline_values = dict(values)
@@ -8938,7 +8961,7 @@ def launch_wizard_monitoring(arguments):
 
 # Parses command-line settings and starts the requested GitHub Monitor action
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS, TARGET_GITHUB_USERNAME
+    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS, TARGET_GITHUB_USERNAME, WEBHOOK_ENABLED
 
     if "--verbose" in sys.argv:
         VERBOSE_MODE = True
@@ -9613,6 +9636,9 @@ def main():
         REPO_UPDATE_DATE_NOTIFICATION = False
         CONTRIB_NOTIFICATION = False
         ERROR_NOTIFICATION = False
+    if WEBHOOK_ENABLED and not validate_webhook_url():
+        verbose_print("Webhook notifications are off because WEBHOOK_URL is not a complete HTTPS link")
+        WEBHOOK_ENABLED = False
 
     startup_rows = build_startup_summary(args.username, cfg_path, env_path, FINAL_LOG_PATH)
     emit_startup_summary(startup_rows, show_full=bool(VERBOSE_MODE or DEBUG_MODE))

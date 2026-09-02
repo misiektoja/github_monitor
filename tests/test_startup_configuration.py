@@ -100,6 +100,35 @@ def test_exported_secrets_override_dotenv_values(gm_module, monkeypatch, request
     assert gm_module.WEBHOOK_URL == "https://ntfy.sh/dotenv-topic"
 
 
+# Verifies an unedited placeholder is never reported as a configured secret, whichever layer carried it
+def test_placeholder_secrets_are_not_reported_as_configured(gm_module, monkeypatch, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    dotenv = Path(directory.name) / ".env"
+    dotenv.write_text('GITHUB_TOKEN="real-token-value"\n', encoding="utf-8")
+    monkeypatch.setattr(gm_module, "DOTENV_FILE", "")
+    monkeypatch.setattr(gm_module, "SECRET_SOURCES", {})
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "your_webhook_url")
+    monkeypatch.setattr(gm_module, "SMTP_PASSWORD", "your_smtp_password")
+    monkeypatch.setattr(gm_module, "NTFY_ACCESS_TOKEN", "   ")
+    for name in gm_module.SECRET_KEYS:
+        monkeypatch.delenv(name, raising=False)
+
+    gm_module.load_startup_secrets(str(dotenv), {"WEBHOOK_URL", "SMTP_PASSWORD"})
+
+    assert gm_module.SECRET_SOURCES == {"GITHUB_TOKEN": "dotenv file"}
+    assert gm_module.startup_secret_buckets() == (["GITHUB_TOKEN"], [], [])
+
+
+# Verifies the summary rows name only the secrets that carry a real value
+def test_the_summary_rows_skip_placeholder_secrets(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "SECRET_SOURCES", {"GITHUB_TOKEN": "dotenv file", "WEBHOOK_URL": "configuration file"})
+    monkeypatch.setattr(gm_module, "GITHUB_TOKEN", "real-token-value")
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "your_webhook_url")
+
+    assert gm_module.startup_secret_buckets() == (["GITHUB_TOKEN"], [], [])
+
+
 # Verifies explicit debug mode is active while an invalid config is being loaded
 def test_debug_flag_exposes_sanitized_config_loader_detail(request):
     directory = make_test_directory()
@@ -137,3 +166,40 @@ def test_connectivity_check_uses_effective_runtime_defaults(gm_module, monkeypat
 
     assert gm_module.check_internet() is True
     request_get.assert_called_once_with("https://runtime.example/health", timeout=23, verify=True)
+
+
+# Drives the real command line up to the monitoring call and returns the webhook state startup settled on
+def webhook_state_after_startup(gm_module, monkeypatch, request, webhook_url):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config = Path(directory.name) / "webhook.conf"
+    config.write_text('CLEAR_SCREEN = False\nDISABLE_LOGGING = True\nWEBHOOK_ENABLED = True\nWEBHOOK_PROVIDER = "ntfy"\n' + f'WEBHOOK_URL = "{webhook_url}"\n', encoding="utf-8")
+    for name in gm_module.SECRET_KEYS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token-value")
+    monkeypatch.setattr(gm_module, "WEBHOOK_ENABLED", False, raising=False)
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "", raising=False)
+    monkeypatch.setattr(gm_module, "check_internet", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
+
+    def stop_before_monitoring(*_args, **_kwargs):
+        raise SystemExit(0)
+
+    monkeypatch.setattr(gm_module, "github_monitor_user", stop_before_monitoring)
+    monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", "misiektoja", "--config-file", str(config), "--env-file", "none"])
+
+    with pytest.raises(SystemExit) as exit_error:
+        gm_module.main()
+
+    assert exit_error.value.code == 0
+    return gm_module.WEBHOOK_ENABLED
+
+
+# Verifies an unedited webhook destination switches the channel off instead of being treated as configured
+def test_a_placeholder_webhook_url_switches_the_channel_off(gm_module, monkeypatch, request):
+    assert webhook_state_after_startup(gm_module, monkeypatch, request, "your_webhook_url") is False
+
+
+# Verifies a real destination still leaves the webhook channel on
+def test_a_configured_webhook_url_keeps_the_channel_on(gm_module, monkeypatch, request):
+    assert webhook_state_after_startup(gm_module, monkeypatch, request, "https://ntfy.sh/some-topic") is True

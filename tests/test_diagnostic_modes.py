@@ -66,6 +66,35 @@ def test_the_completed_check_is_a_debug_only_trace():
     assert "debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL)" in source
 
 
+# Verifies a verbose notice prints its lines then closes the block with the shared timestamp trailer
+def test_a_verbose_notice_closes_its_block(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
+
+    gm_module.verbose_notice("first notice", "second notice")
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines[0] == "* first notice"
+    assert lines[1] == "* second notice"
+    assert lines[2].startswith("Timestamp:")
+    assert set(lines[3]) == {"\u2500"}
+
+
+# Verifies a verbose notice stays silent while verbose mode is off, so the trailer cannot leak into a quiet run
+def test_a_verbose_notice_is_silent_while_verbose_is_off(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", False)
+
+    gm_module.verbose_notice("nothing to see")
+
+    assert capsys.readouterr().out == ""
+
+
+# Verifies the one loop-level notice goes through the helper rather than printing a line with no timestamp
+def test_the_initial_snapshot_notice_closes_its_block():
+    source = (PROJECT_ROOT / "github_monitor.py").read_text(encoding="utf-8")
+
+    assert 'verbose_notice(f"Initial snapshot completed for {user}")' in source
+
+
 # Verifies disabled diagnostic modes suppress every shared diagnostic printer
 def test_diagnostic_printers_are_silent_when_disabled(gm_module, monkeypatch, capsys):
     monkeypatch.setattr(gm_module, "GITHUB_TOKEN", "github_pat_disabled_diagnostic_secret")
