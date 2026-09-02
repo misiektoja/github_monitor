@@ -11,7 +11,7 @@ github_monitor --doctor <github_target>
 Doctor is read-only by default. It checks the effective configuration after config, dotenv, environment and command-line precedence without creating logs, CSV files or directories. It opens with the detected install method, then reports these fixed sections:
 
 * Environment: Python support, required dependencies and optional dependencies.
-* Configuration: selected files, secret names and sources, [TLS verification](configuration.md#tls-verification), GitHub URLs, timezone, polling interval, log separator mode and the log and CSV files monitoring would write.
+* Configuration: selected files, secret names and sources, [TLS verification](configuration.md#tls-verification), GitHub URLs, timezone, the timing and count settings, log separator mode and the log and CSV files monitoring would write.
 * Authentication and connectivity: live token validation plus the configured connectivity endpoint.
 * Target and monitoring: target access, repository, starred repository and event feeds and optional contribution tracking.
 * Notifications: whether email and webhook alerts are disabled, unusable or ready.

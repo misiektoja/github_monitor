@@ -7836,6 +7836,26 @@ def validate_github_endpoint_url(value):
     return parsed.scheme.casefold() == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
 
 
+# Returns all type and range errors in settings that control runtime timing or counts
+def runtime_configuration_errors():
+    errors = []
+    positive_numbers = (("CHECK_INTERNET_TIMEOUT", CHECK_INTERNET_TIMEOUT),)
+    nonnegative_numbers = (("LIVENESS_CHECK_INTERVAL", LIVENESS_CHECK_INTERVAL), ("NET_BASE_BACKOFF_SEC", NET_BASE_BACKOFF_SEC))
+    positive_integers = (("GITHUB_CHECK_INTERVAL", GITHUB_CHECK_INTERVAL), ("EVENTS_NUMBER", EVENTS_NUMBER), ("NET_MAX_RETRIES", NET_MAX_RETRIES))
+    for name, value in positive_numbers:
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+            errors.append(f"{name} must be a number greater than zero, not {value!r}")
+    for name, value in nonnegative_numbers:
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+            errors.append(f"{name} must be a number zero or greater, not {value!r}")
+    for name, value in positive_integers:
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            errors.append(f"{name} must be an integer greater than zero, not {value!r}")
+    if not isinstance(SMTP_PORT, int) or isinstance(SMTP_PORT, bool) or not 1 <= SMTP_PORT <= 65535:
+        errors.append(f"SMTP_PORT must be an integer from 1 through 65535, not {SMTP_PORT!r}")
+    return errors
+
+
 # Adds configuration, dotenv, private-setting and core value checks
 def doctor_check_configuration(report, args, parser):
     global CLI_CONFIG_PATH, CONFIG_DISCOVERY_DISABLED, LOCAL_TIMEZONE
@@ -7905,19 +7925,11 @@ def doctor_check_configuration(report, args, parser):
         LOCAL_TIMEZONE = "UTC"
     else:
         report.add("Configuration", "PASS", timezone_label, f"Time zone: {LOCAL_TIMEZONE}")
-    if not (type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0):
-        report.add("Configuration", "FAIL", "Polling interval is invalid", str(GITHUB_CHECK_INTERVAL), "Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds")
+    numeric_errors = runtime_configuration_errors()
+    if numeric_errors:
+        report.add("Configuration", "FAIL", "One or more numeric settings are invalid", "Invalid numeric settings: " + "; ".join(numeric_errors), "Correct the reported settings in the configuration file", CONFIG_GUIDE_URL)
     if TARGET_GITHUB_USERNAME and not wizard_normalize_target(TARGET_GITHUB_USERNAME):
         report.add("Configuration", "FAIL", "Saved GitHub target is invalid", sanitize_error_text(TARGET_GITHUB_USERNAME), "Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL")
-    if not (isinstance(CHECK_INTERNET_TIMEOUT, (int, float)) and not isinstance(CHECK_INTERNET_TIMEOUT, bool) and CHECK_INTERNET_TIMEOUT > 0):
-        report.add("Configuration", "FAIL", "Connectivity timeout is invalid", str(CHECK_INTERNET_TIMEOUT), "Set CHECK_INTERNET_TIMEOUT to a positive number of seconds")
-    if not (type(EVENTS_NUMBER) is int and EVENTS_NUMBER > 0):
-        report.add("Configuration", "FAIL", "Recent event window is invalid", str(EVENTS_NUMBER), "Set EVENTS_NUMBER to a positive integer")
-    retry_policy_valid = type(NET_MAX_RETRIES) is int and NET_MAX_RETRIES > 0 and isinstance(NET_BASE_BACKOFF_SEC, (int, float)) and not isinstance(NET_BASE_BACKOFF_SEC, bool) and NET_BASE_BACKOFF_SEC >= 0
-    if not retry_policy_valid:
-        report.add("Configuration", "FAIL", "GitHub retry policy is invalid", f"NET_MAX_RETRIES is {NET_MAX_RETRIES} and NET_BASE_BACKOFF_SEC is {NET_BASE_BACKOFF_SEC}", "Use a positive retry count and a non-negative base backoff")
-    if not (isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0):
-        report.add("Configuration", "FAIL", "Liveness interval is invalid", str(LIVENESS_CHECK_INTERVAL), "Set LIVENESS_CHECK_INTERVAL to zero or a positive number of seconds")
     event_types_valid = isinstance(EVENTS_TO_MONITOR, (list, tuple)) and any(isinstance(value, str) and value.strip() for value in EVENTS_TO_MONITOR)
     if not DO_NOT_MONITOR_GITHUB_EVENTS and not event_types_valid:
         report.add("Configuration", "FAIL", "Event type selection is invalid", "No usable event type is configured", "Add ALL or at least one supported event name to EVENTS_TO_MONITOR")

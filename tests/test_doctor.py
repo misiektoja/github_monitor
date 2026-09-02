@@ -390,8 +390,10 @@ def test_doctor_reports_invalid_runtime_configuration(gm_module, monkeypatch):
 
     gm_module.doctor_check_configuration(report, doctor_args(), Mock())
 
-    failed_labels = {check.label for check in report.checks if check.status == "FAIL"}
-    assert {"Polling interval is invalid", "Connectivity timeout is invalid", "Recent event window is invalid", "GitHub retry policy is invalid", "Event type selection is invalid"} <= failed_labels
+    failed = {check.label: check.detail for check in report.checks if check.status == "FAIL"}
+    assert {"One or more numeric settings are invalid", "Event type selection is invalid"} <= set(failed)
+    # Every invalid setting is named in the one row, so a run does not have to be repeated to find the next one
+    assert all(name in failed["One or more numeric settings are invalid"] for name in ("GITHUB_CHECK_INTERVAL", "CHECK_INTERNET_TIMEOUT", "EVENTS_NUMBER", "NET_MAX_RETRIES"))
 
 
 # Verifies an invalid config becomes one row while later checks still run
