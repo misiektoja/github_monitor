@@ -5880,6 +5880,68 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
     return str(destination)
 
 
+# Signs in to the configured mail server with one entered password, so nothing is saved that cannot deliver
+def smtp_sign_in(password, timeout=5):
+    global SMTP_PASSWORD
+
+    candidate = str(password or "")
+    if not candidate or candidate == "your_smtp_password":
+        raise ValueError("No SMTP password was entered and the dotenv file was not changed")
+    settings_problem = wizard_email_settings_error({name: globals()[name] for name in WIZARD_SMTP_CONFIG_KEYS}, {"SMTP_PASSWORD": candidate})
+    if settings_problem:
+        raise ValueError(f"The mail server settings are incomplete: {settings_problem}")
+    previous_password = SMTP_PASSWORD
+    SMTP_PASSWORD = candidate
+    smtp_object = None
+    try:
+        smtp_object = smtp_connect_and_login(SMTP_SSL, smtp_timeout=timeout)
+    finally:
+        if smtp_object is not None:
+            smtp_quit_quietly(smtp_object)
+        SMTP_PASSWORD = previous_password
+    return str(SMTP_USER)
+
+
+# Privately checks one SMTP password against the mail server and atomically stores it
+def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getpass_func=None, config_path=None, install_context=None, sign_in=None) -> str:
+    global DEBUG_MODE
+    destination = resolve_secret_env_path(env_file, "--set-smtp-password")
+    terminal_is_interactive = sys.stdin.isatty() if interactive is None else interactive
+    if not terminal_is_interactive:
+        raise ValueError("--set-smtp-password requires an interactive terminal so the password stays hidden")
+    prompt = input if input_func is None else input_func
+    if dotenv_contains_key(destination, "SMTP_PASSWORD"):
+        try:
+            confirmed = prompt(f"Replace the saved SMTP password in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            confirmed = False
+        if not confirmed:
+            raise ValueError("SMTP password setup was cancelled and the dotenv file was not changed")
+    print(f"* The password is checked by signing in to {SMTP_HOST} as {SMTP_USER}. Nothing is sent")
+    hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
+    previous_debug_mode = DEBUG_MODE
+    DEBUG_MODE = False
+    try:
+        smtp_password = str(hidden_prompt("Enter the SMTP password (input hidden): ")).strip()
+    except (EOFError, KeyboardInterrupt):
+        raise ValueError("SMTP password setup was cancelled and the dotenv file was not changed") from None
+    finally:
+        DEBUG_MODE = previous_debug_mode
+    check = smtp_sign_in if sign_in is None else sign_in
+    signed_in_user = check(smtp_password, timeout=WIZARD_SMTP_TIMEOUT)
+    update_dotenv_value(destination, "SMTP_PASSWORD", smtp_password)
+    paths = []
+    if config_path:
+        paths.extend(("--config-file", str(config_path)))
+    paths.extend(("--env-file", str(destination)))
+    print(f"* The mail server accepted the password for {signed_in_user}")
+    print(f"* Updated private settings file: {destination}")
+    print()
+    _wizard_print_command(sys.stdout, "Send a test email:", render_install_command(["--send-test-email"] + paths, install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor", "GITHUB_USERNAME"] + paths, install_context))
+    return str(destination)
+
+
 # Resolves an executable path by checking if it's a valid file or searching in $PATH
 def resolve_executable(path):
     if os.path.isfile(path) and os.access(path, os.X_OK):
@@ -8949,6 +9011,12 @@ def main():
         help="Validate and save a GitHub token through a hidden prompt",
     )
     conf.add_argument(
+        "--set-smtp-password",
+        dest="set_smtp_password",
+        action="store_true",
+        help="Enter the SMTP password privately, check it against the mail server and save it to the dotenv file",
+    )
+    conf.add_argument(
         "--set-webhook-url",
         dest="set_webhook_url",
         action="store_true",
@@ -9263,8 +9331,9 @@ def main():
     if args.set_github_token and args.github_token:
         parser.error("--set-github-token cannot be combined with -t/--github-token")
 
-    if args.set_github_token and args.set_webhook_url:
-        parser.error("--set-github-token cannot be combined with --set-webhook-url")
+    selected_secret_actions = [flag for flag, selected in (("--set-github-token", args.set_github_token), ("--set-smtp-password", args.set_smtp_password), ("--set-webhook-url", args.set_webhook_url)) if selected]
+    if len(selected_secret_actions) > 1:
+        parser.error(f"{selected_secret_actions[0]} cannot be combined with {selected_secret_actions[1]}")
 
     # Reached only when --generate-config did not already handle and exit, so --force would do nothing here
     if args.force:
@@ -9273,7 +9342,7 @@ def main():
     apply_diagnostic_cli_overrides(args)
 
     if args.doctor:
-        incompatible = (args.setup, args.generate_config, args.set_github_token, args.set_webhook_url, args.send_test_email, args.send_test_webhook, args.list_repos, args.list_starred_repos, args.list_followers_and_followings, args.list_recent_events)
+        incompatible = (args.setup, args.generate_config, args.set_github_token, args.set_smtp_password, args.set_webhook_url, args.send_test_email, args.send_test_webhook, args.list_repos, args.list_starred_repos, args.list_followers_and_followings, args.list_recent_events)
         if any(incompatible):
             parser.error("--doctor cannot be combined with setup, listing or one-shot delivery commands")
         sys.exit(run_doctor_preflight(args, parser, show_banner=False))
@@ -9321,6 +9390,15 @@ def main():
             run_set_github_token(args.env_file, api_url=args.github_url, config_path=cfg_path)
         except Exception as e:
             print_recovery_advice(classify_recovery_error(e, "github_token"))
+            sys.exit(1)
+        sys.exit(0)
+
+    if args.set_smtp_password:
+        # Runs after the config file so the mail server it signs in to is the one monitoring would use
+        try:
+            run_set_smtp_password(args.env_file, config_path=cfg_path)
+        except Exception as e:
+            print_recovery_advice(classify_recovery_error(e, "email"))
             sys.exit(1)
         sys.exit(0)
 

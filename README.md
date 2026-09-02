@@ -472,7 +472,7 @@ The tuple format is `(field_to_target, method_name, *optional_arguments)`. Inval
 <a id="storing-secrets"></a>
 ### Storing Secrets
 
-Prefer `--set-github-token` for `GITHUB_TOKEN` and `--set-webhook-url` for `WEBHOOK_URL` because both commands keep input hidden. GitHub token setup also validates the secret before saving it. Store `SMTP_PASSWORD` and `NTFY_ACCESS_TOKEN` as environment variables or in a dotenv file.
+Prefer `--set-github-token` for `GITHUB_TOKEN`, `--set-smtp-password` for `SMTP_PASSWORD` and `--set-webhook-url` for `WEBHOOK_URL` because all three commands keep input hidden. GitHub token setup validates the secret before saving it, and SMTP password setup signs in to the mail server before saving it without sending anything. Store `NTFY_ACCESS_TOKEN` as an environment variable or in a dotenv file.
 
 As a fallback, set environment variables using `export` on **Linux/Unix/macOS/WSL** systems:
 

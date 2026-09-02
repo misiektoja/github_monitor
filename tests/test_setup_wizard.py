@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -794,3 +795,82 @@ def test_setup_saved_ntfy_token_can_be_disabled(gm_module, request):
     assert state.secrets["NTFY_ACCESS_TOKEN"] == ""
     assert "tk_saved_token" not in output.getvalue()
     assert "NTFY_ACCESS_TOKEN" not in gm_module.render_wizard_dotenv(state)
+
+
+# Verifies the one-shot command signs in before the password reaches the dotenv file
+def test_set_smtp_password_signs_in_before_saving(gm_module, request, monkeypatch, capsys):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    destination = Path(directory.name) / ".env-monitor"
+    destination.write_text("UNRELATED=stay\n", encoding="utf-8")
+    sign_in = Mock(return_value="monitor@example.test")
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+
+    result = gm_module.run_set_smtp_password(str(destination), interactive=True, getpass_func=lambda prompt: "app-password", sign_in=sign_in)
+
+    assert result == str(destination.resolve())
+    sign_in.assert_called_once_with("app-password", timeout=gm_module.WIZARD_SMTP_TIMEOUT)
+    saved = destination.read_text(encoding="utf-8")
+    assert "UNRELATED=stay" in saved
+    assert 'SMTP_PASSWORD="app-password"' in saved
+    output = capsys.readouterr().out
+    assert "signing in to smtp.example.test as monitor@example.test" in output
+    assert "The mail server accepted the password for monitor@example.test" in output
+    assert "app-password" not in output
+
+
+# Verifies a password the mail server refuses leaves the dotenv file untouched
+def test_set_smtp_password_keeps_the_dotenv_file_on_a_refused_sign_in(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    destination = Path(directory.name) / ".env-monitor"
+    destination.write_text("UNRELATED=stay\n", encoding="utf-8")
+    refuse = Mock(side_effect=gm_module.smtplib.SMTPAuthenticationError(535, b"authentication failed"))
+
+    with pytest.raises(gm_module.smtplib.SMTPAuthenticationError):
+        gm_module.run_set_smtp_password(str(destination), interactive=True, getpass_func=lambda prompt: "wrong", sign_in=refuse)
+
+    assert destination.read_text(encoding="utf-8") == "UNRELATED=stay\n"
+    assert gm_module.classify_recovery_error(refuse.side_effect, "email").code == "smtp.authentication"
+
+
+# Verifies the command refuses to prompt without an interactive terminal
+def test_set_smtp_password_requires_a_terminal(gm_module):
+    with pytest.raises(ValueError, match="interactive terminal"):
+        gm_module.run_set_smtp_password(interactive=False, getpass_func=Mock(side_effect=AssertionError("prompted")))
+
+
+# Verifies the sign-in uses the configured mail server and restores the password it borrowed
+def test_smtp_sign_in_uses_the_configured_mail_server(gm_module, monkeypatch):
+    session = Mock()
+    connect = Mock(return_value=session)
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", connect)
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(gm_module, "SMTP_PORT", 587)
+    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+    monkeypatch.setattr(gm_module, "SENDER_EMAIL", "monitor@example.test")
+    monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "alerts@example.test")
+    monkeypatch.setattr(gm_module, "SMTP_PASSWORD", "saved")
+    monkeypatch.setattr(gm_module, "SMTP_SSL", True)
+
+    assert gm_module.smtp_sign_in("entered", timeout=5) == "monitor@example.test"
+
+    connect.assert_called_once_with(True, smtp_timeout=5)
+    session.quit.assert_called_once()
+    assert gm_module.SMTP_PASSWORD == "saved"
+
+
+# Verifies incomplete mail server settings are reported instead of a bare connection failure
+def test_smtp_sign_in_reports_incomplete_settings(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", Mock(side_effect=AssertionError("connected")))
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "your_smtp_server_ssl")
+
+    with pytest.raises(ValueError, match="settings are incomplete"):
+        gm_module.smtp_sign_in("entered")
+
+
+# Verifies a blank password is refused rather than saved as an empty secret
+def test_smtp_sign_in_refuses_a_blank_password(gm_module):
+    with pytest.raises(ValueError, match="No SMTP password"):
+        gm_module.smtp_sign_in("")
