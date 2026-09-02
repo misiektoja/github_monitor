@@ -458,6 +458,9 @@ WEBHOOK_TRANSFORMS = []
 NTFY_ACCESS_TOKEN = ""
 GITHUB_CHECK_INTERVAL = 0
 LOCAL_TIMEZONE = ""
+
+# How LOCAL_TIMEZONE was arrived at, which decides the row doctor prints for it
+LOCAL_TIMEZONE_STATE = "config"
 EVENTS_TO_MONITOR = []
 EVENTS_NUMBER = 0
 TRACK_REPOS_CHANGES = False
@@ -3886,6 +3889,37 @@ def get_range_of_dates_from_tss(ts1, ts2, between_sep=" - ", short=False):
 # Checks if the timezone name is correct
 def is_valid_timezone(tz_name):
     return tz_name in pytz.all_timezones
+
+
+TIMEZONE_CHECK_LABELS = {"config": "Local timezone is valid", "auto": "Local timezone can be detected", "auto_unavailable": "Automatic timezone detection is unavailable", "auto_failed": "Automatic timezone detection failed", "invalid": "Local timezone is invalid"}
+
+
+# Resolves LOCAL_TIMEZONE and the state doctor reports it with, returning advice when no zone could be determined
+def resolve_local_timezone():
+    global LOCAL_TIMEZONE, LOCAL_TIMEZONE_STATE
+
+    LOCAL_TIMEZONE_STATE = "config"
+    timezone_advice = None
+    local_tz = None
+    if LOCAL_TIMEZONE == "Auto":
+        if get_localzone is not None:
+            try:
+                local_tz = get_localzone()
+            except Exception as exc:
+                debug_swallowed_exception("Local timezone detection", exc)
+        if local_tz and is_valid_timezone(str(local_tz)):
+            LOCAL_TIMEZONE = str(local_tz)
+            LOCAL_TIMEZONE_STATE = "auto"
+        elif get_localzone is None:
+            LOCAL_TIMEZONE_STATE = "auto_unavailable"
+            timezone_advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", "Install tzlocal for automatic detection or set LOCAL_TIMEZONE to a valid pytz timezone", False, "LOCAL_TIMEZONE is Auto but tzlocal is unavailable", CONFIG_GUIDE_URL)
+        else:
+            LOCAL_TIMEZONE_STATE = "auto_failed"
+            timezone_advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", "Set LOCAL_TIMEZONE to a valid pytz timezone", False, "tzlocal did not return a supported timezone", CONFIG_GUIDE_URL)
+    elif not is_valid_timezone(LOCAL_TIMEZONE):
+        LOCAL_TIMEZONE_STATE = "invalid"
+        timezone_advice = make_recovery_advice("timezone.invalid", f"Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid", "Set LOCAL_TIMEZONE to a valid pytz timezone name", False, f"Time zone: {LOCAL_TIMEZONE}", CONFIG_GUIDE_URL)
+    return timezone_advice
 
 
 # Prints and returns the printed text with new line
@@ -7728,24 +7762,14 @@ def doctor_check_configuration(report, args, parser):
         report.add("Configuration", "FAIL", "GitHub API URL is invalid", sanitize_error_text(GITHUB_API_URL) or "No URL configured", "Set GITHUB_API_URL to a complete HTTPS URL without credentials, query parameters or fragments")
     if not validate_github_endpoint_url(GITHUB_HTML_URL):
         report.add("Configuration", "FAIL", "GitHub web URL is invalid", sanitize_error_text(GITHUB_HTML_URL) or "No URL configured", "Set GITHUB_HTML_URL to a complete HTTPS URL without credentials, query parameters or fragments")
-    if LOCAL_TIMEZONE == "Auto":
-        if get_localzone is None:
-            report.add("Configuration", "FAIL", "Automatic timezone detection is unavailable", "LOCAL_TIMEZONE is Auto but tzlocal is unavailable", "Install tzlocal or set LOCAL_TIMEZONE to a valid pytz timezone")
-        else:
-            try:
-                detected_timezone = str(get_localzone())
-            except Exception as exc:
-                detected_timezone = ""
-                debug_swallowed_exception("Doctor timezone detection", exc)
-            if detected_timezone and is_valid_timezone(detected_timezone):
-                LOCAL_TIMEZONE = detected_timezone
-                report.add("Configuration", "PASS", "Local timezone can be detected", f"Time zone: {detected_timezone}")
-            else:
-                report.add("Configuration", "FAIL", "Automatic timezone detection failed", "tzlocal did not return a supported timezone", "Set LOCAL_TIMEZONE to a valid pytz timezone")
-    elif is_valid_timezone(LOCAL_TIMEZONE):
-        report.add("Configuration", "PASS", "Local timezone is valid", f"Time zone: {LOCAL_TIMEZONE}")
+    timezone_advice = resolve_local_timezone()
+    timezone_label = TIMEZONE_CHECK_LABELS[LOCAL_TIMEZONE_STATE]
+    if timezone_advice is not None:
+        report.add("Configuration", "FAIL", timezone_label, timezone_advice.detail, timezone_advice.fix, timezone_advice.guide_url)
+        # The report still stamps timestamps, so it falls back rather than stopping before the diagnosis
+        LOCAL_TIMEZONE = "UTC"
     else:
-        report.add("Configuration", "FAIL", "Local timezone is invalid", f"Time zone: {sanitize_error_text(LOCAL_TIMEZONE)}", "Set LOCAL_TIMEZONE to a valid pytz timezone")
+        report.add("Configuration", "PASS", timezone_label, f"Time zone: {LOCAL_TIMEZONE}")
     if not (type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0):
         report.add("Configuration", "FAIL", "Polling interval is invalid", str(GITHUB_CHECK_INTERVAL), "Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds")
     if TARGET_GITHUB_USERNAME and not wizard_normalize_target(TARGET_GITHUB_USERNAME):
@@ -9750,24 +9774,10 @@ def main():
         print_recovery_advice(advice)
         sys.exit(1)
 
-    local_tz = None
-    if LOCAL_TIMEZONE == "Auto":
-        if get_localzone is not None:
-            try:
-                local_tz = get_localzone()
-            except Exception as exc:
-                debug_swallowed_exception("Local timezone detection", exc)
-        if local_tz:
-            LOCAL_TIMEZONE = str(local_tz)
-        else:
-            advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", "Install tzlocal for automatic detection or set LOCAL_TIMEZONE to a valid pytz timezone", False, "tzlocal did not return a timezone", CONFIG_GUIDE_URL)
-            print_recovery_advice(advice)
-            sys.exit(1)
-    else:
-        if not is_valid_timezone(LOCAL_TIMEZONE):
-            advice = make_recovery_advice("timezone.invalid", f"Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid", "Set LOCAL_TIMEZONE to a valid pytz timezone name", False, f"Rejected timezone: {LOCAL_TIMEZONE}", CONFIG_GUIDE_URL)
-            print_recovery_advice(advice)
-            sys.exit(1)
+    timezone_advice = resolve_local_timezone()
+    if timezone_advice is not None:
+        print_recovery_advice(timezone_advice)
+        sys.exit(1)
 
     if not check_internet():
         sys.exit(1)

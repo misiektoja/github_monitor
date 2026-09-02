@@ -876,3 +876,21 @@ def test_a_command_line_target_is_carried_into_the_command(gm_module, monkeypatc
     gm_module.print_doctor_next_steps(destination, "someone", doctor_exit=0)
 
     assert "someone" in destination.getvalue()
+
+
+# Verifies the row names the state the shared resolver settled on, so it says what a restart would say
+def test_the_timezone_row_follows_the_shared_resolver(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "LOCAL_TIMEZONE", "Mars/Olympus_Mons")
+    monkeypatch.setattr(gm_module, "LOCAL_TIMEZONE_STATE", "config")
+    # The check reassigns both from its arguments, so they are restored rather than left for the next test
+    monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", None)
+    monkeypatch.setattr(gm_module, "DOTENV_FILE", "")
+    report = gm_module.DoctorReport(target_name="octocat")
+
+    gm_module.doctor_check_configuration(report, doctor_args(), Mock())
+
+    assert gm_module.LOCAL_TIMEZONE_STATE == "invalid"
+    row = next(check for check in report.checks if check.label in gm_module.TIMEZONE_CHECK_LABELS.values())
+    assert (row.status, row.label, row.detail) == ("FAIL", "Local timezone is invalid", "Time zone: Mars/Olympus_Mons")
+    # A failed resolution still leaves a zone the rest of the report can stamp timestamps with
+    assert gm_module.LOCAL_TIMEZONE == "UTC"
