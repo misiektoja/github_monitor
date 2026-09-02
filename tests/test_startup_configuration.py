@@ -230,3 +230,13 @@ def test_a_command_line_secret_is_not_reported_as_a_config_file_secret(gm_module
 
     assert rows["Secrets from command line"] == "GITHUB_TOKEN"
     assert rows["Secrets from config file"] == "None"
+
+
+# Verifies a first run without a username is told about the target before it is told about the token
+def test_a_missing_username_is_reported_before_the_token():
+    result = subprocess.run([sys.executable, str(PROJECT_ROOT / "github_monitor.py"), "--config-file", "none", "--env-file", "none"], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "* Error: A GitHub username is required" in output
+    assert "No usable GitHub token is configured" not in output

@@ -32,6 +32,8 @@ Guide: A relevant documentation link
 
 Recovery codes are stable identifiers such as `config.invalid`, `auth.github_token_invalid`, `network.timeout`, `github.rate_limited` and `file.unwritable`. Include the code when asking for help. Commands printed after setup or inside recovery guidance automatically match a PyPI install or downloaded script with platform-correct quoting. They also carry the `--config-file` or `--env-file` you started with, so they can be pasted as they are.
 
+A run that has neither a username nor a token reports the missing username first, since that is the simpler of the two to supply.
+
 ## Verbose and Debug Output
 
 Verbose mode answers "what did the tool decide?" It expands the startup summary, includes stable recovery codes and states when missing data prevents a specific alert from firing during the current check:

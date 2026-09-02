@@ -9757,14 +9757,15 @@ def main():
             sys.exit(1)
         sys.exit(0)
 
-    if not GITHUB_TOKEN or GITHUB_TOKEN == "your_github_classic_personal_access_token":
-        token_command = render_install_command(["--set-github-token"])
-        advice = make_recovery_advice("auth.github_token_missing", "No usable GitHub token is configured", f"Create a token then run: {token_command}", False, "GITHUB_TOKEN is empty or still uses the generated placeholder", AUTH_GUIDE_URL)
+    # Checked before the token, so a first run is told the simplest missing thing first
+    if not args.username:
+        advice = make_recovery_advice("target.missing", "A GitHub username is required", "Add GITHUB_USERNAME to the monitoring command", False, "The positional GITHUB_USERNAME argument was empty", QUICK_START_GUIDE_URL)
         print_recovery_advice(advice)
         sys.exit(1)
 
-    if not args.username:
-        advice = make_recovery_advice("target.missing", "A GitHub username is required", "Add GITHUB_USERNAME to the monitoring command", False, "The positional GITHUB_USERNAME argument was empty", QUICK_START_GUIDE_URL)
+    if not GITHUB_TOKEN or GITHUB_TOKEN == "your_github_classic_personal_access_token":
+        token_command = render_install_command(["--set-github-token"])
+        advice = make_recovery_advice("auth.github_token_missing", "No usable GitHub token is configured", f"Create a token then run: {token_command}", False, "GITHUB_TOKEN is empty or still uses the generated placeholder", AUTH_GUIDE_URL)
         print_recovery_advice(advice)
         sys.exit(1)
 
