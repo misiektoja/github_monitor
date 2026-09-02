@@ -2981,6 +2981,35 @@ def active_path_arguments(arguments=()):
     return paths
 
 
+# Renders one command argument for the shell, leaving a <placeholder> as documentation for the reader to replace
+def quote_command_argument(argument, windows=False):
+    text = str(argument)
+    if text.startswith("<") and text.endswith(">"):
+        return text
+    return subprocess.list2cmdline([text]) if windows else shlex.quote(text)
+
+
+# Reads only the persisted target from a config file, so a printed command can omit a positional the config already supplies
+def config_file_target(config_path):
+    if not config_path or str(config_path).casefold() == "none":
+        return ""
+    namespace = {}
+    if not load_config_file(config_path, namespace=namespace, report_errors=False):
+        return ""
+    return str(namespace.get("TARGET_GITHUB_USERNAME") or "")
+
+
+# Returns the targets for the printed doctor and monitoring commands, dropping one the effective config already supplies
+def command_targets(explicit_target=None, saved_target=None, placeholder="<github_target>"):
+    saved = str(saved_target or "")
+    known = str(explicit_target or "") or saved
+    if not known:
+        # Monitoring cannot run without a target, so it keeps the placeholder while the doctor reports the gap itself
+        return None, placeholder
+    printed = None if known == saved else known
+    return printed, printed
+
+
 # Renders one install-aware command with platform quoting, carrying the paths this run was given
 def render_install_command(arguments, install_context=None, exact=False, include_paths=True):
     context = detect_install_context() if install_context is None else install_context
@@ -2992,9 +3021,8 @@ def render_install_command(arguments, install_context=None, exact=False, include
     parts = [*prefix, *(str(argument) for argument in arguments)]
     if include_paths:
         parts.extend(active_path_arguments(arguments))
-    if context.operating_system.casefold() == "windows":
-        return subprocess.list2cmdline(parts)
-    return shlex.join(parts)
+    windows = context.operating_system.casefold() == "windows"
+    return " ".join(quote_command_argument(part, windows) for part in parts)
 
 
 # One sentence for every surface that reports the startup connectivity check
@@ -6131,8 +6159,9 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     print(f"* GitHub token validation succeeded for user: {login}")
     print(f"* Updated private settings file: {destination}")
     print()
-    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor"] + paths, install_context))
-    _wizard_print_command(sys.stdout, "After Doctor passes, start monitoring:", render_install_command(paths, install_context))
+    doctor_target, monitor_target = command_targets(None, config_file_target(config_path or find_config_file()))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor"] + ([doctor_target] if doctor_target else []) + paths, install_context))
+    _wizard_print_command(sys.stdout, "After Doctor passes, start monitoring:", render_install_command(([monitor_target] if monitor_target else []) + paths, install_context))
     return str(destination)
 
 
@@ -7844,7 +7873,7 @@ def doctor_check_connectivity(report, request_get=None):
 # Adds a target lookup and retains the fetched profile for feed checks
 def doctor_check_target(report, github_factory=None):
     if not report.target_name:
-        command = render_install_command(["<github_username>", "--doctor"])
+        command = render_install_command(["<github_target>", "--doctor"])
         report.add("Target", "WARN", "No GitHub target was provided", "Nothing can be monitored until a username is supplied", f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL)
         return
     if not report.authenticated_login:
@@ -8205,10 +8234,11 @@ def _wizard_print_command(destination, label, command, suffix=""):
 
 # Writes the command that starts monitoring with the files this run checked, so a report read on its own
 # ends with the next action rather than leaving the reader to assemble the command
-def print_doctor_next_steps(destination, target=None, doctor_exit=0):
+def print_doctor_next_steps(destination, target=None, saved_target=None, doctor_exit=0):
     _wizard_heading(destination, "Next steps", "header")
     label = "After Doctor passes, start monitoring:" if doctor_exit else "Start monitoring:"
-    _wizard_print_command(destination, label, render_install_command([str(target)] if target else []))
+    monitor_target = command_targets(target, saved_target)[1]
+    _wizard_print_command(destination, label, render_install_command([monitor_target] if monitor_target else []))
     destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
 
 
@@ -9711,7 +9741,7 @@ def main():
         if any(incompatible):
             parser.error("--doctor cannot be combined with setup, listing or one-shot delivery commands")
         doctor_exit = run_doctor_preflight(args, parser, show_banner=False)
-        print_doctor_next_steps(terminal_surface_stream(sys.stdout), args.username, doctor_exit)
+        print_doctor_next_steps(terminal_surface_stream(sys.stdout), args.username, TARGET_GITHUB_USERNAME, doctor_exit)
         sys.exit(doctor_exit)
 
     CONFIG_DISCOVERY_DISABLED = isinstance(args.config_file, str) and args.config_file.casefold() == "none"

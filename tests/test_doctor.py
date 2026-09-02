@@ -878,6 +878,21 @@ def test_a_command_line_target_is_carried_into_the_command(gm_module, monkeypatc
     assert "someone" in destination.getvalue()
 
 
+# Verifies the monitoring command carries a target only when the config will not supply one
+def test_the_monitoring_command_leaves_out_a_target_the_config_supplies(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", "")
+    monkeypatch.setattr(gm_module, "DOTENV_FILE", "")
+    saved = io.StringIO()
+    unsaved = io.StringIO()
+
+    gm_module.print_doctor_next_steps(saved, "someone", "someone", doctor_exit=0)
+    gm_module.print_doctor_next_steps(unsaved, None, "", doctor_exit=0)
+
+    assert "someone" not in saved.getvalue()
+    assert "<github_target>" not in saved.getvalue()
+    assert "<github_target>" in unsaved.getvalue()
+
+
 # Verifies the row names the state the shared resolver settled on, so it says what a restart would say
 def test_the_timezone_row_follows_the_shared_resolver(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "LOCAL_TIMEZONE", "Mars/Olympus_Mons")

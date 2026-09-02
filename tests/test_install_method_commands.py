@@ -48,22 +48,31 @@ def test_windows_manual_command_uses_portable_names(gm_module):
 
 
 # Verifies secret setup prints a command for the detected install instead of a hard-coded entry point
-def test_token_setup_uses_install_aware_next_command(gm_module, monkeypatch, capsys):
+def test_token_setup_uses_install_aware_next_command(gm_module, monkeypatch, capsys, tmp_path):
     context = gm_module.InstallContext("manual", "Linux", ("/usr/bin/python", "/opt/GitHub Monitor/github_monitor.py"))
     destination = Path("/opt/private settings.env")
+    empty_config = tmp_path / "empty.conf"
+    empty_config.write_text('TARGET_GITHUB_USERNAME = ""\n', encoding="utf-8")
+    saved_config = tmp_path / "saved.conf"
+    saved_config.write_text('TARGET_GITHUB_USERNAME = "octocat"\n', encoding="utf-8")
     monkeypatch.setattr(gm_module, "resolve_secret_env_path", Mock(return_value=destination))
     monkeypatch.setattr(gm_module, "dotenv_contains_key", Mock(return_value=False))
     monkeypatch.setattr(gm_module, "validate_github_token", Mock(return_value="octocat"))
     update = Mock()
     monkeypatch.setattr(gm_module, "update_dotenv_value", update)
 
-    result = gm_module.run_set_github_token(interactive=True, getpass_func=lambda prompt: "private-value", install_context=context)
+    result = gm_module.run_set_github_token(interactive=True, getpass_func=lambda prompt: "private-value", install_context=context, config_path=empty_config)
+    unsaved_output = capsys.readouterr().out
+    gm_module.run_set_github_token(interactive=True, getpass_func=lambda prompt: "private-value", install_context=context, config_path=saved_config)
+    saved_output = capsys.readouterr().out
 
     assert result == str(destination)
-    output = capsys.readouterr().out
-    assert "After Doctor passes, start monitoring:\n    python3 github_monitor.py --env-file '/opt/private settings.env'" in output
-    assert "GITHUB_USERNAME" not in output
-    update.assert_called_once_with(destination, "GITHUB_TOKEN", "private-value")
+    # Nothing supplies a target in the first run, so only the monitoring command carries the placeholder
+    assert f"After Doctor passes, start monitoring:\n    python3 github_monitor.py <github_target> --config-file {empty_config} --env-file '/opt/private settings.env'" in unsaved_output
+    assert "<github_target>" not in unsaved_output.split("After Doctor passes, start monitoring:", 1)[0]
+    assert "<github_target>" not in saved_output
+    assert "octocat --config-file" not in saved_output
+    assert "GITHUB_USERNAME" not in unsaved_output
 
 
 # Verifies recovery fix commands use the same install-aware renderer
