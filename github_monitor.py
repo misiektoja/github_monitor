@@ -295,7 +295,7 @@ CHECK_INTERNET_URL = GITHUB_API_URL
 # Timeout used when checking initial internet connectivity; in seconds
 CHECK_INTERNET_TIMEOUT = 5
 
-# Whether to verify TLS certificates on every outbound request
+# Whether to verify TLS certificates on every outbound connection, email delivery included
 # Only set this to False on a network that intercepts TLS with its own certificate authority
 # Switching it off removes the protection against an intercepted connection
 VERIFY_SSL = True
@@ -1219,6 +1219,15 @@ def signal_handler(sig, frame):
 def apply_tls_verification_setting():
     if not VERIFY_SSL:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+# Returns the TLS context SMTP uses, unverified while VERIFY_SSL is off so email follows the same switch as every other connection
+def smtp_ssl_context():
+    context = ssl.create_default_context()
+    if not VERIFY_SSL:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 # Checks internet connectivity using the effective runtime URL and timeout
@@ -2606,7 +2615,7 @@ def smtp_connect_and_login(use_ssl, smtp_timeout=15):
     smtp_object = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
     try:
         if use_ssl:
-            smtp_object.starttls(context=ssl.create_default_context())
+            smtp_object.starttls(context=smtp_ssl_context())
         debug_print("SMTP connection established", host=SMTP_HOST, port=SMTP_PORT)
         smtp_object.login(SMTP_USER, SMTP_PASSWORD)
         debug_print("SMTP authentication succeeded", host=SMTP_HOST)

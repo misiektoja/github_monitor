@@ -1,6 +1,7 @@
 """Tests for VERIFY_SSL: which requests honour it, what is reported while it is off and its shipped default."""
 
 import re
+import ssl
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -117,6 +118,22 @@ def test_the_outbound_request_sweep_finds_the_call_sites():
 @pytest.mark.parametrize("call", OUTBOUND_CALLS)
 def test_every_outbound_request_passes_the_setting(call):
     assert "verify=VERIFY_SSL" in call, call
+
+
+@pytest.mark.parametrize("verify", [True, False])
+# Verifies the SMTP handshake follows the setting, so email is not the one channel that keeps checking certificates
+def test_the_smtp_context_honours_the_setting(gm_module, tls_setting, verify):
+    tls_setting.setattr(gm_module, "VERIFY_SSL", verify)
+
+    context = gm_module.smtp_ssl_context()
+
+    assert context.check_hostname is verify
+    assert (context.verify_mode == ssl.CERT_REQUIRED) is verify
+
+
+# Verifies no SMTP call site builds its own context, which would keep that one connection verifying while the setting is off
+def test_only_the_shared_helper_builds_an_smtp_context():
+    assert SOURCE.count("ssl.create_default_context()") == 1
 
 
 @pytest.mark.parametrize("verify, silenced", [(True, False), (False, True)])
