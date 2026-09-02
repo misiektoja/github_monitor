@@ -1261,3 +1261,49 @@ def test_setup_token_outcome_lines_are_indented_under_the_notice(gm_module, requ
 
     assert accepted == "  GitHub token is valid for user: octocat"
     assert refused.startswith("  Token validation failed: "), refused
+
+
+# Verifies the review can move the configuration file, since the summary shows a destination it could not change
+def test_the_destination_section_moves_the_configuration_file(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    moved = Path(directory.name) / "elsewhere"
+    moved.mkdir()
+    state = gm_module.build_wizard_state(Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor")
+
+    gm_module.wizard_collect_file_destinations(state, scripted_reader([str(moved / "monitor.conf"), ""]), stream=io.StringIO())
+
+    assert state.config_path == (moved / "monitor.conf").resolve()
+    assert state.dotenv_path == (Path(directory.name) / ".env-monitor").resolve()
+
+
+# Verifies moving the dotenv re-asks every section holding a secret, since a kept secret was never queued
+def test_moving_the_dotenv_destination_re_asks_the_secret_sections(gm_module, monkeypatch, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    asked = []
+    for name in ("wizard_collect_authentication", "wizard_collect_email", "wizard_collect_webhook"):
+        monkeypatch.setattr(gm_module, name, lambda *args, section=name, **kwargs: asked.append(section))
+    state = gm_module.build_wizard_state(Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor")
+    moved = Path(directory.name) / ".env-moved"
+    transcript = io.StringIO()
+
+    gm_module.wizard_collect_file_destinations(state, scripted_reader(["", str(moved)]), stream=transcript)
+
+    assert state.dotenv_path == moved.resolve()
+    assert state.values["DOTENV_FILE"] == str(moved.resolve())
+    assert asked == ["wizard_collect_authentication", "wizard_collect_email", "wizard_collect_webhook"]
+    assert "The dotenv destination changed" in transcript.getvalue()
+
+
+# Verifies one file cannot hold both, since saving the configuration would overwrite the secrets beside it
+def test_the_dotenv_destination_cannot_be_the_configuration_file(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    state = gm_module.build_wizard_state(Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor")
+    transcript = io.StringIO()
+
+    gm_module.wizard_collect_file_destinations(state, scripted_reader(["", str(Path(directory.name) / "monitor.conf"), ""]), stream=transcript)
+
+    assert state.dotenv_path == (Path(directory.name) / ".env-monitor").resolve()
+    assert "has to be a different file" in transcript.getvalue()

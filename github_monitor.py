@@ -8321,6 +8321,7 @@ WIZARD_SECTION_KEYS = {
     "Email": ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_SSL", "SENDER_EMAIL", "RECEIVER_EMAIL", "PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"),
     "Webhook": ("WEBHOOK_ENABLED", "WEBHOOK_PROVIDER", "WEBHOOK_PROFILE_NOTIFICATION", "WEBHOOK_EVENT_NOTIFICATION", "WEBHOOK_REPO_NOTIFICATION", "WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION", "WEBHOOK_CONTRIB_NOTIFICATION", "WEBHOOK_ERROR_NOTIFICATION"),
     "Destinations": ("CSV_FILE", "DISABLE_LOGGING", "DOTENV_FILE"),
+    "FileDestinations": (),
 }
 WIZARD_SECRET_KEYS = {"Authentication": ("GITHUB_TOKEN",), "Email": ("SMTP_PASSWORD",), "Webhook": ("WEBHOOK_URL", "NTFY_ACCESS_TOKEN")}
 WIZARD_CONFIG_ORDER = tuple(name for names in WIZARD_SECTION_KEYS.values() for name in names)
@@ -9059,6 +9060,49 @@ def wizard_render_summary(state, stream=None):
         destination.write(f"  {(label + ':'):<{width}} {_wizard_summary_value(label, value)}\n")
 
 
+# Returns a validation error when one answered setup destination cannot be written
+def wizard_destination_error(value, label):
+    try:
+        wizard_validate_destination(value, label)
+    except ValueError as exc:
+        return str(exc)
+    return ""
+
+
+# Changes where setup writes, re-asking the sections that hold secrets when the dotenv destination moves
+def wizard_collect_file_destinations(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
+    config_text = wizard_ask_text("Configuration file destination", str(state.config_path), lambda value: wizard_destination_error(value, "Configuration destination"), input_func, destination)
+    selected_config = wizard_validate_destination(config_text, "Configuration destination")
+    if selected_config != state.config_path:
+        chosen_config = wizard_choose_config_destination(selected_config, input_func, destination)
+        # Giving up on every offered path keeps the current destination rather than cancelling the whole setup
+        if chosen_config is not None:
+            state.config_path = chosen_config
+    while True:
+        env_text = wizard_ask_text("Dotenv file destination", str(state.dotenv_path), lambda value: wizard_destination_error(value, "Dotenv destination"), input_func, destination)
+        if env_text.casefold() == "none":
+            destination.write(colorize("warning", "  Setup needs a writable dotenv file and cannot use 'none'.") + "\n")
+            continue
+        selected_env = wizard_validate_destination(env_text, "Dotenv destination")
+        # One file cannot hold both, since saving the configuration would overwrite the secrets beside it
+        if selected_env == state.config_path:
+            destination.write(colorize("warning", "  The dotenv file has to be a different file from the configuration.") + "\n")
+            continue
+        break
+    state.values["DOTENV_FILE"] = str(selected_env)
+    if selected_env == state.dotenv_path:
+        return
+    state.dotenv_path = selected_env
+    # A secret kept rather than retyped was never queued, so it would be missing from a dotenv file that just moved
+    destination.write(colorize("info", "  The dotenv destination changed. Re-enter authentication and notification settings that may contain secrets.") + "\n")
+    wizard_collect_authentication(state, input_func, getpass_func, destination, token_validator)
+    destination.write("\n")
+    wizard_collect_email(state, input_func, getpass_func, destination)
+    destination.write("\n")
+    wizard_collect_webhook(state, input_func, getpass_func, destination)
+
+
 # Recollects one selected section while preserving every other answer
 def wizard_edit_section(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
     destination = sys.stdout if stream is None else stream
@@ -9069,6 +9113,7 @@ def wizard_edit_section(state, input_func=input, getpass_func=None, stream=None,
         ("Email", "Email notifications", "Change email delivery and alert choices."),
         ("Webhook", "Webhook alerts", "Change Discord or ntfy delivery and alert choices."),
         ("Destinations", "Output files", "Change log and CSV output settings."),
+        ("FileDestinations", "File destinations", "Change the configuration or dotenv output path."),
         ("return", "Return to summary", "Keep every current answer and show the summary again."),
     )
     selected = wizard_ask_choice("Which setup section should be changed?", sections, "Target", input_func, destination)
@@ -9082,6 +9127,7 @@ def wizard_edit_section(state, input_func=input, getpass_func=None, stream=None,
         "Email": lambda: wizard_collect_email(state, input_func, getpass_func, destination),
         "Webhook": lambda: wizard_collect_webhook(state, input_func, getpass_func, destination),
         "Destinations": lambda: wizard_collect_destinations(state, input_func, destination),
+        "FileDestinations": lambda: wizard_collect_file_destinations(state, input_func, getpass_func, destination, token_validator),
     }
     collectors[selected]()
 
