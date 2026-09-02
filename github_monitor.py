@@ -8119,17 +8119,17 @@ def doctor_check_notifications(report):
         report.add("Notifications", "WARN", "Webhook alerts have no usable alert choices", "The channel is enabled but no selected alert can fire", "Enable at least one webhook alert type or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL)
         return
     if not validate_webhook_url(WEBHOOK_URL):
-        report.add("Notifications", "WARN", "Webhook alerts have no valid destination", "WEBHOOK_URL must be a complete supported HTTPS destination", "Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL)
+        report.add("Notifications", "FAIL", "Webhook alerts have no valid destination", "WEBHOOK_URL must be a complete supported HTTPS destination", "Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL)
         return
     provider = normalized_webhook_provider()
     customization_error = validate_webhook_customization(provider)
     header_error = validate_webhook_headers(provider)
     if not provider:
-        report.add("Notifications", "WARN", "Webhook provider is invalid", sanitize_error_text(WEBHOOK_PROVIDER), "Set WEBHOOK_PROVIDER to discord or ntfy", WEBHOOK_GUIDE_URL)
+        report.add("Notifications", "FAIL", "Webhook provider is invalid", sanitize_error_text(WEBHOOK_PROVIDER), "Set WEBHOOK_PROVIDER to discord or ntfy", WEBHOOK_GUIDE_URL)
     elif customization_error is not None:
-        report.add("Notifications", "WARN", "Webhook customization is invalid", customization_error, "Correct WEBHOOK_TEMPLATE, WEBHOOK_USERNAME, WEBHOOK_AVATAR_URL or WEBHOOK_TRANSFORMS", WEBHOOK_GUIDE_URL)
+        report.add("Notifications", "FAIL", "Webhook customization is invalid", customization_error, "Correct WEBHOOK_TEMPLATE, WEBHOOK_USERNAME, WEBHOOK_AVATAR_URL or WEBHOOK_TRANSFORMS", WEBHOOK_GUIDE_URL)
     elif header_error is not None:
-        report.add("Notifications", "WARN", "Webhook headers are invalid", header_error, "Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", WEBHOOK_GUIDE_URL)
+        report.add("Notifications", "FAIL", "Webhook headers are invalid", header_error, "Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", WEBHOOK_GUIDE_URL)
     else:
         report.webhook_ready = True
         report.add("Notifications", "PASS", f"{WEBHOOK_READY_CHECK_LABEL} for {webhook_provider_display_name()}", f"Alerts: {', '.join(_startup_webhook_notification_categories())}. The private link was not displayed. No webhook was sent during this passive check")

@@ -465,7 +465,7 @@ def test_doctor_notification_checks_gate_disabled_and_invalid_channels(gm_module
 
     gm_module.doctor_check_notifications(invalid)
 
-    assert [check.status for check in invalid.checks] == ["WARN", "WARN"]
+    assert [check.status for check in invalid.checks] == ["WARN", "FAIL"]
     assert invalid.email_ready is False
     assert invalid.webhook_ready is False
 
