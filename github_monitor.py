@@ -1290,7 +1290,7 @@ def check_internet(url=None, timeout=None):
         return True
     except req.RequestException as e:
         debug_swallowed_exception("Startup connectivity request", e)
-        print_recovery_advice(classify_recovery_error(e, "network"))
+        print_recovery_advice(classify_recovery_error(e, "connectivity"))
         return False
 
 
@@ -2976,6 +2976,10 @@ def render_install_command(arguments, install_context=None, exact=False, include
     return shlex.join(parts)
 
 
+# One sentence for every surface that reports the startup connectivity check
+CONNECTIVITY_ENDPOINT_FIX = "Check network, DNS, proxy and CHECK_INTERNET_URL settings"
+
+
 RECOVERY_CODES = frozenset({
     "auth.github_token_invalid",
     "auth.github_token_missing",
@@ -3074,6 +3078,11 @@ def classify_recovery_error(error, context="unknown", install_context=None):
     webhook_command = render_install_command(["--set-webhook-url"], install_context)
     config_command = render_install_command(["--generate-config", "github_monitor.conf"], install_context, include_paths=False)
     debug_command = render_install_command(["--debug"], install_context)
+    if selected_context == "connectivity":
+        # Classified from the error, because a failed endpoint check has one answer whatever the exception was
+        timed_out = isinstance(error, (req.Timeout, TimeoutError, socket.timeout))
+        summary = "The connectivity endpoint did not answer in time" if timed_out else "The connectivity endpoint could not be reached"
+        return make_recovery_advice("network.timeout" if timed_out else "network.connection", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail, DEBUG_GUIDE_URL)
     if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
         return make_recovery_advice("network.timeout", "The network request timed out", "Check connectivity and increase the configured timeout before trying again", True, detail, DEBUG_GUIDE_URL)
     if isinstance(error, (req.ConnectionError, socket.gaierror)):
@@ -7781,7 +7790,7 @@ def doctor_check_connectivity(report, request_get=None):
     except Exception as exc:
         # The row names the endpoint, so the technical cause goes where the other tools put it
         debug_print("Doctor connectivity check", url=diagnostic_endpoint(CHECK_INTERNET_URL), outcome="failed", error=f"{type(exc).__name__}: {sanitize_error_text(exc)}")
-        report.add("Connectivity", "FAIL", "The connectivity endpoint could not be reached", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}", "Check network, DNS, proxy and CHECK_INTERNET_URL settings")
+        report.add("Connectivity", "FAIL", "The connectivity endpoint could not be reached", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}", CONNECTIVITY_ENDPOINT_FIX)
         return
     if isinstance(status, int) and status < 500:
         report.add("Connectivity", "PASS", "The connectivity endpoint is reachable", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}")
