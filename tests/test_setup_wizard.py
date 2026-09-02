@@ -1171,3 +1171,13 @@ def test_every_setup_block_heading_is_followed_by_one_blank_line(gm_module, requ
     for heading in ("Setup summary", "Saved files", "Next steps"):
         assert f"\n{heading}\n\n" in transcript
     assert "\n\n\n" not in transcript
+
+
+# Verifies the screen closes with the same blank line with or without a terminal to answer the offer
+def test_zero_argument_welcome_closes_with_a_blank_line(gm_module):
+    output = io.StringIO()
+
+    exit_code = gm_module.run_zero_argument_welcome(wizard_parser(), stream=output, input_stream=io.StringIO())
+
+    assert exit_code == 1
+    assert output.getvalue().endswith(f"{gm_module.QUICK_START_GUIDE_URL}\n\n")

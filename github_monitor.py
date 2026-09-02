@@ -9154,10 +9154,9 @@ def run_zero_argument_welcome(parser, input_func=input, input_stream=None, strea
     _wizard_print_command(destination, "Easiest start (guided setup wizard):", f"{prefix} --setup", setup_suffix)
     _wizard_print_command(destination, "Check setup before monitoring:", f"{prefix} --doctor <github_target>")
     destination.write(f"Full options: {colorize('section', prefix + ' --help')}\n")
-    destination.write(f"\nGuide:        {colorize('link', QUICK_START_GUIDE_URL)}\n")
+    destination.write(f"\nGuide:        {colorize('link', QUICK_START_GUIDE_URL)}\n\n")
     if not interactive:
         return 1
-    destination.write("\n")
     try:
         start_setup = wizard_ask_yes_no("Run the guided setup wizard now?", True, input_func, destination)
     except WizardCancelled:
