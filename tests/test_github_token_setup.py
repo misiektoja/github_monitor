@@ -115,3 +115,15 @@ def test_private_token_setup_rejects_runtime_token_argument():
     result = subprocess.run([sys.executable, str(PROJECT_ROOT / "github_monitor.py"), "--set-github-token", "--github-token", "github_pat_private"], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
     assert result.returncode == 2
     assert "--set-github-token cannot be combined with -t/--github-token" in result.stderr
+
+
+PROGRESS_LINES = (
+    "* Checking the entered GitHub token before changing the dotenv file ...",
+    "  Checking the token with GitHub ...",
+)
+
+
+# Verifies each wait on a remote service is announced with the wording every sibling monitor uses
+@pytest.mark.parametrize("line", PROGRESS_LINES)
+def test_the_progress_lines_use_the_shared_checking_wording(line):
+    assert line in (PROJECT_ROOT / "github_monitor.py").read_text(encoding="utf-8"), line

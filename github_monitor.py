@@ -6104,7 +6104,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
         raise RecoveryError(secret_entry_cancelled_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL)) from None
     finally:
         DEBUG_MODE = previous_debug_mode
-    print("* Validating the entered GitHub token before changing the dotenv file ...")
+    print("* Checking the entered GitHub token before changing the dotenv file ...")
     login = validate_github_token(token, api_url=api_url)
     try:
         update_dotenv_value(destination, "GITHUB_TOKEN", token)
