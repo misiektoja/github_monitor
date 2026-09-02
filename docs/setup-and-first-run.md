@@ -53,7 +53,7 @@ Or if you installed [manually](installation.md#manual-installation):
 
 ```sh
 python3 github_monitor.py --setup
-python3 github_monitor.py <github_username>
+python3 github_monitor.py <github_target>
 ```
 
 To get the list of all supported command-line arguments / flags:

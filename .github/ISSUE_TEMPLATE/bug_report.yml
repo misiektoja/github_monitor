@@ -30,7 +30,7 @@ body:
     id: doctor-output
     attributes:
       label: Doctor preflight output
-      description: Run `github_monitor --doctor <github_username>` and paste its complete sanitized output. Review target names, paths and recipient addresses before posting.
+      description: Run `github_monitor --doctor <github_target>` and paste its complete sanitized output. Review target names, paths and recipient addresses before posting.
       render: shell
     validations:
       required: false

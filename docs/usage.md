@@ -19,7 +19,7 @@ github_monitor github_username -t "your_github_classic_personal_access_token"
 If you generated a configuration file as described in [Configuration File](configuration.md#configuration-file), but saved it under a different name or in a different directory, you can specify its location using the `--config-file` flag:
 
 ```sh
-github_monitor <github_username> --config-file /path/github_monitor_new.conf
+github_monitor <github_target> --config-file /path/github_monitor_new.conf
 ```
 
 If you want to monitor changes to a user's public repositories (e.g. new stargazers, watchers, forks, issues, PRs, discussions, changed descriptions etc.) then use the `-j` flag:
@@ -214,7 +214,7 @@ See [Webhook Settings](configuration.md#webhook-settings) for private URL setup,
 If you want to save all GitHub user events, profile changes and repository updates to a CSV file, set `CSV_FILE` or use the `-b` flag:
 
 ```sh
-github_monitor <github_username> -b github_username.csv
+github_monitor <github_target> -b github_username.csv
 ```
 
 The file will be automatically created if it does not exist.
@@ -239,7 +239,7 @@ List of supported signals:
 Send signals with `kill` or `pkill`, e.g.:
 
 ```sh
-pkill -USR1 -f "github_monitor <github_username>"
+pkill -USR1 -f "github_monitor <github_target>"
 ```
 
 As Windows supports a limited number of signals, this functionality is available only on Linux/Unix/macOS.

@@ -225,13 +225,13 @@ By default the tool will auto-search for a dotenv file named `.env` in the curre
 You can specify a custom file with `DOTENV_FILE` or the `--env-file` flag:
 
 ```sh
-github_monitor <github_username> --env-file /path/.env-github_monitor
+github_monitor <github_target> --env-file /path/.env-github_monitor
 ```
 
 You can also disable `.env` auto-search with `DOTENV_FILE = "none"` or `--env-file none`:
 
 ```sh
-github_monitor <github_username> --env-file none
+github_monitor <github_target> --env-file none
 ```
 
 Exported secret environment variables continue to work when dotenv auto-search is disabled or no dotenv file exists.
@@ -253,7 +253,7 @@ The startup summary shows `TLS verification` and [`--doctor`](troubleshooting.md
 If you want to customize the polling interval, use the `-c` flag (or the `GITHUB_CHECK_INTERVAL` configuration option):
 
 ```sh
-github_monitor <github_username> -c 900
+github_monitor <github_target> -c 900
 ```
 
 It is generally not recommended to use values lower than 10 minutes as new events are very often delayed by the GitHub API.

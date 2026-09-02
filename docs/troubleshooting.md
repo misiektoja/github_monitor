@@ -5,7 +5,7 @@
 Run the comprehensive preflight before monitoring a new target or when a working setup starts failing:
 
 ```sh
-github_monitor --doctor <github_username>
+github_monitor --doctor <github_target>
 ```
 
 Doctor is read-only by default. It checks the effective configuration after config, dotenv, environment and command-line precedence without creating logs, CSV files or directories. It opens with the detected install method, then reports these fixed sections:
@@ -41,7 +41,7 @@ A run that has neither a username nor a token reports the missing username first
 Verbose mode answers "what did the tool decide?" It expands the startup summary, includes stable recovery codes and states when missing data prevents a specific alert from firing during the current check:
 
 ```sh
-github_monitor <github_username> --verbose
+github_monitor <github_target> --verbose
 ```
 
 Debug mode answers "what did the tool do?" Every line is timestamped, names the operation, then lists its details as comma-separated `key=value` fields:
@@ -56,7 +56,7 @@ A `--debug` run leaves the terminal as it was instead of clearing it, so the out
 The fields carry the endpoint, timeout, masked credential, response status, retry decision, file path and monitoring timing used by the relevant operation:
 
 ```sh
-github_monitor <github_username> --debug
+github_monitor <github_target> --debug
 ```
 
 The modes cover the full runtime path:

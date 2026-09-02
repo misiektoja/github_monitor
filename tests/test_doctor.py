@@ -580,7 +580,7 @@ def test_bug_report_collects_doctor_output():
     issue_template = (PROJECT_ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml").read_text(encoding="utf-8")
     support = (PROJECT_ROOT / "SUPPORT.md").read_text(encoding="utf-8")
     assert "id: doctor-output" in issue_template
-    assert "github_monitor --doctor <github_username>" in issue_template
+    assert "github_monitor --doctor <github_target>" in issue_template
     assert "complete sanitized output" in issue_template
     assert "## Doctor preflight" in support
 
