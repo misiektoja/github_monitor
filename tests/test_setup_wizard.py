@@ -737,7 +737,8 @@ def test_setup_cli_pseudo_terminal_transcript_has_stable_order_and_spacing(gm_mo
     assert transcript.index("Setup Wizard") < transcript.index("GitHub username or profile URL") < transcript.index("Setup summary\n") < transcript.index("Saved files\n") < transcript.index("Next steps\n")
     assert "\n\n\n" not in transcript
     assert config_path.exists()
-    assert dotenv_path.exists()
+    # No token was entered, so the run leaves no empty dotenv beside the config
+    assert not dotenv_path.exists()
 
 
 # A dotenv sourced by a shell uses export, and appending beside that line would leave the old secret on disk
@@ -763,6 +764,7 @@ def test_setup_save_failure_leaves_no_temporary_files(gm_module, monkeypatch, re
     request.addfinalizer(directory.cleanup)
     state = gm_module.build_wizard_state(Path(directory.name) / "w.conf", Path(directory.name) / "w.env")
     state.target = "octocat"
+    state.secrets["GITHUB_TOKEN"] = "github_pat_test_value"
     real_prepare = gm_module.prepare_wizard_atomic_file
     monkeypatch.setattr(gm_module, "prepare_wizard_atomic_file", lambda path, content: (_ for _ in ()).throw(OSError(28, "No space left on device")) if path == state.dotenv_path else real_prepare(path, content))
 
@@ -1134,3 +1136,37 @@ def test_a_declined_secret_replacement_reports_the_kept_value(gm_module, tmp_pat
     assert raised.value.advice.summary == "The saved SMTP password was left as it is and the dotenv file was not changed"
     assert "answer y to replace the saved value" in raised.value.advice.fix
     assert destination.read_text(encoding="utf-8") == 'SMTP_PASSWORD="original"\n'
+
+
+# Verifies a run that stores no secret writes no dotenv, names none in its commands and still offers the doctor
+def test_a_run_without_a_token_writes_no_dotenv_and_still_offers_doctor(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config_path = Path(directory.name) / "monitor.conf"
+    dotenv_path = Path(directory.name) / ".env-monitor"
+    output = io.StringIO()
+    answers = ["https://github.com/octocat/", "", "", "", "", "", "", "", "y", "", "", "", "", "", "n"]
+
+    exit_code = gm_module.run_setup_wizard(wizard_parser(), config_path, dotenv_path, input_func=scripted_reader(answers), getpass_func=scripted_secret_reader([""]), stream=output, interactive=True)
+
+    transcript = output.getvalue()
+    assert exit_code == 0
+    assert config_path.exists()
+    assert not dotenv_path.exists()
+    assert "Dotenv:" not in transcript.split("Saved files")[1]
+    assert "--env-file" not in transcript
+    assert "Run doctor now? It writes no files and offers real delivery tests only with separate approval." in transcript
+
+
+# Verifies every setup block heading is followed by one blank line, the way the sibling wizards print them
+def test_every_setup_block_heading_is_followed_by_one_blank_line(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    output = io.StringIO()
+
+    gm_module.run_setup_wizard(wizard_parser(), Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor", input_func=scripted_reader(minimal_setup_answers()), getpass_func=scripted_secret_reader(["private-token"]), stream=output, interactive=True, token_validator=lambda _token, _url: "octocat")
+
+    transcript = output.getvalue()
+    for heading in ("Setup summary", "Saved files", "Next steps"):
+        assert f"\n{heading}\n\n" in transcript
+    assert "\n\n\n" not in transcript

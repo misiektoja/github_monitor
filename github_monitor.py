@@ -8123,7 +8123,7 @@ WIZARD_WEBHOOK_NOTIFICATION_KEYS = ("WEBHOOK_PROFILE_NOTIFICATION", "WEBHOOK_EVE
 
 # Writes one coloured wizard heading at the requested level
 def _wizard_heading(destination, text, part="section"):
-    destination.write("\n" + colorize(part, text) + "\n")
+    destination.write("\n" + colorize(part, text) + "\n\n")
 
 
 # Writes one labelled command with sibling-style indentation and spacing
@@ -8994,27 +8994,32 @@ def save_wizard_files(state):
     dotenv_content = render_wizard_dotenv(state)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     backups = (backup_wizard_file(state.config_path, timestamp), backup_wizard_file(state.dotenv_path, timestamp))
+    # A dotenv with nothing in it is noise beside the config, so an empty one is never created
+    destinations = [(state.config_path, config_content)]
+    if dotenv_content.strip() or state.dotenv_path.exists():
+        destinations.append((state.dotenv_path, dotenv_content))
     prepared = []
     try:
         # Appended one at a time so a failure on the second file still exposes the first for cleanup
-        for path, content in ((state.config_path, config_content), (state.dotenv_path, dotenv_content)):
+        for path, content in destinations:
             prepared.append(prepare_wizard_atomic_file(path, content))
-        os.replace(prepared[0], state.config_path)
-        os.replace(prepared[1], state.dotenv_path)
-        os.chmod(state.config_path, 0o600)
-        os.chmod(state.dotenv_path, 0o600)
+        for (path, _), temporary_path in zip(destinations, prepared):
+            os.replace(temporary_path, path)
+            os.chmod(path, 0o600)
     finally:
         for temporary_path in prepared:
             temporary_path.unlink(missing_ok=True)
-    debug_print("Setup configuration write succeeded", path=state.config_path)
-    debug_print("Setup dotenv write succeeded", path=state.dotenv_path)
+    for path, _ in destinations:
+        debug_print("Setup file write succeeded", path=path)
     return backups
 
 
 # Builds the exact install-aware argument list used after setup
 def wizard_monitor_arguments(state):
     arguments = [] if state.persist_target else [state.target]
-    return [*arguments, "--config-file", str(state.config_path), "--env-file", str(state.dotenv_path)]
+    # A dotenv nothing was written to does not exist, so naming it would point the command at a missing file
+    dotenv_arguments = ["--env-file", str(state.dotenv_path)] if state.dotenv_path.exists() else []
+    return [*arguments, "--config-file", str(state.config_path), *dotenv_arguments]
 
 
 # Runs the complete buffered setup interaction and optional doctor handoff
@@ -9078,7 +9083,8 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     saved_rows = [("Configuration:", state.config_path)]
     if config_backup is not None:
         saved_rows.append(("Backup:", config_backup))
-    saved_rows.append(("Secrets:" if state.secrets else "Dotenv:", state.dotenv_path))
+    if state.dotenv_path.exists():
+        saved_rows.append(("Secrets:" if state.secrets else "Dotenv:", state.dotenv_path))
     if dotenv_backup is not None:
         saved_rows.append(("Dotenv backup:", dotenv_backup))
     saved_width = max(len(label) for label, _ in saved_rows) + 1
@@ -9089,7 +9095,8 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     doctor_arguments = ["--doctor", *monitor_arguments]
     doctor_exit = None
     try:
-        if state.authentication_complete:
+        # The doctor's FAIL row is the most useful thing a user with a missing credential can see
+        if state.target:
             destination.write("\n")
             if wizard_ask_yes_no("Run doctor now? It writes no files and offers real delivery tests only with separate approval.", True, input_func, destination):
                 destination.write("\n")
