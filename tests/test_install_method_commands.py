@@ -72,6 +72,17 @@ def test_recovery_fix_uses_install_aware_command(gm_module):
     assert advice.fix == "Check the HTTPS destination then run: python3 github_monitor.py --set-webhook-url"
 
 
+# Verifies the disabled dotenv search reaches the commands that accept it and stays out of the ones that refuse it
+def test_a_disabled_dotenv_search_is_carried_only_where_it_is_accepted(gm_module, monkeypatch):
+    context = gm_module.InstallContext("pip", "Linux", ("github_monitor",))
+    monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", None)
+    monkeypatch.setattr(gm_module, "DOTENV_FILE", "none")
+
+    assert gm_module.render_install_command(["--doctor"], context) == "github_monitor --doctor --env-file none"
+    assert gm_module.render_install_command(["--set-github-token"], context) == "github_monitor --set-github-token"
+    assert gm_module.render_install_command(["--setup"], context) == "github_monitor --setup"
+
+
 # Verifies a printed command carries the files this run was given, so the retest reads the settings that failed
 def test_printed_commands_carry_the_files_this_run_was_given(gm_module, monkeypatch):
     context = gm_module.InstallContext("manual", "Linux", ("/usr/bin/python3", "/opt/GitHub Monitor/github_monitor.py"))

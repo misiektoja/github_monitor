@@ -2949,13 +2949,20 @@ def install_method_display_name(method=None):
     return {"pip": "PyPI install", "manual": "downloaded script"}.get(selected, selected)
 
 
+# True when a command writes the dotenv file itself, so it refuses an --env-file that switches dotenv loading off
+def command_writes_dotenv(arguments=()):
+    return any(str(argument) == "--setup" or str(argument).startswith("--set-") for argument in arguments)
+
+
 # Returns the --config-file and --env-file arguments this run was given, skipping any the caller already passed
 def active_path_arguments(arguments=()):
     given = {str(argument) for argument in arguments}
     paths = []
     if CLI_CONFIG_PATH and "--config-file" not in given:
         paths.extend(("--config-file", str(CLI_CONFIG_PATH)))
-    if DOTENV_FILE and str(DOTENV_FILE).casefold() != "none" and "--env-file" not in given:
+    # The "none" sentinel is carried so the printed command checks the setup this run checked, except into a
+    # command that writes the dotenv file, since those refuse the sentinel at their own argument gate
+    if DOTENV_FILE and "--env-file" not in given and not (str(DOTENV_FILE).casefold() == "none" and command_writes_dotenv(arguments)):
         paths.extend(("--env-file", str(DOTENV_FILE)))
     return paths
 
