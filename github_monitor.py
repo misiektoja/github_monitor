@@ -539,6 +539,7 @@ STARTUP_BANNER = r"""
 import sys
 import importlib.util
 import shlex
+import platform
 
 
 # Writes the uncoloured startup banner for bootstrap failures
@@ -575,6 +576,9 @@ def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
     finder = importlib.util.find_spec if module_finder is None else module_finder
     required = (("requests", "requests"), ("urllib3", "urllib3"), ("python-dateutil", "dateutil"), ("pytz", "pytz"), ("PyGithub", "github"))
     optional = (("python-dotenv", "dotenv", "dotenv discovery and loading"), ("tzlocal", "tzlocal", "automatic timezone detection"))
+    # The classic Command Prompt is the only place this library changes anything, so a machine it cannot affect is not warned about a package it does not need
+    if platform.system() == "Windows":
+        optional += (("colorama", "colorama", "coloured output in the classic Windows Command Prompt"),)
     availability = {}
     for package_name, module_name in required:
         try:
@@ -609,7 +613,7 @@ def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
         else:
             warnings += 1
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
-            destination.write(f"[WARN] Optional dependency {package_name} is not installed\n  {feature.capitalize()} will not work while other features remain available\nTo fix: Install it with: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
+            destination.write(f"[WARN] Optional dependency {package_name} is not installed\n  {feature[:1].upper() + feature[1:]} will not work while other features remain available\nTo fix: Install it with: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
     destination.write(f"\nSummary\n  {failures} check(s) failed, {warnings} warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
     destination.flush()
     return 1
@@ -648,7 +652,6 @@ try:
     from tzlocal import get_localzone
 except ImportError:
     get_localzone = None
-import platform
 import re
 try:
     from colorama import init as colorama_init
@@ -7562,12 +7565,15 @@ def doctor_check_environment(report, module_finder=None):
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
             report.add("Environment", "FAIL", f"Required dependency {package_name} is missing", "The monitor cannot run its required path without this package", f"Install it with: {install_command}")
     optional = (("python-dotenv", "dotenv", "dotenv discovery and loading"), ("tzlocal", "tzlocal", "automatic timezone detection"))
+    # The classic Command Prompt is the only place this library changes anything, so a machine it cannot affect is not warned about a package it does not need
+    if platform.system() == "Windows":
+        optional += (("colorama", "colorama", "coloured output in the classic Windows Command Prompt"),)
     for package_name, module_name, feature in optional:
         if doctor_dependency_available(module_name, module_finder):
             report.add("Environment", "PASS", f"Optional dependency {package_name} is installed", f"Used only for {feature}")
         else:
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
-            report.add("Environment", "WARN", f"Optional dependency {package_name} is not installed", f"{feature.capitalize()} will not work while other features remain available", f"Install it with: {install_command}")
+            report.add("Environment", "WARN", f"Optional dependency {package_name} is not installed", f"{feature[:1].upper() + feature[1:]} will not work while other features remain available", f"Install it with: {install_command}")
 
 
 # Returns whether a URL is a complete credential-free HTTPS endpoint

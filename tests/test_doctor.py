@@ -260,6 +260,7 @@ def test_doctor_offline_transcript_names_failed_paths(gm_module, monkeypatch):
 # Verifies required and optional dependency failures use different health states
 def test_doctor_environment_distinguishes_required_and_optional_dependencies(gm_module, monkeypatch):
     configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module.platform, "system", lambda: "Linux")
     report = gm_module.DoctorReport()
 
     gm_module.doctor_check_environment(report, lambda name: None if name in {"github", "tzlocal"} else object())
@@ -272,8 +273,46 @@ def test_doctor_environment_distinguishes_required_and_optional_dependencies(gm_
     assert report.warning_count == 1
 
 
+# Verifies a warning about a library that cannot affect this machine is not shown at all
+@pytest.mark.parametrize("system, reported", [("Windows", True), ("Linux", False), ("Darwin", False)])
+def test_a_platform_specific_dependency_is_only_reported_where_it_applies(gm_module, monkeypatch, system, reported):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module.platform, "system", lambda: system)
+    report = gm_module.DoctorReport()
+
+    gm_module.doctor_check_environment(report, lambda name: None)
+
+    assert any("colorama" in check.label for check in report.checks) is reported
+
+
+# Verifies the Windows colour library is reported there, so broken colours on that platform have a diagnostic
+def test_missing_colorama_is_reported_on_windows(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module.platform, "system", lambda: "Windows")
+    report = gm_module.DoctorReport()
+
+    gm_module.doctor_check_environment(report, lambda name: None if name == "colorama" else object())
+
+    missing = next(check for check in report.checks if "colorama" in check.label)
+    assert missing.status == "WARN"
+    assert missing.detail == "Coloured output in the classic Windows Command Prompt will not work while other features remain available"
+    assert "-m pip install colorama" in missing.fix
+
+
+# Verifies the bootstrap report scopes the same library to the platform it applies to
+@pytest.mark.parametrize("system, reported", [("Windows", True), ("Linux", False)])
+def test_bootstrap_scopes_the_platform_specific_dependency(gm_module, monkeypatch, system, reported):
+    monkeypatch.setattr(gm_module.platform, "system", lambda: system)
+    output = io.StringIO()
+
+    gm_module.bootstrap_doctor_dependency_report(lambda name: None if name in {"requests", "colorama"} else object(), output)
+
+    assert ("Optional dependency colorama is not installed" in output.getvalue()) is reported
+
+
 # Verifies doctor still reports a missing required import before full module startup
-def test_doctor_bootstrap_reports_missing_required_dependency(gm_module):
+def test_doctor_bootstrap_reports_missing_required_dependency(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module.platform, "system", lambda: "Linux")
     output = io.StringIO()
 
     result = gm_module.bootstrap_doctor_dependency_report(lambda name: None if name in {"requests", "tzlocal"} else object(), output)

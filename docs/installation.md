@@ -4,7 +4,7 @@
 
 * Python 3.10 or higher
 * Libraries: [PyGithub](https://github.com/PyGithub/PyGithub) (2.8 or newer), `requests`, `urllib3`, `python-dateutil`, `pytz`, `tzlocal`, `python-dotenv`
-* Optional terminal libraries: `colorama` for classic Windows Command Prompt colours and `wcwidth` for display-width-aware `TRUNCATE_CHARS`
+* Optional terminal libraries: `colorama` for classic Windows Command Prompt colours and `wcwidth` for display-width-aware `TRUNCATE_CHARS`. `--doctor` reports `colorama` as missing only on Windows, where it makes a difference
 
 Tested on:
 
