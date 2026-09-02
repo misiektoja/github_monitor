@@ -8209,7 +8209,7 @@ def ask_doctor_approval(prompt, input_func=input, stream=None):
         try:
             answer = str(read_interactively(input_func)).strip().casefold()
         except EOFError:
-            destination.write("\n")
+            destination.write("\nDelivery test skipped.\n")
             return False
         except KeyboardInterrupt:
             # Ctrl+C ends the run here the way it does anywhere else, rather than only declining this one test
@@ -8705,6 +8705,9 @@ def wizard_collect_target(state, input_func=input, stream=None):
                 destination.write(f"Using normalized GitHub username: {normalized}\n")
             break
         destination.write(colorize("warning", "That target is not valid. Enter a GitHub username or full profile URL.") + "\n")
+        # Leaving the target unset has to be a decision rather than a loop the user can only leave with Ctrl+C
+        if not wizard_offer_retry("GitHub username", "Nothing can be monitored until one is set", input_func, destination):
+            break
     state.persist_target = wizard_ask_yes_no("Persist this target in the generated config?", state.persist_target, input_func, destination)
     state.values["TARGET_GITHUB_USERNAME"] = state.target if state.persist_target else ""
     state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] = not wizard_ask_yes_no("Monitor public GitHub events?", not bool(state.values["DO_NOT_MONITOR_GITHUB_EVENTS"]), input_func, destination)

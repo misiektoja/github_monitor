@@ -952,3 +952,14 @@ def test_a_blank_delivery_answer_still_declines(gm_module):
 
     assert gm_module.ask_doctor_approval("Send one test", lambda: "", stream) is False
     assert stream.getvalue().count("Send one test [y/N]: ") == 1
+
+
+# Verifies a closed input at a delivery prompt says the test was skipped rather than ending on a bare newline
+def test_a_closed_delivery_prompt_says_the_test_was_skipped(gm_module):
+    def closed():
+        raise EOFError
+
+    stream = io.StringIO()
+
+    assert gm_module.ask_doctor_approval("Send one test", closed, stream) is False
+    assert "Delivery test skipped." in stream.getvalue()

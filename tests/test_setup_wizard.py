@@ -1307,3 +1307,32 @@ def test_the_dotenv_destination_cannot_be_the_configuration_file(gm_module, requ
 
     assert state.dotenv_path == (Path(directory.name) / ".env-monitor").resolve()
     assert "has to be a different file" in transcript.getvalue()
+
+
+# Verifies an unusable target can be abandoned, so the question is not a loop the user can only leave with Ctrl+C
+def test_an_unusable_target_can_be_abandoned(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    state = gm_module.build_wizard_state(Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor")
+    stream = io.StringIO()
+
+    # A rejected target, then continue without one, then the three questions that follow the target
+    gm_module.wizard_collect_target(state, scripted_reader(["https://github.com/one/two", "y", "n", "n", "n", "n"]), stream)
+
+    written = stream.getvalue()
+    assert "That target is not valid" in written
+    assert "Continue without the GitHub username?" in written
+    assert state.values["TARGET_GITHUB_USERNAME"] == ""
+
+
+# Verifies asking for the target again after a rejected answer keeps the question open
+def test_a_rejected_target_can_be_entered_again(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    state = gm_module.build_wizard_state(Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor")
+    stream = io.StringIO()
+
+    gm_module.wizard_collect_target(state, scripted_reader(["https://github.com/one/two", "n", "misiektoja", "y", "n", "n", "n"]), stream)
+
+    assert state.target == "misiektoja"
+    assert state.values["TARGET_GITHUB_USERNAME"] == "misiektoja"
