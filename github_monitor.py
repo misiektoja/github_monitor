@@ -9935,9 +9935,11 @@ def main():
         if incompatible:
             parser.error("--setup can only be combined with --config-file, --env-file, --verbose or --debug")
         if isinstance(args.config_file, str) and args.config_file.casefold() == "none":
-            parser.error("--setup requires a config destination and cannot use --config-file none")
+            print("Setup cannot start: --setup requires a config destination. Replace '--config-file none' with a writable path.")
+            sys.exit(1)
         if isinstance(args.env_file, str) and args.env_file.casefold() == "none":
-            parser.error("--setup requires a dotenv destination and cannot use --env-file none")
+            print("Setup cannot start: --setup requires a dotenv destination. Replace '--env-file none' with a writable path.")
+            sys.exit(1)
         sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, show_banner=False))
 
     if args.set_github_token and args.github_token:

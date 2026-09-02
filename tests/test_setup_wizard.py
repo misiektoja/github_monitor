@@ -1236,8 +1236,9 @@ def test_the_welcome_guide_link_opens_the_shared_setup_page(gm_module):
 def test_setup_refuses_a_config_destination_switched_off(tmp_path):
     result = subprocess.run([sys.executable, str(PROJECT_ROOT / "github_monitor.py"), "--setup", "--config-file", "none"], cwd=tmp_path, capture_output=True, text=True, check=False)
 
-    assert result.returncode == 2
-    assert "--setup requires a config destination and cannot use --config-file none" in result.stderr
+    assert result.returncode == 1
+    assert "Setup cannot start: --setup requires a config destination. Replace '--config-file none' with a writable path." in result.stdout
+    assert "usage:" not in result.stderr
     assert not (tmp_path / "none").exists()
 
 
