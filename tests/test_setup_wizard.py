@@ -183,6 +183,74 @@ def test_setup_wizard_cancellation_writes_nothing(gm_module, request):
     assert not dotenv_path.exists()
 
 
+# Returns a reader that answers the script and then interrupts the next prompt, as Ctrl+C does
+def answers_then_interrupt(answers):
+    remaining = list(answers)
+
+    def read():
+        if not remaining:
+            raise KeyboardInterrupt
+        return remaining.pop(0)
+
+    return read
+
+
+# Verifies an interrupt at the doctor offer reports the saved setup instead of a cancellation
+def test_interrupting_the_doctor_offer_keeps_the_saved_setup(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config_path = Path(directory.name) / "monitor.conf"
+    dotenv_path = Path(directory.name) / ".env-monitor"
+    output = io.StringIO()
+    token = "github_pat_private_wizard_value"
+
+    exit_code = gm_module.run_setup_wizard(
+        wizard_parser(),
+        config_path,
+        dotenv_path,
+        input_func=answers_then_interrupt(minimal_setup_answers()[:-1]),
+        getpass_func=scripted_secret_reader([token]),
+        stream=output,
+        interactive=True,
+        token_validator=lambda entered, _url: "octocat" if entered == token else "",
+    )
+
+    transcript = output.getvalue()
+    assert exit_code == 0
+    assert "Setup is saved. Use the commands below when ready." in transcript
+    assert "Setup cancelled" not in transcript
+    assert "Next steps\n" in transcript
+    assert config_path.is_file()
+
+
+# Verifies an interrupt at the launch offer reports the saved setup and points at the printed command
+def test_interrupting_the_launch_offer_keeps_the_saved_setup(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config_path = Path(directory.name) / "monitor.conf"
+    dotenv_path = Path(directory.name) / ".env-monitor"
+    output = io.StringIO()
+    token = "github_pat_private_wizard_value"
+
+    exit_code = gm_module.run_setup_wizard(
+        wizard_parser(),
+        config_path,
+        dotenv_path,
+        input_func=answers_then_interrupt(minimal_setup_answers(run_doctor="y")[:-1]),
+        getpass_func=scripted_secret_reader([token]),
+        stream=output,
+        interactive=True,
+        token_validator=lambda entered, _url: "octocat" if entered == token else "",
+        doctor_runner=lambda *args, **kwargs: 0,
+    )
+
+    transcript = output.getvalue()
+    assert exit_code == 0
+    assert "Setup is saved. Start monitoring with the command above when ready." in transcript
+    assert "Setup cancelled" not in transcript
+    assert config_path.is_file()
+
+
 # Verifies existing files receive unique mode-0600 backups and unrelated dotenv data survives
 def test_setup_save_backs_up_both_files_and_migrates_config_secrets(gm_module, request):
     directory = make_test_directory()
