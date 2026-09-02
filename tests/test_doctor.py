@@ -963,3 +963,38 @@ def test_a_closed_delivery_prompt_says_the_test_was_skipped(gm_module):
 
     assert gm_module.ask_doctor_approval("Send one test", closed, stream) is False
     assert "Delivery test skipped." in stream.getvalue()
+
+
+# An interval below the safe floor gets the token rate limited, which looks like the tool being broken
+def test_a_rate_limiting_interval_is_warned_about(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "GITHUB_CHECK_INTERVAL", 5)
+    report = gm_module.DoctorReport(target_name="octocat")
+
+    gm_module.doctor_check_configuration(report, doctor_args(), Mock())
+
+    rows = [check for check in report.checks if check.label == "Check intervals are short"]
+    assert [check.status for check in rows] == ["WARN"]
+    assert str(gm_module.DOCTOR_MIN_SAFE_CHECK_INTERVAL) in rows[0].fix
+
+
+# The default interval is safe, so the row must stay away rather than warning about every run
+def test_a_safe_interval_is_not_warned_about(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "GITHUB_CHECK_INTERVAL", gm_module.DOCTOR_MIN_SAFE_CHECK_INTERVAL)
+    report = gm_module.DoctorReport(target_name="octocat")
+
+    gm_module.doctor_check_configuration(report, doctor_args(), Mock())
+
+    assert not [check for check in report.checks if check.label == "Check intervals are short"]
+
+
+# A run with no target warns with the sentence every monitor in this family uses, so the report reads the same
+def test_a_missing_target_warns_with_the_shared_detail(gm_module):
+    report = gm_module.DoctorReport()
+
+    gm_module.doctor_check_target(report)
+
+    rows = [check for check in report.checks if check.section == "Target"]
+    assert [check.status for check in rows] == ["WARN"]
+    assert rows[0].detail == "Nothing will be monitored until one is given"

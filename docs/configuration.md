@@ -257,3 +257,5 @@ github_monitor <github_target> -c 900
 ```
 
 It is generally not recommended to use values lower than 10 minutes as new events are very often delayed by the GitHub API.
+
+An interval below 30 seconds invites the GitHub rate limiter, which stops the tool seeing anything. `--doctor` warns when the configured interval is that short.

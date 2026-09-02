@@ -24,6 +24,7 @@ PROJECT_URL = "https://github.com/misiektoja/github_monitor"
 DOCUMENTATION_URL = "https://misiektoja.github.io/github_monitor"
 QUICK_START_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/"
 CONFIG_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#configuration-file"
+INTERVALS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#check-intervals"
 AUTH_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#github-personal-access-token"
 GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
 SMTP_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#smtp-settings"
@@ -7707,6 +7708,9 @@ def resolve_output_log_path(username):
 # tools, because every state it would cover is a state the others already call PASS
 DOCTOR_STATUSES = ("PASS", "WARN", "FAIL", "SKIP")
 
+# A check interval below this invites the GitHub rate limiter, which stops the tool seeing anything
+DOCTOR_MIN_SAFE_CHECK_INTERVAL = 30
+
 
 @dataclass(frozen=True)
 class DoctorCheck:
@@ -7925,6 +7929,8 @@ def doctor_check_configuration(report, args, parser):
         LOCAL_TIMEZONE = "UTC"
     else:
         report.add("Configuration", "PASS", timezone_label, f"Time zone: {LOCAL_TIMEZONE}")
+    if GITHUB_CHECK_INTERVAL < DOCTOR_MIN_SAFE_CHECK_INTERVAL:
+        report.add("Configuration", "WARN", "Check intervals are short", f"{display_time(GITHUB_CHECK_INTERVAL)} between checks", f"Raise GITHUB_CHECK_INTERVAL to at least {DOCTOR_MIN_SAFE_CHECK_INTERVAL} seconds", INTERVALS_GUIDE_URL)
     numeric_errors = runtime_configuration_errors()
     if numeric_errors:
         report.add("Configuration", "FAIL", "One or more numeric settings are invalid", "Invalid numeric settings: " + "; ".join(numeric_errors), "Correct the reported settings in the configuration file", CONFIG_GUIDE_URL)
@@ -7981,7 +7987,7 @@ def doctor_check_connectivity(report, request_get=None):
 def doctor_check_target(report, github_factory=None):
     if not report.target_name:
         command = render_install_command(["<github_target>", "--doctor"])
-        report.add("Target", "WARN", "No GitHub target was provided", "Nothing can be monitored until a username is supplied", f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL)
+        report.add("Target", "WARN", "No GitHub target was provided", "Nothing will be monitored until one is given", f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL)
         return
     if not report.authenticated_login:
         report.add("Target", "FAIL", "GitHub target could not be checked", f"Target: {report.target_name}", "Fix GitHub authentication then run doctor again", AUTH_GUIDE_URL)
