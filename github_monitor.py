@@ -6131,8 +6131,8 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     print(f"* GitHub token validation succeeded for user: {login}")
     print(f"* Updated private settings file: {destination}")
     print()
-    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor", "GITHUB_USERNAME"] + paths, install_context))
-    _wizard_print_command(sys.stdout, "After Doctor passes, start monitoring:", render_install_command(["GITHUB_USERNAME"] + paths, install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor"] + paths, install_context))
+    _wizard_print_command(sys.stdout, "After Doctor passes, start monitoring:", render_install_command(paths, install_context))
     return str(destination)
 
 
@@ -6173,7 +6173,7 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
     print(f"* Updated private settings file: {destination}")
     print()
     _wizard_print_command(sys.stdout, "Send a test webhook:", render_install_command(["--send-test-webhook"] + paths, install_context))
-    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor", "GITHUB_USERNAME"] + paths, install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor"] + paths, install_context))
     return str(destination)
 
 
@@ -6237,7 +6237,7 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
     print(f"* Updated private settings file: {destination}")
     print()
     _wizard_print_command(sys.stdout, "Send a test email:", render_install_command(["--send-test-email"] + paths, install_context))
-    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor", "GITHUB_USERNAME"] + paths, install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor"] + paths, install_context))
     return str(destination)
 
 
@@ -7844,7 +7844,7 @@ def doctor_check_connectivity(report, request_get=None):
 # Adds a target lookup and retains the fetched profile for feed checks
 def doctor_check_target(report, github_factory=None):
     if not report.target_name:
-        command = render_install_command(["GITHUB_USERNAME", "--doctor"])
+        command = render_install_command(["<github_username>", "--doctor"])
         report.add("Target", "WARN", "No GitHub target was provided", "Nothing can be monitored until a username is supplied", f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL)
         return
     if not report.authenticated_login:
@@ -8071,9 +8071,13 @@ def ask_doctor_approval(prompt, input_func=input, stream=None):
     destination.flush()
     try:
         answer = read_interactively(input_func)
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         destination.write("\n")
         return False
+    except KeyboardInterrupt:
+        # Ctrl+C ends the run here the way it does anywhere else, rather than only declining this one test
+        signal_handler(signal.SIGINT, None)
+        raise
     return str(answer).strip().casefold() in {"y", "yes"}
 
 
@@ -9813,7 +9817,7 @@ def main():
 
     # Checked before the token, so a first run is told the simplest missing thing first
     if not args.username:
-        advice = make_recovery_advice("target.missing", "A GitHub username is required", "Add GITHUB_USERNAME to the monitoring command", False, "The positional GITHUB_USERNAME argument was empty", QUICK_START_GUIDE_URL)
+        advice = make_recovery_advice("target.missing", "A GitHub username is required", "Add the GitHub username to the monitoring command", False, "The positional GITHUB_USERNAME argument was empty", QUICK_START_GUIDE_URL)
         print_recovery_advice(advice)
         sys.exit(1)
 
