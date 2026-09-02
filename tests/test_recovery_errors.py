@@ -1,7 +1,9 @@
 """Offline tests for structured recovery advice and secret-safe rendering."""
 
+import inspect
 import io
 import smtplib
+import time
 
 import pytest
 
@@ -132,3 +134,73 @@ def test_config_advice_summary_names_the_rejected_setting(gm_module):
     assert advice.code == "config.invalid"
     assert "GITHUB_CHECK_INTERVAL" in advice.summary
     assert "GITHUB_CHECK_INTERVAL" in gm_module.render_recovery_advice(advice, verbose=False, debug=False)
+
+
+# Verifies a repeated failure category prints its fix once and keeps the retry note on the summary line
+def test_repeated_advice_keeps_the_summary_and_drops_the_fix(gm_module, capsys):
+    tracker = gm_module.RecoveryHintTracker()
+    advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
+
+    gm_module.print_recovery_advice(advice, verbose=False, debug=False, tracker=tracker, retry_note="retrying in 1 hour")
+    first = capsys.readouterr().out
+    gm_module.print_recovery_advice(advice, verbose=False, debug=False, tracker=tracker, retry_note="retrying in 1 hour")
+    second = capsys.readouterr().out
+    tracker.reset()
+    gm_module.print_recovery_advice(advice, verbose=False, debug=False, tracker=tracker, retry_note="retrying in 1 hour")
+    third = capsys.readouterr().out
+
+    assert first == "* Error: GitHub returned an API error (retrying in 1 hour)\nTo fix: Try again later\n"
+    assert second == "* Error: GitHub returned an API error (retrying in 1 hour)\n"
+    assert third == first
+
+
+# Verifies a lasting failure is reported once and then only on the liveness cadence
+def test_the_outage_reporter_reports_once_then_on_the_cadence(gm_module):
+    reporter = gm_module.OutageReporter()
+    advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
+
+    assert reporter.failed(advice, 3) == "full"
+    assert [reporter.failed(advice, 3) for _ in range(3)] == ["", "", "degraded"]
+    assert reporter.recovered() is not None
+    assert reporter.recovered() is None
+
+
+# Verifies the summary keeps its every-check cadence when the liveness banner is switched off
+def test_the_outage_reporter_keeps_repeating_without_a_liveness_banner(gm_module):
+    reporter = gm_module.OutageReporter()
+    advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
+
+    assert reporter.failed(advice, 0) == "full"
+    assert [reporter.failed(advice, 0) for _ in range(2)] == ["repeat", "repeat"]
+
+
+# Verifies a failure category that changes is reported in full again rather than hidden by the previous one
+def test_a_changed_failure_category_is_reported_in_full(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "LOCAL_TIMEZONE", "UTC")
+    reporter = gm_module.OutageReporter()
+    api_error = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
+    forbidden = gm_module.make_recovery_advice("github.forbidden", "GitHub refused access to the requested resource", "Check token permissions", False)
+
+    assert reporter.failed(api_error, 5) == "full"
+    assert reporter.failed(api_error, 5) == ""
+    assert reporter.failed(forbidden, 5) == "full"
+
+    gm_module.print_outage_liveness("misiektoja", forbidden, int(time.time()) - 60)
+    gm_module.print_outage_recovery("misiektoja", 60)
+
+    output = capsys.readouterr().out
+    assert "* Monitoring degraded for misiektoja. GitHub refused access to the requested resource since " in output
+    assert "Liveness check, timestamp:" in output
+    assert "* Monitoring recovered for misiektoja after 1 minute" in output
+
+
+# Verifies the monitoring loop classifies its own failures instead of printing raw exception text
+def test_the_monitoring_loop_classifies_its_failures(gm_module):
+    source = inspect.getsource(gm_module.github_monitor_user)
+
+    assert 'classify_recovery_error(e, "target")' in source
+    assert "outage.failed(advice, LIVENESS_CHECK_COUNTER)" in source
+    assert "print_outage_liveness(user, advice, outage.since)" in source
+    assert "print_outage_recovery(user, outage_lasted)" in source
+    assert '"Forbidden"' not in source, "the loop must classify failures rather than match exception text"
+    assert '"Bad Request"' not in source, "the loop must classify failures rather than match exception text"

@@ -3100,10 +3100,13 @@ def secret_replacement_declined_advice(subject, flag, guide_url, plural=False):
 
 
 # Renders recovery advice according to the effective diagnostic modes
-def render_recovery_advice(advice, verbose=None, debug=None):
+def render_recovery_advice(advice, verbose=None, debug=None, retry_note="", with_fix=True):
     verbose_enabled = VERBOSE_MODE if verbose is None else bool(verbose)
     debug_enabled = DEBUG_MODE if debug is None else bool(debug)
-    lines = [f"* Error: {sanitize_error_text(advice.summary)}", f"To fix: {sanitize_error_text(advice.fix)}"]
+    lines = [f"* Error: {sanitize_error_text(advice.summary)}" + (f" ({retry_note})" if retry_note else "")]
+    if not with_fix:
+        return lines[0]
+    lines.append(f"To fix: {sanitize_error_text(advice.fix)}")
     if advice.guide_url:
         lines.append(f"Guide: {sanitize_error_text(advice.guide_url)}")
     if verbose_enabled or debug_enabled:
@@ -3113,9 +3116,75 @@ def render_recovery_advice(advice, verbose=None, debug=None):
     return "\n".join(lines)
 
 
-# Prints one structured recovery message
-def print_recovery_advice(advice, verbose=None, debug=None):
-    print(render_recovery_advice(advice, verbose=verbose, debug=debug))
+# Prints advice in full the first time its category appears and as one line while the same category persists
+def print_recovery_advice(advice, verbose=None, debug=None, tracker=None, retry_note=""):
+    print(render_recovery_advice(advice, verbose=verbose, debug=debug, retry_note=retry_note, with_fix=tracker is None or tracker.should_render(advice)))
+
+
+# Suppresses a repeated fix paragraph until the failure category changes or a check succeeds
+class RecoveryHintTracker:
+    # Starts with no category recorded, so the first failure is always reported in full
+    def __init__(self):
+        self.last_code = None
+
+    # Reports whether this category is new and therefore worth printing the fix for again
+    def should_render(self, advice):
+        if advice.code == self.last_code:
+            return False
+        self.last_code = advice.code
+        return True
+
+    # Clears the suppression after a successful check
+    def reset(self):
+        self.last_code = None
+
+
+# Decides how a lasting failure is reported: in full when it is new, then on the liveness cadence while it lasts
+class OutageReporter:
+    # Starts with no failure recorded, so the first failure of any category is reported in full
+    def __init__(self):
+        self.code = None
+        self.since = 0
+        self.checks = 0
+
+    # Records one failed check and returns "full" for a new failure, "degraded" on the liveness cadence,
+    # "repeat" while the liveness banner is switched off or "" while the same failure is merely continuing
+    def failed(self, advice, liveness_counter):
+        if advice.code != self.code:
+            self.code = advice.code
+            self.since = int(time.time())
+            self.checks = 0
+            return "full"
+        self.checks += 1
+        # With the liveness banner off there is nothing to carry the reminder, so the summary keeps its old cadence
+        if not liveness_counter:
+            return "repeat"
+        if self.checks >= liveness_counter:
+            self.checks = 0
+            return "degraded"
+        return ""
+
+    # Clears the failure after a successful check and returns how long it lasted, or None when none was active
+    def recovered(self):
+        if not self.code:
+            return None
+        lasted = int(time.time()) - self.since
+        self.code = None
+        self.since = 0
+        self.checks = 0
+        return lasted
+
+
+# Reports a lasting failure on the liveness cadence, so a broken run still says it is alive without repeating itself
+def print_outage_liveness(target, advice, since):
+    print(f"* Monitoring degraded for {target}. {advice.summary} since {get_date_from_ts(since)}")
+    print_cur_ts("Liveness check, timestamp:\t")
+
+
+# Reports that a failure cleared, since a throttled failure no longer stops printing when it is over
+def print_outage_recovery(target, lasted):
+    print(f"* Monitoring recovered for {target} after {display_time(max(1, lasted))}")
+    print_cur_ts("Timestamp:\t\t\t")
 
 
 # Maps one exception and operation context to stable recovery advice
@@ -6822,6 +6891,8 @@ def github_monitor_user(user, csv_file_name):
     time.sleep(GITHUB_CHECK_INTERVAL)
     alive_counter = 0
     email_sent = False
+    monitor_recovery_tracker = RecoveryHintTracker()
+    outage = OutageReporter()
     profile_field_unavailable = object()
     check_number = 0
 
@@ -6843,39 +6914,42 @@ def github_monitor_user(user, csv_file_name):
             debug_github_operation("monitored user profile refresh", user)
             g_user = g.get_user(user)
             email_sent = False
+            monitor_recovery_tracker.reset()
+            outage_lasted = outage.recovered()
+            if outage_lasted is not None:
+                print_outage_recovery(user, outage_lasted)
 
         except (GithubException, Exception) as e:
             safe_error = sanitize_error_text(e)
             verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
-            print(f"* Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)}: {safe_error}")
+            advice = classify_recovery_error(e, "target")
 
-            should_notify = False
-            reason_msg = None
+            # A failure that has not changed is left to the liveness cadence rather than repeated every check
+            outage_outcome = outage.failed(advice, LIVENESS_CHECK_COUNTER)
+            if outage_outcome in ("full", "repeat"):
+                print_recovery_advice(advice, tracker=monitor_recovery_tracker, retry_note=f"retrying in {display_time(GITHUB_CHECK_INTERVAL)}")
+            elif outage_outcome == "degraded":
+                print_outage_liveness(user, advice, outage.since)
 
-            if isinstance(e, BadCredentialsException):
-                reason_msg = "GitHub token might not be valid anymore (bad credentials error)!"
-            else:
-                matched = next((msg for msg in ["Forbidden", "Bad Request"] if msg in str(e)), None)
-                if matched:
-                    reason_msg = f"Session might not be valid ('{matched}' error)"
-
-            if reason_msg:
-                print(f"* {reason_msg}")
-                should_notify = True
+            # A rejected token or a refused request will not clear on its own, so it is worth an alert
+            rejected_request = isinstance(e, GithubException) and getattr(e, "status", None) == 400
+            should_notify = advice.code in ("auth.github_token_invalid", "github.forbidden") or rejected_request
 
             if should_notify and (ERROR_NOTIFICATION or webhook_event_enabled("error")) and not email_sent:
-                m_subject = f"github_monitor: session error! (user: {user})"
-                m_body = f"{reason_msg}\n{safe_error}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
+                m_subject = f"github_monitor: {advice.summary} (user: {user})"
+                m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\n{safe_error}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
                 m_body_html = (
                     f"<html><head></head><body>"
-                    f"<b>{html.escape(reason_msg or '')}</b><br>"
+                    f"<b>{html.escape(advice.summary)}</b><br><br>"
+                    f"To fix: {html.escape(advice.fix)}<br><br>"
                     f"{html.escape(safe_error)}{get_cur_ts('<br><br>Timestamp: ')}"
                     f"</body></html>"
                 )
                 send_notification_channels("error", m_subject, m_body, m_body_html, ERROR_NOTIFICATION)
                 email_sent = True
 
-            print_cur_ts("Timestamp:\t\t\t")
+            if outage_outcome in ("full", "repeat"):
+                print_cur_ts("Timestamp:\t\t\t")
             debug_monitor_wait_timing("monitored user refresh failure", GITHUB_CHECK_INTERVAL)
             time.sleep(GITHUB_CHECK_INTERVAL)
             continue
