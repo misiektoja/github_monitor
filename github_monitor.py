@@ -2956,6 +2956,7 @@ RECOVERY_CODES = frozenset({
     "github.rate_limited",
     "network.connection",
     "network.timeout",
+    "secret.entry",
     "secret.missing",
     "smtp.authentication",
     "smtp.configuration",
@@ -2994,6 +2995,17 @@ def make_recovery_advice(code, summary, fix, retryable=False, detail="", guide_u
     if code not in RECOVERY_CODES:
         raise ValueError(f"Unsupported recovery code: {code}")
     return RecoveryAdvice(code, sanitize_error_text(summary), sanitize_error_text(fix), bool(retryable), sanitize_error_text(detail), sanitize_error_text(guide_url))
+
+
+# Returns the advice a cancelled secret entry reports, worded the same way by every one-shot secret command
+def secret_entry_cancelled_advice(subject, flag, guide_url):
+    return make_recovery_advice("secret.entry", f"{subject[:1].upper()}{subject[1:]} setup was cancelled and the dotenv file was not changed", f"Run {flag} again when you have the value ready", False, "", guide_url)
+
+
+# Returns the advice a declined secret replacement reports, worded the same way by every one-shot secret command
+def secret_replacement_declined_advice(subject, flag, guide_url, plural=False):
+    kept = "were left as they are" if plural else "was left as it is"
+    return make_recovery_advice("secret.entry", f"The saved {subject} {kept} and the dotenv file was not changed", f"Run {flag} again and answer y to replace the saved value", False, "", guide_url)
 
 
 # Renders recovery advice according to the effective diagnostic modes
@@ -5989,9 +6001,10 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
         try:
             confirmed = read_interactively(prompt, f"Replace GITHUB_TOKEN in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
-            confirmed = False
+            print()
+            raise RecoveryError(secret_entry_cancelled_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL)) from None
         if not confirmed:
-            raise GitHubTokenConfigurationError("GITHUB_TOKEN replacement was cancelled and the dotenv file was not changed")
+            raise RecoveryError(secret_replacement_declined_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL))
     print("* Create or review GitHub tokens at: https://github.com/settings/tokens")
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
     previous_debug_mode = DEBUG_MODE
@@ -5999,7 +6012,8 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     try:
         token = read_interactively(hidden_prompt, "Enter GitHub token privately: ").strip()
     except (EOFError, KeyboardInterrupt):
-        raise GitHubTokenConfigurationError("GITHUB_TOKEN entry was cancelled and the dotenv file was not changed") from None
+        print()
+        raise RecoveryError(secret_entry_cancelled_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL)) from None
     finally:
         DEBUG_MODE = previous_debug_mode
     print("* Validating the entered GitHub token before changing the dotenv file ...")
@@ -6035,16 +6049,18 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
         try:
             confirmed = read_interactively(prompt, f"Replace the saved webhook URL in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
-            confirmed = False
+            print()
+            raise RecoveryError(secret_entry_cancelled_advice("webhook URL", "--set-webhook-url", WEBHOOK_GUIDE_URL)) from None
         if not confirmed:
-            raise ValueError("Webhook setup was cancelled and the dotenv file was not changed")
+            raise RecoveryError(secret_replacement_declined_advice("webhook URL", "--set-webhook-url", WEBHOOK_GUIDE_URL))
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
     previous_debug_mode = DEBUG_MODE
     DEBUG_MODE = False
     try:
         webhook_url = read_interactively(hidden_prompt, "Paste the Discord or ntfy webhook URL (input hidden): ").strip()
     except (EOFError, KeyboardInterrupt):
-        raise ValueError("Webhook setup was cancelled and the dotenv file was not changed") from None
+        print()
+        raise RecoveryError(secret_entry_cancelled_advice("webhook URL", "--set-webhook-url", WEBHOOK_GUIDE_URL)) from None
     finally:
         DEBUG_MODE = previous_debug_mode
     if not validate_webhook_url(webhook_url):
@@ -6096,9 +6112,10 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
         try:
             confirmed = read_interactively(prompt, f"Replace the saved SMTP password in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
-            confirmed = False
+            print()
+            raise RecoveryError(secret_entry_cancelled_advice("SMTP password", "--set-smtp-password", SMTP_GUIDE_URL)) from None
         if not confirmed:
-            raise ValueError("SMTP password setup was cancelled and the dotenv file was not changed")
+            raise RecoveryError(secret_replacement_declined_advice("SMTP password", "--set-smtp-password", SMTP_GUIDE_URL))
     print(f"* The password is checked by signing in to {SMTP_HOST} as {SMTP_USER}. Nothing is sent")
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
     previous_debug_mode = DEBUG_MODE
@@ -6106,7 +6123,8 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
     try:
         smtp_password = str(read_interactively(hidden_prompt, "Enter the SMTP password (input hidden): ")).strip()
     except (EOFError, KeyboardInterrupt):
-        raise ValueError("SMTP password setup was cancelled and the dotenv file was not changed") from None
+        print()
+        raise RecoveryError(secret_entry_cancelled_advice("SMTP password", "--set-smtp-password", SMTP_GUIDE_URL)) from None
     finally:
         DEBUG_MODE = previous_debug_mode
     check = smtp_sign_in if sign_in is None else sign_in

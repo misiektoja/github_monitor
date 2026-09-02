@@ -1098,3 +1098,38 @@ def test_declining_an_existing_config_without_an_alternative_writes_nothing(gm_m
     assert config_path.read_text(encoding="utf-8") == "# earlier config\n"
     assert not dotenv_path.exists()
     assert "Setup cancelled. Destination files were not changed." in output.getvalue()
+
+
+# Verifies an interrupted entry reports the cancel itself instead of a mail server that was never contacted
+def test_an_interrupted_secret_entry_is_not_reported_as_an_unreachable_server(gm_module, tmp_path, monkeypatch):
+    destination = tmp_path / ".env"
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+
+    def interrupt(prompt=""):
+        raise KeyboardInterrupt
+
+    with pytest.raises(gm_module.RecoveryError) as raised:
+        gm_module.run_set_smtp_password(str(destination), interactive=True, getpass_func=interrupt, sign_in=Mock(side_effect=AssertionError("signed in")))
+
+    advice = gm_module.classify_recovery_error(raised.value, "email")
+    assert advice.summary == "SMTP password setup was cancelled and the dotenv file was not changed"
+    assert advice.code == "secret.entry"
+    assert advice.fix == "Run --set-smtp-password again when you have the value ready"
+    assert advice.guide_url == gm_module.SMTP_GUIDE_URL
+    assert not destination.exists()
+
+
+# Verifies a declined replacement reports the kept value rather than a cancelled entry
+def test_a_declined_secret_replacement_reports_the_kept_value(gm_module, tmp_path, monkeypatch):
+    destination = tmp_path / ".env"
+    destination.write_text('SMTP_PASSWORD="original"\n', encoding="utf-8")
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+
+    with pytest.raises(gm_module.RecoveryError) as raised:
+        gm_module.run_set_smtp_password(str(destination), interactive=True, input_func=lambda prompt: "n", getpass_func=Mock(side_effect=AssertionError("hidden prompt used")))
+
+    assert raised.value.advice.summary == "The saved SMTP password was left as it is and the dotenv file was not changed"
+    assert "answer y to replace the saved value" in raised.value.advice.fix
+    assert destination.read_text(encoding="utf-8") == 'SMTP_PASSWORD="original"\n'
