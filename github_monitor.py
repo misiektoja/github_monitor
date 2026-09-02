@@ -8739,6 +8739,11 @@ def wizard_collect_target(state, input_func=input, stream=None):
         # Leaving the target unset has to be a decision rather than a loop the user can only leave with Ctrl+C
         if not wizard_offer_retry("GitHub username", "Nothing can be monitored until one is set", input_func, destination):
             break
+    # A declined target ends the section, so nothing asks about persisting a target that does not exist
+    if not state.target:
+        destination.write("  No target selected. Nothing can be monitored until one is set. Run --setup again or pass the target on the command line.\n")
+        state.values["TARGET_GITHUB_USERNAME"] = ""
+        return
     state.persist_target = wizard_ask_yes_no("Persist this target in the generated config?", state.persist_target, input_func, destination)
     state.values["TARGET_GITHUB_USERNAME"] = state.target if state.persist_target else ""
     state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] = not wizard_ask_yes_no("Monitor public GitHub events?", not bool(state.values["DO_NOT_MONITOR_GITHUB_EVENTS"]), input_func, destination)

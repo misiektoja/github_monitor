@@ -1316,12 +1316,14 @@ def test_an_unusable_target_can_be_abandoned(gm_module, request):
     state = gm_module.build_wizard_state(Path(directory.name) / "monitor.conf", Path(directory.name) / ".env-monitor")
     stream = io.StringIO()
 
-    # A rejected target, then continue without one, then the three questions that follow the target
-    gm_module.wizard_collect_target(state, scripted_reader(["https://github.com/one/two", "y", "n", "n", "n", "n"]), stream)
+    # A rejected target, then continue without one, which ends the section before the persist question
+    gm_module.wizard_collect_target(state, scripted_reader(["https://github.com/one/two", "y"]), stream)
 
     written = stream.getvalue()
     assert "That target is not valid" in written
     assert "Continue without the GitHub username?" in written
+    assert "No target selected. Nothing can be monitored until one is set." in written
+    assert "Persist this target" not in written
     assert state.values["TARGET_GITHUB_USERNAME"] == ""
 
 
