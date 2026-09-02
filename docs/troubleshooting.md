@@ -16,7 +16,7 @@ Doctor is read-only by default. It checks the effective configuration after conf
 * Target and monitoring: target access, repository, starred repository and event feeds and optional contribution tracking.
 * Notifications: whether email and webhook alerts are disabled, unusable or ready.
 
-Every check uses one of four stable markers: `[PASS]`, `[WARN]`, `[FAIL]` or `[SKIP]`. A row that is not a pass carries an indented `To fix:` line under its marker, plus a `Guide:` link when a documentation page covers that row specifically. Warnings keep exit status `0`. Any failed check or approved delivery test returns exit status `1`, so doctor can be used in a container healthcheck or CI smoke test.
+Every check uses one of four stable markers: `[PASS]`, `[WARN]`, `[FAIL]` or `[SKIP]`. Every `[WARN]` and `[FAIL]` row carries an indented `To fix:` line under its marker, plus a `Guide:` link when a documentation page covers that row specifically. A `[SKIP]` row names a check that could not run and says why. Warnings keep exit status `0`. Any failed check or approved delivery test returns exit status `1`, so doctor can be used in a container healthcheck or CI smoke test.
 
 When stdin is interactive and a notification channel is ready, doctor offers a separate default-no approval for one real email and one real webhook. A piped or non-interactive run never sends messages. Review the sanitized report before posting it because targets, paths and recipient addresses can still identify your setup.
 

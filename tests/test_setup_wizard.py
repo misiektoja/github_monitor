@@ -1336,3 +1336,41 @@ def test_a_rejected_target_can_be_entered_again(gm_module, request):
 
     assert state.target == "misiektoja"
     assert state.values["TARGET_GITHUB_USERNAME"] == "misiektoja"
+
+
+# Verifies the port question rejects a number no TCP port can be, instead of saving it for the doctor to reject
+def test_the_smtp_port_question_rejects_a_number_above_the_port_range(gm_module):
+    answers = iter(["70000", "2525"])
+    destination = io.StringIO()
+
+    chosen = gm_module.wizard_ask_positive_int("SMTP port", 587, maximum=65535, input_func=lambda: next(answers), stream=destination)
+
+    assert chosen == 2525
+    assert "  Enter a whole number from 1 through 65535." in destination.getvalue()
+
+
+# Verifies declining the retry offer keeps the saved value rather than asking the same question forever
+def test_declining_the_retry_offer_keeps_the_saved_number(gm_module):
+    answers = iter(["", "n"])
+    destination = io.StringIO()
+
+    assert gm_module.wizard_ask_positive_int("SMTP port", 587, maximum=65535, input_func=lambda: next(answers), stream=destination) == 587
+
+
+# Verifies a required question says so and asks again, which is the contract the other six already had
+def test_a_required_question_says_the_value_is_required(gm_module):
+    answers = iter(["", "y", "smtp.example.com"])
+    destination = io.StringIO()
+
+    answer = gm_module.wizard_ask_text("SMTP host", "", input_func=lambda: next(answers), stream=destination, required=True)
+
+    assert answer == "smtp.example.com"
+    assert "  This value is required." in destination.getvalue()
+
+
+# Verifies an operator who declines the retry offer leaves a required question empty rather than looping
+def test_a_declined_required_question_returns_empty(gm_module):
+    answers = iter(["", "n"])
+    destination = io.StringIO()
+
+    assert gm_module.wizard_ask_text("SMTP host", "", input_func=lambda: next(answers), stream=destination, required=True) == ""

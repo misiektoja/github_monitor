@@ -656,3 +656,13 @@ def test_truncation_applies_to_every_line():
     pytest.importorskip("wcwidth")
 
     assert monitor.truncate_string_per_line("abcdef\nabcdef", 3) == "abc\nabc"
+
+
+# Verifies indented wizard hints stay plain, matching the five tools that never coloured them
+def test_indented_wizard_hints_are_not_colored():
+    source = (PROJECT_ROOT / "github_monitor.py").read_text(encoding="utf-8")
+
+    coloured = re.findall(r'colorize\("warning", f?"  [^"]*', source)
+
+    # The doctor summary sentence is the one indented line all seven colour
+    assert [line for line in coloured if "All critical checks passed" not in line] == []

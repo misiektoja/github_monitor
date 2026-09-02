@@ -7738,7 +7738,8 @@ class DoctorReport:
         normalized_status = str(status).upper()
         if normalized_status not in DOCTOR_STATUSES:
             raise ValueError(f"Unsupported doctor status {status}")
-        if normalized_status != "PASS" and not fix:
+        # A row the user has to act on is useless without an action, so the row is rejected rather than printed bare
+        if normalized_status in ("WARN", "FAIL") and not fix:
             raise ValueError(f"Doctor {normalized_status} rows require a fix")
         # Several rows carry the same text as their label and printing it twice reads as two problems
         check = DoctorCheck(section, normalized_status, label, "" if str(detail).strip() == str(label).strip() else detail, fix, guide)
@@ -8226,7 +8227,7 @@ def ask_doctor_approval(prompt, input_func=input, stream=None):
         if answer in ("y", "yes"):
             return True
         # An unreadable answer is re-asked rather than counted as consent or as a refusal the user did not give
-        destination.write(colorize("warning", "  Please answer 'y' or 'n'.") + "\n")
+        destination.write("  Please answer 'y' or 'n'." + "\n")
 
 
 # Offers separately approved real delivery tests only on interactive stdin
@@ -8397,7 +8398,7 @@ def wizard_choose_config_destination(config_path, input_func=input, stream=None)
         try:
             selected = wizard_validate_destination(alternative, "Configuration destination")
         except ValueError as exc:
-            destination.write(colorize("warning", f"  {exc}.") + "\n")
+            destination.write(f"  {exc}." + "\n")
     return selected
 
 
@@ -8520,7 +8521,7 @@ def wizard_ask_duration(label, default, input_func=input, stream=None):
         try:
             return wizard_parse_duration(answer)
         except ValueError:
-            destination.write(colorize("warning", "  Enter a positive duration such as 120, 2m, 1.5h, 1h 30m or 1d.") + "\n")
+            destination.write("  Enter a positive duration such as 120, 2m, 1.5h, 1h 30m or 1d." + "\n")
 
 
 # Reads one wizard answer after rendering its prompt to the selected stream
@@ -8565,7 +8566,7 @@ def wizard_ask_yes_no(prompt, default=False, input_func=input, stream=None):
             return True
         if answer in {"n", "no"}:
             return False
-        destination.write(colorize("warning", "  Please answer 'y' or 'n'.") + "\n")
+        destination.write("  Please answer 'y' or 'n'." + "\n")
 
 
 # Offers the one way out after an entry the wizard cannot use, so declining keeps every answer already given
@@ -8590,24 +8591,43 @@ def wizard_ask_choice(prompt, choices, default, input_func=input, stream=None):
             return default
         if answer.isdigit() and 1 <= int(answer) <= len(choices):
             return choices[int(answer) - 1][0]
-        destination.write(colorize("warning", f"  Enter a number between 1 and {len(choices)}.") + "\n")
+        destination.write(f"  Enter a number between 1 and {len(choices)}." + "\n")
 
 
 # Reads one text value with a shown default and optional validation
-def wizard_ask_text(label, default="", validator=None, input_func=input, stream=None):
+def wizard_ask_text(label, default="", validator=None, input_func=input, stream=None, required=False):
     destination = sys.stdout if stream is None else stream
     shown_default = f" [{default}]" if default not in (None, "") else ""
     while True:
         answer = wizard_read_answer(f"{label}{shown_default}: ", input_func, destination)
         selected = str(default) if not answer else answer
+        if required and not selected:
+            destination.write("  This value is required.\n")
+            if not wizard_offer_retry(label, input_func=input_func, stream=destination):
+                return ""
+            continue
         if validator is None:
             return selected
         error = validator(selected)
         if not error:
             return selected
-        destination.write(colorize("warning", f"That value is not valid: {error}") + "\n")
+        destination.write(f"  That value is not valid: {error}\n")
         if not wizard_offer_retry(label, input_func=input_func, stream=destination):
             return str(default)
+
+
+# Asks for a whole number inside the accepted range, keeping the saved value when the retry offer is declined
+def wizard_ask_positive_int(label, default, maximum=None, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    while True:
+        answer = wizard_ask_text(label, str(default), input_func=input_func, stream=destination, required=True)
+        # An empty answer means the retry offer was declined, so the default stands instead of asking again
+        if not answer:
+            return int(default)
+        parsed = int(answer) if str(answer).isdigit() else 0
+        if parsed > 0 and (maximum is None or parsed <= maximum):
+            return parsed
+        destination.write(f"  Enter a whole number from 1 through {maximum}.\n" if maximum is not None else "  Enter a positive whole number.\n")
 
 
 # Returns a saved value fit to show as a prompt default, so a shipped placeholder is never offered back
@@ -8710,7 +8730,7 @@ def wizard_collect_target(state, input_func=input, stream=None):
             if normalized != entered:
                 destination.write(f"Using normalized GitHub username: {normalized}\n")
             break
-        destination.write(colorize("warning", "That target is not valid. Enter a GitHub username or full profile URL.") + "\n")
+        destination.write("  That target is not valid. Enter a GitHub username or full profile URL.\n")
         # Leaving the target unset has to be a decision rather than a loop the user can only leave with Ctrl+C
         if not wizard_offer_retry("GitHub username", "Nothing can be monitored until one is set", input_func, destination):
             break
@@ -8821,7 +8841,7 @@ def wizard_smtp_sign_in_accepted(state, input_func=input, stream=None):
     if advice is None:
         destination.write("  The mail server accepted the sign-in. No email was sent.\n")
         return True
-    destination.write(colorize("warning", f"  {advice.summary}: {advice.detail}" if advice.detail else f"  {advice.summary}") + "\n")
+    destination.write(f"  {advice.summary}: {advice.detail}" if advice.detail else f"  {advice.summary}" + "\n")
     destination.write(f"  To fix: {advice.fix}\n")
     if wizard_offer_retry("mail server settings", input_func=input_func, stream=destination):
         return False
@@ -8829,7 +8849,7 @@ def wizard_smtp_sign_in_accepted(state, input_func=input, stream=None):
         # Being offline is the usual reason a correct setup fails here, so the answers are kept rather than discarded
         destination.write("  The settings were kept without being checked. Run --doctor to check the sign-in again.\n")
         return True
-    destination.write(colorize("warning", "  Email notifications stay off until the mail server accepts the settings.") + "\n")
+    destination.write("  Email notifications stay off until the mail server accepts the settings." + "\n")
     return None
 
 
@@ -8842,22 +8862,22 @@ def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None
         wizard_disable_email(state)
         return
     while True:
-        state.values["SMTP_HOST"] = wizard_ask_text("SMTP host", wizard_default(state.values["SMTP_HOST"]), input_func=input_func, stream=destination)
-        state.values["SMTP_PORT"] = int(wizard_ask_text("SMTP port", state.values["SMTP_PORT"], lambda value: "" if str(value).isdigit() and 1 <= int(value) <= 65535 else "enter a number from 1 through 65535", input_func, destination))
+        state.values["SMTP_HOST"] = wizard_ask_text("SMTP host", wizard_default(state.values["SMTP_HOST"]), input_func=input_func, stream=destination, required=True)
+        state.values["SMTP_PORT"] = wizard_ask_positive_int("SMTP port", state.values["SMTP_PORT"], maximum=65535, input_func=input_func, stream=destination)
         state.values["SMTP_SSL"] = wizard_ask_yes_no("Enable TLS/SSL for SMTP?", bool(state.values["SMTP_SSL"]), input_func, destination)
-        state.values["SMTP_USER"] = wizard_ask_text("SMTP username", wizard_default(state.values["SMTP_USER"]), input_func=input_func, stream=destination)
-        state.values["SENDER_EMAIL"] = wizard_ask_text("Sender email", wizard_default(state.values["SENDER_EMAIL"]), input_func=input_func, stream=destination)
-        state.values["RECEIVER_EMAIL"] = wizard_ask_text("Receiver email", wizard_default(state.values["RECEIVER_EMAIL"]), input_func=input_func, stream=destination)
+        state.values["SMTP_USER"] = wizard_ask_text("SMTP username", wizard_default(state.values["SMTP_USER"]), input_func=input_func, stream=destination, required=True)
+        state.values["SENDER_EMAIL"] = wizard_ask_text("Sender email", wizard_default(state.values["SENDER_EMAIL"]), input_func=input_func, stream=destination, required=True)
+        state.values["RECEIVER_EMAIL"] = wizard_ask_text("Receiver email", wizard_default(state.values["RECEIVER_EMAIL"]), input_func=input_func, stream=destination, required=True)
         # A blank answer keeps the password already saved in the dotenv file
         password = wizard_read_secret("SMTP password", getpass_func, destination)
         if password:
             state.secrets["SMTP_PASSWORD"] = password
         validation_error = wizard_email_settings_error(state.values, state.secrets)
         if validation_error:
-            destination.write(colorize("warning", f"  Email settings are incomplete: {validation_error}") + "\n")
+            destination.write(f"  Email settings are incomplete: {validation_error}" + "\n")
             if wizard_offer_retry("mail server settings", input_func=input_func, stream=destination):
                 continue
-            destination.write(colorize("warning", "  Email notifications stay off until every mail server setting is answered.") + "\n")
+            destination.write("  Email notifications stay off until every mail server setting is answered." + "\n")
             wizard_disable_email(state)
             return
         outcome = wizard_smtp_sign_in_accepted(state, input_func, destination)
@@ -8923,7 +8943,7 @@ def wizard_collect_ntfy_access_token(state, input_func=input, getpass_func=None,
             if access_token:
                 state.secrets["NTFY_ACCESS_TOKEN"] = access_token
             return
-        destination.write(colorize("warning", "  Paste only the access token without a Bearer or Basic prefix.") + "\n")
+        destination.write("  Paste only the access token without a Bearer or Basic prefix." + "\n")
         if not wizard_offer_retry("ntfy access token", input_func=input_func, stream=destination):
             return
 
@@ -8964,16 +8984,16 @@ def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=No
                     break
                 continue
             if provider == "ntfy":
-                destination.write(colorize("warning", "  Enter a complete HTTPS ntfy topic URL or a topic name containing up to 64 letters, numbers, dashes or underscores.") + "\n")
+                destination.write("  Enter a complete HTTPS ntfy topic URL or a topic name containing up to 64 letters, numbers, dashes or underscores." + "\n")
             else:
-                destination.write(colorize("warning", "  That does not look like a complete HTTPS webhook URL. Copy it from the webhook service and try again.") + "\n")
+                destination.write("  That does not look like a complete HTTPS webhook URL. Copy it from the webhook service and try again." + "\n")
             if not wizard_offer_retry("webhook URL", input_func=input_func, stream=destination):
                 break
     if provider == "ntfy":
         wizard_collect_ntfy_access_token(state, input_func, getpass_func, destination)
     if not state.secrets.get("WEBHOOK_URL"):
         wizard_disable_webhook(state)
-        destination.write(colorize("warning", "  Webhook alerts will stay disabled until a destination is saved.") + "\n")
+        destination.write("  Webhook alerts will stay disabled until a destination is saved." + "\n")
         return
     state.values["WEBHOOK_ENABLED"] = True
     available = wizard_available_email_alerts(state, "WEBHOOK_")
@@ -9081,7 +9101,7 @@ def wizard_destination_error(value, label):
 # Changes where setup writes, re-asking the sections that hold secrets when the dotenv destination moves
 def wizard_collect_file_destinations(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
     destination = sys.stdout if stream is None else stream
-    config_text = wizard_ask_text("Configuration file destination", str(state.config_path), lambda value: wizard_destination_error(value, "Configuration destination"), input_func, destination)
+    config_text = wizard_ask_text("Configuration file destination", str(state.config_path), lambda value: wizard_destination_error(value, "Configuration destination"), input_func, destination, required=True)
     selected_config = wizard_validate_destination(config_text, "Configuration destination")
     if selected_config != state.config_path:
         chosen_config = wizard_choose_config_destination(selected_config, input_func, destination)
@@ -9089,14 +9109,14 @@ def wizard_collect_file_destinations(state, input_func=input, getpass_func=None,
         if chosen_config is not None:
             state.config_path = chosen_config
     while True:
-        env_text = wizard_ask_text("Dotenv file destination", str(state.dotenv_path), lambda value: wizard_destination_error(value, "Dotenv destination"), input_func, destination)
+        env_text = wizard_ask_text("Dotenv file destination", str(state.dotenv_path), lambda value: wizard_destination_error(value, "Dotenv destination"), input_func, destination, required=True)
         if env_text.casefold() == "none":
-            destination.write(colorize("warning", "  Setup needs a writable dotenv file and cannot use 'none'.") + "\n")
+            destination.write("  Setup needs a writable dotenv file and cannot use 'none'." + "\n")
             continue
         selected_env = wizard_validate_destination(env_text, "Dotenv destination")
         # One file cannot hold both, since saving the configuration would overwrite the secrets beside it
         if selected_env == state.config_path:
-            destination.write(colorize("warning", "  The dotenv file has to be a different file from the configuration.") + "\n")
+            destination.write("  The dotenv file has to be a different file from the configuration." + "\n")
             continue
         break
     state.values["DOTENV_FILE"] = str(selected_env)

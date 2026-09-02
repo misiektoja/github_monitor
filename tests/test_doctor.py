@@ -773,6 +773,16 @@ def test_a_detail_that_repeats_its_label_is_dropped(gm_module):
     assert report.checks == [check]
 
 
+# Verifies a row the user has to act on cannot reach the report without an action
+def test_an_actionable_row_is_rejected_without_a_fix(gm_module):
+    report = gm_module.DoctorReport()
+    for status in ("WARN", "FAIL"):
+        with pytest.raises(ValueError):
+            report.add("Configuration", status, "a label", "some detail")
+
+    assert report.add("Configuration", "SKIP", "a label").status == "SKIP"
+
+
 # Verifies only the four shared markers can reach a report
 def test_only_the_four_shared_markers_are_accepted(gm_module):
     report = gm_module.DoctorReport()
