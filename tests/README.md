@@ -43,6 +43,7 @@ and again before anything is published to PyPI.
 | `test_doctor.py` | Complete doctor transcripts, exit status, dependency states, private-setting sources, offline failures, read-only paths, TTY progress and separately approved real delivery tests |
 | `test_event_configuration.py` | Supported event types, intentional 30-event window and retry defaults |
 | `test_github_token_setup.py` | Hidden token entry, targeted dotenv updates and refusal to save an invalid token |
+| `test_help_screen.py` | The `--help` screen: the shared argument group names, the task-grouped examples and the startup banner |
 | `test_install_method_commands.py` | PyPI and downloaded-script detection with portable plus exact POSIX and Windows commands |
 | `test_profile_fields.py` | Addition, removal and failure handling for nullable profile fields |
 | `test_recovery_errors.py` | Closed recovery codes, classification, retryability and layered secret redaction that leaves ordinary output intact |
@@ -51,7 +52,9 @@ and again before anything is published to PyPI.
 | `test_repository_monitoring.py` | Discussion collection, repository snapshots, open and closed notifications, event formatting |
 | `test_setup_wizard.py` | Buffered setup, section editing, target and duration normalization, config and dotenv separation, backups, doctor and monitoring handoffs, non-interactive fallback and pseudo-terminal transcripts |
 | `test_startup_configuration.py` | Config, dotenv, exported environment and two-phase CLI precedence at startup consumer boundaries |
+| `test_removed_identity_notes.py` | The notes printed when a followed account or repository disappears |
 | `test_terminal_color.py` | Theme parity, token colours, wrapper order, ANSI-free logs, terminal sanitizing, truncation, progress redraws, setup, Doctor and recovery surfaces |
+| `test_tls_verification.py` | Every connection honouring `VERIFY_SSL` and the single shared TLS context builder |
 | `test_webhook_notifications.py` | Webhook URL validation, provider detection and per-event notification switches |
 
 ## Conventions

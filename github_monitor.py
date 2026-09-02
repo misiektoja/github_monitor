@@ -5583,6 +5583,12 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     print_cur_ts("Timestamp:\t\t\t")
 
 
+# Keeps argparse from colouring its own help, so the help screen is coloured by this tool alone and --no-color is
+# not left with a second palette to silence. From Python 3.14 argparse colours the help by default on a terminal
+def argparse_color_kwargs() -> dict[str, Any]:
+    return {"color": False} if sys.version_info >= (3, 14) else {}
+
+
 # Finds an optional config file
 def find_config_file(cli_path=None):
     """
@@ -8088,6 +8094,44 @@ def _wizard_print_command(destination, label, command, suffix=""):
     destination.write(f"    {colorize('section', command)}{colorize('info', suffix) if suffix else ''}\n\n")
 
 
+# Walks up to the first directory that exists, so a destination under a missing folder can still be judged
+def wizard_nearest_existing_parent(path):
+    candidate = Path(path).expanduser()
+    if candidate.exists():
+        return candidate if candidate.is_dir() else candidate.parent
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return candidate
+
+
+# Checks one setup destination without creating or modifying it, so an unwritable path is caught before any question
+def wizard_validate_destination(path, label):
+    resolved = Path(path).expanduser().resolve()
+    if resolved.exists() and resolved.is_dir():
+        raise ValueError(f"{label} must be a file path, not a directory")
+    parent = wizard_nearest_existing_parent(resolved)
+    if not parent.is_dir():
+        raise ValueError(f"{label} does not have a usable parent directory")
+    if not os.access(str(parent), os.W_OK):
+        raise ValueError(f"{label} is not writable through parent '{parent}'")
+    return resolved
+
+
+# Confirms replacing an existing config before any question is asked, so a long run cannot end in a surprise
+def wizard_choose_config_destination(config_path, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    selected = Path(config_path)
+    while selected.exists() and not wizard_ask_yes_no(f"Configuration file '{selected}' exists. Replace it with a fresh configuration built from defaults and create a timestamped backup?", False, input_func, destination):
+        alternative = wizard_ask_text("Another config destination or leave empty to cancel", input_func=input_func, stream=destination)
+        if not alternative:
+            return None
+        try:
+            selected = wizard_validate_destination(alternative, "Configuration destination")
+        except ValueError as exc:
+            destination.write(colorize("warning", f"  {exc}.") + "\n")
+    return selected
+
+
 # Writes the detected installation method and selected setup files
 def _wizard_print_setup_destinations(destination, context, state):
     destination.write(f"Detected install method: {colorize('username', context.install_method)}\n")
@@ -8958,6 +9002,12 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
         return 1
     try:
+        selected_config = wizard_validate_destination(selected_config, "Configuration destination")
+        selected_dotenv = wizard_validate_destination(selected_dotenv, "Dotenv destination")
+    except ValueError as exc:
+        destination.write(apply_color_to_text(render_recovery_advice(classify_recovery_error(exc, "config"))) + "\n")
+        return 1
+    try:
         state = build_wizard_state(selected_config, selected_dotenv, context)
         destination.write(colorize("header", "Setup Wizard\n") + "\n")
         destination.write("This asks a few questions and writes a ready-to-run configuration.\n")
@@ -8965,6 +9015,14 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         destination.write("Secrets go to the dotenv file. Non-secret settings go to the config file.\n\n")
         _wizard_print_setup_destinations(destination, context, state)
         destination.write("\n")
+        # Asked before anything else, so a config that has to be replaced is agreed to rather than discovered at Save
+        chosen_config = wizard_choose_config_destination(state.config_path, input_func, destination)
+        if chosen_config is None:
+            destination.write("\n" + colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
+            return 1
+        if chosen_config != state.config_path:
+            state = build_wizard_state(chosen_config, selected_dotenv, context)
+            destination.write("\n")
         wizard_collect_all(state, input_func, getpass_func, destination, token_validator)
         if not wizard_review_setup(state, input_func, getpass_func, destination, token_validator):
             destination.write("\n" + colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
@@ -9131,7 +9189,7 @@ def main():
     parser = argparse.ArgumentParser(
         prog="github_monitor",
         description=(f"Monitor a GitHub user's profile and activity with customizable email or webhook alerts [ {PROJECT_URL}/ ]"), formatter_class=argparse.RawTextHelpFormatter,
-        epilog=help_examples()
+        epilog=help_examples(), **argparse_color_kwargs()
     )
 
     # Positional

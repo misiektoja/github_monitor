@@ -973,3 +973,104 @@ def test_prompts_restore_the_default_interrupt_handler(gm_module):
         assert signal.getsignal(signal.SIGINT) is gm_module.signal_handler
     finally:
         signal.signal(signal.SIGINT, previous_handler)
+
+
+# Verifies a destination that cannot be written is refused before the first question is asked
+def test_an_unwritable_destination_is_refused_before_any_question(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    output = io.StringIO()
+
+    def refuse_every_question():
+        raise AssertionError("Setup asked a question before checking its destinations")
+
+    exit_code = gm_module.run_setup_wizard(wizard_parser(), "/github_monitor_unwritable_root.conf", Path(directory.name) / ".env", input_func=refuse_every_question, stream=output, interactive=True)
+
+    transcript = output.getvalue()
+    assert exit_code == 1
+    assert "Configuration destination is not writable" in transcript
+    assert "To fix:" in transcript
+
+
+# Verifies a directory given as a destination is refused rather than failing at the save step
+def test_a_directory_destination_is_refused(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    output = io.StringIO()
+
+    exit_code = gm_module.run_setup_wizard(wizard_parser(), directory.name, Path(directory.name) / ".env", stream=output, interactive=True)
+
+    assert exit_code == 1
+    assert "must be a file path, not a directory" in output.getvalue()
+
+
+# Verifies an existing config is replaced only after the user agrees, and that a backup is kept
+def test_an_existing_config_is_replaced_only_after_it_is_agreed_to(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config_path = Path(directory.name) / "monitor.conf"
+    config_path.write_text("# earlier config\n", encoding="utf-8")
+    dotenv_path = Path(directory.name) / ".env-monitor"
+    output = io.StringIO()
+    token = "github_pat_private_wizard_value"
+
+    exit_code = gm_module.run_setup_wizard(
+        wizard_parser(),
+        config_path,
+        dotenv_path,
+        input_func=scripted_reader(["y", *minimal_setup_answers()]),
+        getpass_func=scripted_secret_reader([token]),
+        stream=output,
+        interactive=True,
+        token_validator=lambda entered, _url: "octocat" if entered == token else "",
+    )
+
+    backups = [path for path in Path(directory.name).iterdir() if path.name.startswith("monitor.conf.")]
+    assert exit_code == 0
+    assert "exists. Replace it with a fresh configuration built from defaults" in output.getvalue()
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "# earlier config\n"
+
+
+# Verifies an existing config can be kept by sending the run to another path instead
+def test_an_existing_config_can_be_redirected_to_another_path(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config_path = Path(directory.name) / "monitor.conf"
+    config_path.write_text("# earlier config\n", encoding="utf-8")
+    elsewhere = Path(directory.name) / "elsewhere.conf"
+    dotenv_path = Path(directory.name) / ".env-monitor"
+    output = io.StringIO()
+    token = "github_pat_private_wizard_value"
+
+    exit_code = gm_module.run_setup_wizard(
+        wizard_parser(),
+        config_path,
+        dotenv_path,
+        input_func=scripted_reader(["n", str(elsewhere), *minimal_setup_answers()]),
+        getpass_func=scripted_secret_reader([token]),
+        stream=output,
+        interactive=True,
+        token_validator=lambda entered, _url: "octocat" if entered == token else "",
+    )
+
+    assert exit_code == 0
+    assert config_path.read_text(encoding="utf-8") == "# earlier config\n"
+    assert "TARGET_GITHUB_USERNAME" in elsewhere.read_text(encoding="utf-8")
+
+
+# Verifies declining to replace an existing config and naming no alternative ends the run without writing
+def test_declining_an_existing_config_without_an_alternative_writes_nothing(gm_module, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config_path = Path(directory.name) / "monitor.conf"
+    config_path.write_text("# earlier config\n", encoding="utf-8")
+    dotenv_path = Path(directory.name) / ".env-monitor"
+    output = io.StringIO()
+
+    exit_code = gm_module.run_setup_wizard(wizard_parser(), config_path, dotenv_path, input_func=scripted_reader(["n", ""]), stream=output, interactive=True)
+
+    assert exit_code == 1
+    assert config_path.read_text(encoding="utf-8") == "# earlier config\n"
+    assert not dotenv_path.exists()
+    assert "Setup cancelled. Destination files were not changed." in output.getvalue()
