@@ -563,7 +563,7 @@ def bootstrap_doctor_python_report(stream=None):
     install_command = f"Install Python {MINIMUM_PYTHON_VERSION_TEXT} or newer"
     _write_plain_startup_banner(destination)
     destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
-    destination.write(f"Doctor\n\nEnvironment\n[FAIL] Python {version} is unsupported\n  Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}\nTo fix: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
+    destination.write(f"Doctor\n\nEnvironment\n[FAIL] Python {version} is unsupported\n  Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}\n  To fix: {install_command}\n")
     destination.write(f"\nSummary\n  1 check(s) failed, 0 warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
     destination.flush()
     return 1
@@ -606,7 +606,7 @@ def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
         else:
             failures += 1
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
-            destination.write(f"[FAIL] Required dependency {package_name} is missing\n  The full preflight cannot continue without this package\nTo fix: Install it with: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
+            destination.write(f"[FAIL] Required dependency {package_name} is missing\n  The full preflight cannot continue without this package\n  To fix: Install it with: {install_command}\n")
     for package_name, module_name, feature in optional:
         try:
             available = finder(module_name) is not None
@@ -617,7 +617,7 @@ def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
         else:
             warnings += 1
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
-            destination.write(f"[WARN] Optional dependency {package_name} is not installed\n  {feature[:1].upper() + feature[1:]} will not work while other features remain available\nTo fix: Install it with: {install_command}\nGuide: {DOCTOR_GUIDE_URL}\n")
+            destination.write(f"[WARN] Optional dependency {package_name} is not installed\n  {feature[:1].upper() + feature[1:]} will not work while other features remain available\n  To fix: Install it with: {install_command}\n")
     destination.write(f"\nSummary\n  {failures} check(s) failed, {warnings} warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
     destination.flush()
     return 1
@@ -7504,6 +7504,11 @@ def resolve_output_log_path(username):
     return log_path
 
 
+# The four shared status markers. A fifth neutral marker is the single biggest source of drift between these
+# tools, because every state it would cover is a state the others already call PASS
+DOCTOR_STATUSES = ("PASS", "WARN", "FAIL", "SKIP")
+
+
 @dataclass(frozen=True)
 class DoctorCheck:
     section: str
@@ -7511,7 +7516,7 @@ class DoctorCheck:
     label: str
     detail: str = ""
     fix: str = ""
-    guide: str = DOCTOR_GUIDE_URL
+    guide: str = ""
 
 
 @dataclass
@@ -7525,14 +7530,17 @@ class DoctorReport:
     email_ready: bool = False
     webhook_ready: bool = False
 
-    # Adds one validated result row to the report
-    def add(self, section, status, label, detail="", fix="", guide=DOCTOR_GUIDE_URL):
+    # Adds one validated result row to the report and returns it, so a row rendered on its own is still validated here
+    def add(self, section, status, label, detail="", fix="", guide=""):
         normalized_status = str(status).upper()
-        if normalized_status not in {"PASS", "WARN", "FAIL", "SKIP"}:
+        if normalized_status not in DOCTOR_STATUSES:
             raise ValueError(f"Unsupported doctor status {status}")
         if normalized_status != "PASS" and not fix:
             raise ValueError(f"Doctor {normalized_status} rows require a fix")
-        self.checks.append(DoctorCheck(section, normalized_status, label, detail, fix, guide))
+        # Several rows carry the same text as their label and printing it twice reads as two problems
+        check = DoctorCheck(section, normalized_status, label, "" if str(detail).strip() == str(label).strip() else detail, fix, guide)
+        self.checks.append(check)
+        return check
 
     # Counts failed checks including approved delivery tests
     @property
@@ -7949,8 +7957,10 @@ def render_doctor_check(check, stream=None):
     if check.detail:
         destination.write(f"  {sanitize_doctor_text(check.detail)}\n")
     if check.status != "PASS":
-        destination.write(colorize("info", f"To fix: {sanitize_doctor_text(check.fix)}") + "\n")
-        destination.write(f"Guide: {colorize('link', sanitize_doctor_text(check.guide))}\n")
+        destination.write(f"  {colorize('info', f'To fix: {sanitize_doctor_text(check.fix)}')}\n")
+        # The closing summary already points at the doctor page, so a row links only to a page of its own
+        if check.guide:
+            destination.write(f"  Guide: {colorize('link', sanitize_doctor_text(check.guide))}\n")
 
 
 # Renders fixed-order report sections with exactly one blank line between them
@@ -8014,12 +8024,11 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
         if approved:
             result = send_email_func("github_monitor doctor test", "This real test message confirms that doctor can deliver email.", "", SMTP_SSL, smtp_timeout=5)
             if result == 0:
-                check = DoctorCheck("Optional delivery tests", "PASS", "Test email was delivered", f"Destination: {RECEIVER_EMAIL}")
+                check = report.add("Optional delivery tests", "PASS", "Test email was delivered", f"Destination: {RECEIVER_EMAIL}")
             else:
-                check = DoctorCheck("Optional delivery tests", "FAIL", "Test email delivery failed", "The SMTP delivery function returned an error", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
+                check = report.add("Optional delivery tests", "FAIL", "Test email delivery failed", "The SMTP delivery function returned an error", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
         else:
-            check = DoctorCheck("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test", "Run doctor again and approve the email test when ready", SMTP_GUIDE_URL)
-        report.checks.append(check)
+            check = report.add("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test", "Run doctor again and approve the email test when ready", SMTP_GUIDE_URL)
         render_doctor_check(check, destination)
     if report.webhook_ready:
         provider = webhook_provider_display_name()
@@ -8027,12 +8036,11 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
         if approved:
             result = send_webhook_func("GitHub Monitor doctor test", "This real test notification confirms that doctor can deliver webhooks.", "event", force=True)
             if result == 0:
-                check = DoctorCheck("Optional delivery tests", "PASS", f"Test webhook through {provider} was delivered", f"Destination host: {diagnostic_endpoint(WEBHOOK_URL, host_only=True)}")
+                check = report.add("Optional delivery tests", "PASS", f"Test webhook through {provider} was delivered", f"Destination host: {diagnostic_endpoint(WEBHOOK_URL, host_only=True)}")
             else:
-                check = DoctorCheck("Optional delivery tests", "FAIL", f"Test webhook through {provider} failed", "The webhook delivery function returned an error", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
+                check = report.add("Optional delivery tests", "FAIL", f"Test webhook through {provider} failed", "The webhook delivery function returned an error", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
         else:
-            check = DoctorCheck("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test", "Run doctor again and approve the webhook test when ready", WEBHOOK_GUIDE_URL)
-        report.checks.append(check)
+            check = report.add("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test", "Run doctor again and approve the webhook test when ready", WEBHOOK_GUIDE_URL)
         render_doctor_check(check, destination)
 
 

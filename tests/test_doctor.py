@@ -556,11 +556,11 @@ def test_doctor_progress_is_tty_only(gm_module):
     assert piped.getvalue() == ""
 
 
-# Verifies every non-pass transcript row carries its fix and guide contract
-def test_doctor_non_pass_rows_always_render_fix_and_guide(gm_module):
+# Verifies every non-pass transcript row carries an action plus a link only when the row has a page of its own
+def test_doctor_non_pass_rows_always_render_a_fix(gm_module):
     report = gm_module.DoctorReport()
     report.add("Configuration", "WARN", "Warning row", "warning detail", "correct warning")
-    report.add("Authentication", "FAIL", "Failure row", "failure detail", "correct failure")
+    report.add("Authentication", "FAIL", "Failure row", "failure detail", "correct failure", gm_module.AUTH_GUIDE_URL)
     report.add("Optional delivery tests", "SKIP", "Skipped row", "declined", "approve later")
     output = io.StringIO()
 
@@ -569,7 +569,9 @@ def test_doctor_non_pass_rows_always_render_fix_and_guide(gm_module):
 
     transcript = output.getvalue()
     assert transcript.count("To fix:") == 3
-    assert transcript.count("Guide:") == 3
+    # The closing summary already links the doctor page, so only the row with its own page repeats a link
+    assert transcript.count("Guide:") == 1
+    assert gm_module.AUTH_GUIDE_URL in transcript
     assert {check.status for check in report.checks} == {"WARN", "FAIL", "SKIP"}
 
 
@@ -751,3 +753,36 @@ def test_doctor_details_keep_to_the_agreed_shapes(gm_module):
             offenders.append(f"{node.lineno}: the detail ends with a full stop")
 
     assert not offenders, "doctor details outside the agreed shapes:\n" + "\n".join(offenders)
+
+
+# Verifies the constructor drops a detail that only repeats its label, so no row says the same thing twice
+def test_a_detail_that_repeats_its_label_is_dropped(gm_module):
+    report = gm_module.DoctorReport()
+
+    check = report.add("Configuration", "PASS", "Output logging is disabled", "Output logging is disabled")
+
+    assert check.detail == ""
+    assert report.checks == [check]
+
+
+# Verifies only the four shared markers can reach a report
+def test_only_the_four_shared_markers_are_accepted(gm_module):
+    report = gm_module.DoctorReport()
+    assert gm_module.DOCTOR_STATUSES == ("PASS", "WARN", "FAIL", "SKIP")
+    assert [report.add("Configuration", status, "a label", "", "do the thing").status for status in gm_module.DOCTOR_STATUSES] == list(gm_module.DOCTOR_STATUSES)
+
+    with pytest.raises(ValueError):
+        report.add("Configuration", "INFO", "a label", "", "do the thing")
+
+
+# Verifies one row reads as one block: the action lines sit under the marker at the detail indent while a pass row has none
+def test_the_action_lines_sit_indented_under_their_marker(gm_module):
+    report = gm_module.DoctorReport()
+    report.add("Configuration", "WARN", "a warning row", "a detail worth keeping", "do the thing", gm_module.DOCTOR_GUIDE_URL)
+    report.add("Configuration", "PASS", "a passing row")
+    output = io.StringIO()
+
+    gm_module.render_doctor_sections(report, output)
+    rows = [line for line in output.getvalue().splitlines() if line]
+
+    assert rows[1:] == ["[WARN] a warning row", "  a detail worth keeping", "  To fix: do the thing", f"  Guide: {gm_module.DOCTOR_GUIDE_URL}", "[PASS] a passing row"]
