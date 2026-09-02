@@ -253,7 +253,8 @@ def test_doctor_offline_transcript_names_failed_paths(gm_module, monkeypatch):
     assert "[FAIL] GitHub token validation failed" in transcript
     assert "[FAIL] The connectivity endpoint could not be reached" in transcript
     assert f"Endpoint: {gm_module.diagnostic_endpoint(gm_module.CHECK_INTERNET_URL)}" in transcript
-    assert "[FAIL] GitHub target could not be checked" in transcript
+    assert "[SKIP] The monitored profile was not checked" in transcript
+    assert "could not be checked" not in transcript
 
 
 # Verifies required and optional dependency failures use different health states
@@ -1008,3 +1009,55 @@ def test_a_missing_target_warns_with_the_shared_detail(gm_module):
     rows = [check for check in report.checks if check.section == "Target"]
     assert [check.status for check in rows] == ["WARN"]
     assert rows[0].detail == "Nothing will be monitored until one is given"
+
+
+# Verifies a target that cannot be looked up is skipped rather than failed, as in every sibling
+def test_doctor_skips_the_target_and_its_feeds_without_authentication(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "TRACK_CONTRIB_CHANGES", True)
+    report = gm_module.DoctorReport(target_name="octocat", authenticated_login=None)
+
+    gm_module.doctor_check_target(report)
+    gm_module.doctor_check_monitoring(report)
+
+    skipped = [(check.section, check.label) for check in report.checks if check.status == "SKIP"]
+    assert ("Target", "The monitored profile was not checked") in skipped
+    assert ("Monitoring", "Core monitoring feeds were not checked") in skipped
+    assert ("Monitoring", "Daily contribution feed was not checked") in skipped
+    assert not any(check.status == "FAIL" for check in report.checks)
+
+
+# Verifies webhook alert types selected while the channel is off warn, since nothing would ever be delivered
+def test_doctor_warns_when_webhook_alerts_are_selected_but_switched_off(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "WEBHOOK_ENABLED", False)
+    monkeypatch.setattr(gm_module, "WEBHOOK_PROFILE_NOTIFICATION", True)
+    report = gm_module.DoctorReport()
+
+    gm_module.doctor_check_notifications(report)
+
+    webhook = report.checks[-1]
+    assert (webhook.status, webhook.label) == ("WARN", "Webhook alert types are selected but webhooks are switched off")
+    assert "WEBHOOK_ENABLED" in webhook.fix
+    assert report.webhook_ready is False
+
+
+# Verifies configured mail settings with no alert types selected warn, since nothing would ever be emailed
+def test_doctor_warns_when_email_is_configured_but_nothing_is_selected(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"):
+        monkeypatch.setattr(gm_module, name, False)
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor")
+    monkeypatch.setattr(gm_module, "SMTP_PASSWORD", "private-password")
+    monkeypatch.setattr(gm_module, "SENDER_EMAIL", "monitor@example.test")
+    monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "alerts@example.test")
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", Mock(side_effect=AssertionError("SMTP was contacted")))
+    report = gm_module.DoctorReport()
+
+    gm_module.doctor_check_notifications(report)
+
+    email = report.checks[0]
+    assert (email.status, email.label) == ("WARN", "Email is configured but no alert types are selected")
+    assert email.fix == "Turn on at least one email alert in the configuration file"
+    assert report.email_ready is False

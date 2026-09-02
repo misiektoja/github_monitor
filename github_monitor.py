@@ -7991,7 +7991,7 @@ def doctor_check_target(report, github_factory=None):
         report.add("Target", "WARN", "No GitHub target was provided", "Nothing will be monitored until one is given", f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL)
         return
     if not report.authenticated_login:
-        report.add("Target", "FAIL", "GitHub target could not be checked", f"Target: {report.target_name}", "Fix GitHub authentication then run doctor again", AUTH_GUIDE_URL)
+        report.add("Target", "SKIP", "The monitored profile was not checked", "The GitHub token did not validate, so no lookup was attempted")
         return
     try:
         report.github_client = create_github_client("doctor target validation") if github_factory is None else github_factory()
@@ -8013,7 +8013,7 @@ def doctor_probe_feed(operation, iterable_factory):
 # Adds monitoring feed, feature and read-only output path checks
 def doctor_check_monitoring(report, contribution_checker=None):
     if report.target_name and report.target_profile is None:
-        report.add("Monitoring", "FAIL", "Core monitoring feeds could not be checked", "A reachable target profile is required", "Fix the Target section then run doctor again")
+        report.add("Monitoring", "SKIP", "Core monitoring feeds were not checked", "The target profile was not fetched, so no feed was probed")
     elif report.target_profile is not None:
         feed_checks = [("Repository feed is accessible", "doctor repository feed", lambda: report.target_profile.get_repos(type='owner')), ("Starred repository feed is accessible", "doctor starred repository feed", report.target_profile.get_starred)]
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
@@ -8041,7 +8041,7 @@ def doctor_check_monitoring(report, contribution_checker=None):
         except Exception as exc:
             report.add("Monitoring", "FAIL", "Daily contribution feed is unavailable", f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check token access, timezone and GitHub GraphQL availability")
     elif TRACK_CONTRIB_CHANGES:
-        report.add("Monitoring", "FAIL", "Daily contribution feed could not be checked", "A reachable target profile is required", "Fix the Target section then run doctor again")
+        report.add("Monitoring", "SKIP", "Daily contribution feed was not checked", "The target profile was not fetched, so no lookup was attempted")
     else:
         report.add("Monitoring", "PASS", "Daily contribution tracking is disabled")
 
@@ -8122,20 +8122,23 @@ def doctor_add_email_unusable_check(report, detail, fix):
 
 # Adds channel readiness checks and stores structural delivery-test readiness
 def doctor_check_notifications(report):
-    if not doctor_email_alerts_enabled():
+    problem = email_settings_problem()
+    if not _startup_email_notification_categories() and problem is None:
+        report.add("Notifications", "WARN", "Email is configured but no alert types are selected", "Nothing would ever be emailed", "Turn on at least one email alert in the configuration file", SMTP_GUIDE_URL)
+    elif not doctor_email_alerts_enabled():
         report.add("Notifications", "PASS", "Email notifications are disabled", "No SMTP connection was attempted and no email was sent")
     else:
-        problem = email_settings_problem()
         if problem is not None:
             doctor_add_email_unusable_check(report, *problem)
         else:
             doctor_add_smtp_login_check(report)
-    if not WEBHOOK_ENABLED:
+    # The error alert ships on by default, so it alone cannot mean the channel was meant to be on
+    deliberate_webhook_types = any((WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION))
+    if not WEBHOOK_ENABLED and not deliberate_webhook_types:
         report.add("Notifications", "PASS", "Webhook alerts are disabled")
         return
-    selected_webhook_types = any((WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION))
-    if not selected_webhook_types and not WEBHOOK_ERROR_NOTIFICATION:
-        report.add("Notifications", "WARN", "Webhook alerts have no usable alert choices", "The channel is enabled but no selected alert can fire", "Enable at least one webhook alert type or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL)
+    if not WEBHOOK_ENABLED:
+        report.add("Notifications", "WARN", "Webhook alert types are selected but webhooks are switched off", "Nothing would ever be delivered", "Set WEBHOOK_ENABLED to True, or turn the alert types off", WEBHOOK_GUIDE_URL)
         return
     if not validate_webhook_url(WEBHOOK_URL):
         report.add("Notifications", "FAIL", "Webhook alerts have no valid destination", "WEBHOOK_URL must be a complete supported HTTPS destination", "Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL)
@@ -8149,6 +8152,8 @@ def doctor_check_notifications(report):
         report.add("Notifications", "FAIL", "Webhook customization is invalid", customization_error, "Correct WEBHOOK_TEMPLATE, WEBHOOK_USERNAME, WEBHOOK_AVATAR_URL or WEBHOOK_TRANSFORMS", WEBHOOK_GUIDE_URL)
     elif header_error is not None:
         report.add("Notifications", "FAIL", "Webhook headers are invalid", header_error, "Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", WEBHOOK_GUIDE_URL)
+    elif not deliberate_webhook_types and not WEBHOOK_ERROR_NOTIFICATION:
+        report.add("Notifications", "WARN", "Webhook alerts are on but no alert types are selected", "Nothing would ever be delivered", "Turn on at least one webhook alert in the configuration file, or set WEBHOOK_ENABLED to False", WEBHOOK_GUIDE_URL)
     else:
         report.webhook_ready = True
         report.add("Notifications", "PASS", f"{WEBHOOK_READY_CHECK_LABEL} for {webhook_provider_display_name()}", f"Alerts: {', '.join(_startup_webhook_notification_categories())}. The private link was not displayed. No webhook was sent during this passive check")
