@@ -658,6 +658,13 @@ def test_truncation_applies_to_every_line():
     assert monitor.truncate_string_per_line("abcdef\nabcdef", 3) == "abc\nabc"
 
 
+# Verifies truncation still applies without wcwidth, counting one column per character and skipping colour codes
+def test_truncation_falls_back_to_one_column_per_character_without_wcwidth(monkeypatch):
+    monkeypatch.setitem(sys.modules, "wcwidth", None)
+
+    assert monitor.truncate_string_per_line("\x1b[31m0123456789ABCDEF\x1b[0m\n原神原神", 4) == "\x1b[31m0123\n原神原神"
+
+
 # Verifies indented wizard hints stay plain, matching the five tools that never coloured them
 def test_indented_wizard_hints_are_not_colored():
     source = (PROJECT_ROOT / "github_monitor.py").read_text(encoding="utf-8")
