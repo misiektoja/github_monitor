@@ -9341,7 +9341,7 @@ def save_wizard_files(state):
         # Appended one at a time so a failure on the second file still exposes the first for cleanup
         for path, content in destinations:
             prepared.append(prepare_wizard_atomic_file(path, content))
-        for (path, _), temporary_path in zip(destinations, prepared):
+        for (path, _), temporary_path in zip(destinations, prepared, strict=True):
             os.replace(temporary_path, path)
             os.chmod(path, 0o600)
     finally:
