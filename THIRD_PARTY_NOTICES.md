@@ -24,6 +24,7 @@ These are not part of the distributed package.
 | --- | --- | --- |
 | [pytest](https://pypi.org/project/pytest/) | MIT | Test suite |
 | [PyYAML](https://pypi.org/project/PyYAML/) | MIT | Validating workflows and issue templates in the test suite |
+| [wcwidth](https://pypi.org/project/wcwidth/) | MIT | Display-width truncation tests. Also an optional runtime dependency that measures wide characters for `TRUNCATE_CHARS` |
 | [Ruff](https://pypi.org/project/ruff/) | MIT | Linting the module and the test suite |
 | [pip-audit](https://pypi.org/project/pip-audit/) | Apache-2.0 | Dependency vulnerability audit in the supply chain workflow |
 | [CycloneDX](https://pypi.org/project/cyclonedx-bom/) | Apache-2.0 | Software bill of materials in the supply chain workflow |
