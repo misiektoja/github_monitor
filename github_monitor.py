@@ -15,7 +15,7 @@ pytz
 tzlocal
 python-dotenv
 colorama (optional, improves classic Windows Command Prompt colour support)
-wcwidth (optional, needed by TRUNCATE_CHARS)
+wcwidth (optional, measures wide characters correctly when TRUNCATE_CHARS is set)
 """
 
 VERSION = "2.7"
@@ -740,7 +740,8 @@ def truncate_string_per_line(message, truncate_width, tabsize=8):
     try:
         from wcwidth import wcwidth
     except ImportError:
-        return message
+        # Without wcwidth every character costs one column, so truncation still applies and only wide characters are measured short
+        wcwidth = len
     truncated_lines = []
     for line in message.split("\n"):
         expanded_line = line.expandtabs(tabsize)
