@@ -48,3 +48,10 @@ regexes = [
     '''(?i)^x{8,}$''',
     '''^_+$''',
 ]
+
+[[allowlists]]
+description = "Skip diagnostic trace fields such as outcome=failed that follow a key= label"
+regexTarget = "secret"
+regexes = [
+    '''^outcome=[a-z]{1,32}$''',
+]
