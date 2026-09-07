@@ -13,12 +13,12 @@ authors = [{ name = "Michal Szymanski", email = "misiektoja-pypi@rm-rf.ninja" }]
 requires-python = ">=3.10"
 dependencies = [
   "PyGithub>=2.8.0",
-  "requests>=2.0",
-  "urllib3>=1.26",
+  "requests>=2.33.0",
+  "urllib3>=2.7.0",
   "python-dateutil>=2.8",
   "pytz>=2020.1",
   "tzlocal>=4.0",
-  "python-dotenv>=0.19",
+  "python-dotenv>=1.2.2",
 ]
 classifiers = [
   "Programming Language :: Python :: 3",
