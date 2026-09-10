@@ -139,7 +139,7 @@ def test_any_failure_alerts_both_channels_once(gm_module, monkeypatch, tmp_path)
     errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE], [(True, True)], 6)
 
     assert [(call["email"], call["webhook"]) for call in errors] == [(True, True)]
-    assert errors[0]["subject"].startswith("github_monitor: ") and errors[0]["subject"].endswith(" (user: watched)")
+    assert errors[0]["subject"] == "An unexpected error stopped the requested action (GitHub user: watched)"
     assert "To fix:" in errors[0]["body"]
     assert f"retry in {gm_module.display_time(300)}" in errors[0]["body"]
 

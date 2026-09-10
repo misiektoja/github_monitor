@@ -2733,7 +2733,7 @@ def validate_email_settings(subject="Doctor test", body="Doctor test", body_html
     return None
 
 
-# Closes one SMTP session when there is one, since a failed goodbye must not mask the real result
+# Closes an SMTP session without changing the result of an accepted or failed message
 def smtp_quit_quietly(smtp_object):
     if smtp_object is None:
         return
@@ -2741,6 +2741,10 @@ def smtp_quit_quietly(smtp_object):
         smtp_object.quit()
     except Exception as quit_error:
         debug_print("SMTP quit", outcome="failed", error=f"{type(quit_error).__name__}: {quit_error}")
+        try:
+            smtp_object.close()
+        except Exception as close_error:
+            debug_print("SMTP close", outcome="failed", error=f"{type(close_error).__name__}: {close_error}")
 
 
 # Opens one authenticated SMTP session and leaves closing it to the caller
@@ -2766,12 +2770,13 @@ def email_settings_advice(validation_error, install_context=None):
 
 
 # Sends email notification
-def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
+def send_email(subject, body, body_html, use_ssl, smtp_timeout=15, report_delivery=True):
     validation_error = validate_email_settings(subject, body, body_html)
     if validation_error is not None:
         print_recovery_advice(email_settings_advice(validation_error))
         return 1
 
+    smtpObj = None
     try:
         smtpObj = smtp_connect_and_login(use_ssl, smtp_timeout=smtp_timeout)
         email_msg = MIMEMultipart('alternative')
@@ -2790,13 +2795,15 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
             email_msg.attach(part2)
 
         smtpObj.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, email_msg.as_string())
-        smtpObj.quit()
         debug_print("SMTP delivery", outcome="OK", host=SMTP_HOST, attempt="1/1")
-        verbose_delivery_print(f"Email delivered to {RECEIVER_EMAIL}: '{subject}'")
+        if report_delivery:
+            verbose_delivery_print(f"Email sent to {RECEIVER_EMAIL}")
     except Exception as e:
         debug_print("SMTP delivery", outcome="failed", host=SMTP_HOST, attempt="1/1", error=f"{type(e).__name__}: {e}")
         print_recovery_error(e, "email")
         return 1
+    finally:
+        smtp_quit_quietly(smtpObj)
     return 0
 
 
@@ -4010,7 +4017,7 @@ def _retain_webhook_secrets(deliver):
 
 @_retain_webhook_secrets
 # Sends one webhook through an isolated bounded retry path that never uses GitHub retries
-def send_webhook(title: str, description: str, notification_type: str = "event", force: bool = False, sleeper: Optional[Callable[[float], None]] = None, image_url: str = "") -> int:
+def send_webhook(title: str, description: str, notification_type: str = "event", force: bool = False, sleeper: Optional[Callable[[float], None]] = None, image_url: str = "", report_delivery: bool = True) -> int:
     if not force and not webhook_event_enabled(notification_type):
         verbose_print(f"Webhook delivery skipped because {notification_type} alerts are disabled")
         return 1
@@ -4054,7 +4061,8 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
             retryable = response.status_code == 429 or 500 <= response.status_code <= 599
             debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", status=response.status_code, retryable=retryable)
             if 200 <= response.status_code <= 299:
-                verbose_delivery_print(f"Webhook delivered through {webhook_provider_display_name(provider)}: '{webhook_values['title']}'")
+                if report_delivery:
+                    verbose_delivery_print(f"Webhook sent through {webhook_provider_display_name(provider)}")
                 debug_print("Webhook delivery", channel=provider, outcome="OK", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 return 0
             last_error = response
@@ -7208,7 +7216,7 @@ def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, 
     elif outage_outcome == "reminder":
         print_outage_liveness(user, advice, outage.since, outage.failures)
 
-    m_subject = f"github_monitor: {advice.summary} (user: {user})"
+    m_subject = f"{advice.summary} (GitHub user: {user})"
     m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
     m_body_html = f"<html><head></head><body><b>{html_text(advice.summary)}</b><br><br>To fix: {html_text(advice.fix)}<br><br>GitHub Monitor will retry in {html.escape(display_time(GITHUB_CHECK_INTERVAL))}.{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
     # Attempted on every failing check rather than only on the report, so a channel that failed is tried again
@@ -8934,7 +8942,7 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
     if report.email_ready:
         approved = ask_doctor_approval("Send one test email now? This will deliver a real message", input_func, destination)
         if approved:
-            result = send_email_func("github_monitor: doctor test email", "This test email was sent after approval in --doctor. Your SMTP delivery settings work.", "", SMTP_SSL, smtp_timeout=5)
+            result = send_email_func("GitHub Monitor doctor test email", "This test email was sent after approval in --doctor. Your SMTP delivery settings work.", "", SMTP_SSL, smtp_timeout=5, report_delivery=False)
             if result == 0:
                 check = report.add("Optional delivery tests", "PASS", "Doctor test email delivered", "One real test email was sent after confirmation")
             else:
@@ -8947,7 +8955,7 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
         provider = webhook_provider_display_name()
         approved = ask_doctor_approval(f"Send one test webhook through {provider} now? This will publish a real notification", input_func, destination)
         if approved:
-            result = send_webhook_func("github_monitor: doctor test webhook", "This test notification was sent after approval in --doctor. Your webhook delivery settings work.", "event", force=True)
+            result = send_webhook_func("GitHub Monitor doctor test webhook", "This test notification was sent after approval in --doctor. Your webhook delivery settings work.", "event", force=True, report_delivery=False)
             if result == 0:
                 check = report.add("Optional delivery tests", "PASS", f"Doctor test webhook through {provider} delivered", "One real test webhook was sent after confirmation")
             else:
@@ -10930,7 +10938,7 @@ def main():
             print_recovery_advice(email_settings_advice(validation_error))
             sys.exit(1)
         print("* Sending test email notification ...\n")
-        if send_email("github_monitor: test email", "This test email was sent by --send-test-email. Your SMTP settings work.", "", SMTP_SSL, smtp_timeout=5) == 0:
+        if send_email("GitHub Monitor test email", "This test email was sent by --send-test-email. Your SMTP settings work.", "", SMTP_SSL, smtp_timeout=5, report_delivery=False) == 0:
             print("* Email sent successfully !")
         else:
             sys.exit(1)
@@ -10941,7 +10949,7 @@ def main():
             print_webhook_error("WEBHOOK_URL must contain a complete HTTPS link")
             sys.exit(1)
         print("* Sending test webhook notification ...\n")
-        if send_webhook("github_monitor: test webhook", "This test notification was sent by --send-test-webhook. Your webhook settings work.", "event", force=True) == 0:
+        if send_webhook("GitHub Monitor test webhook", "This test notification was sent by --send-test-webhook. Your webhook settings work.", "event", force=True, report_delivery=False) == 0:
             print("* Webhook sent successfully !")
         else:
             sys.exit(1)

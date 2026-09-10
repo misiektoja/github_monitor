@@ -233,7 +233,7 @@ def test_delivery_transcript_covers_retry_and_outcome(gm_module, monkeypatch, ca
     assert "reason=webhook HTTP 503 retry attempt 2/2" in output
     assert "attempt=2/2, status=204, retryable=False" in output
     assert "outcome=OK, attempt=2/2" in output
-    assert "Webhook delivered through Discord: 'Title'" in output
+    assert "Webhook sent through Discord" in output
     assert "private-diagnostic-token" not in output
     assert sleeps == [gm_module.WEBHOOK_FALLBACK_RETRY_SECONDS]
 
@@ -653,15 +653,15 @@ def configure_smtp(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "alerts@example.test")
 
 
-# Verifies a delivered email names where it went and what it was, the way the sibling monitors report it
-def test_the_delivered_email_names_the_recipient_and_the_subject(gm_module, monkeypatch, capsys):
+# Verifies an email receipt names its recipient
+def test_the_delivered_email_names_the_recipient(gm_module, monkeypatch, capsys):
     configure_smtp(gm_module, monkeypatch)
     monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
     monkeypatch.setattr(gm_module, "smtp_connect_and_login", lambda *args, **kwargs: FakeSMTP())
 
     assert gm_module.send_email("New release in misiektoja/github_monitor", "body", "", True) == 0
 
-    assert "* Email delivered to alerts@example.test: 'New release in misiektoja/github_monitor'" in capsys.readouterr().out
+    assert "* Email sent to alerts@example.test" in capsys.readouterr().out
 
 
 # Verifies DELIVERY_CONFIRMATIONS drops the delivery lines without turning the rest of verbose mode off
@@ -677,8 +677,8 @@ def test_delivery_confirmations_can_be_turned_off(gm_module, monkeypatch, capsys
     assert gm_module.send_webhook("Title", "Body", "profile", sleeper=lambda _seconds: None) == 0
 
     output = capsys.readouterr().out
-    assert "Email delivered" not in output
-    assert "Webhook delivered" not in output
+    assert "Email sent to" not in output
+    assert "Webhook sent through" not in output
 
 
 # Verifies verbose does not report a failed delivery twice. It adds the triage fields every recovery block
