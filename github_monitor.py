@@ -187,6 +187,10 @@ WEBHOOK_ERROR_NOTIFICATION = True
 # Values support the same placeholders as WEBHOOK_TEMPLATE
 WEBHOOK_HEADERS = {}
 
+# Optional ntfy access token for Bearer authentication
+# Prefer an environment variable or dotenv file instead of storing this token here
+NTFY_ACCESS_TOKEN = ""
+
 # ----------------------------
 # Advanced Webhook Settings
 # ----------------------------
@@ -224,10 +228,6 @@ WEBHOOK_TEMPLATE = {
 #       ("description", "strip"),
 #   ]
 WEBHOOK_TRANSFORMS = []
-
-# Optional ntfy access token for Bearer authentication
-# Prefer an environment variable or dotenv file instead of storing this token here
-NTFY_ACCESS_TOKEN = ""
 
 # How often to check for user profile changes / activities; in seconds
 # Can also be set using the -c flag
@@ -335,6 +335,13 @@ DISABLE_LOGGING = False
 #   "Off"  - preserve Unicode separators in logs
 ASCII_LOG_SEPARATORS = "Auto"
 
+# Max characters per line when printing to screen to avoid line wrapping
+# Does not affect log file output
+# Set to 999 to auto-detect terminal width
+# Applies only when DISABLE_LOGGING is False
+# Can also be set via the --truncate flag
+TRUNCATE_CHARS = 0
+
 # Width of main horizontal line
 HORIZONTAL_LINE1 = 105
 
@@ -343,20 +350,6 @@ HORIZONTAL_LINE2 = 80
 
 # Whether to clear the terminal screen after starting the tool
 CLEAR_SCREEN = True
-
-# Whether output includes user-facing decisions, degraded features and complete startup settings
-# Independent of DEBUG_MODE, so enable both to see everything
-# Can also be enabled via --verbose, which turns it on regardless of this setting
-VERBOSE_MODE = False
-
-# Whether output includes sanitized operations, requests, files, retries and poll timing
-# Independent of VERBOSE_MODE, so enable both to see everything
-# Can also be enabled via --debug, which turns it on regardless of this setting
-DEBUG_MODE = False
-
-# Whether verbose output confirms each delivered email and webhook alert
-# Applies only when VERBOSE_MODE is enabled
-DELIVERY_CONFIRMATIONS = True
 
 # Whether to use coloured output in the terminal (auto-disabled if the terminal
 # does not appear to support colours or when output is redirected to a file)
@@ -418,12 +411,19 @@ COLORED_OUTPUT = True
 #     "help_default": "bright_black",
 # }
 
-# Max characters per line when printing to screen to avoid line wrapping
-# Does not affect log file output
-# Set to 999 to auto-detect terminal width
-# Applies only when DISABLE_LOGGING is False
-# Can also be set via the --truncate flag
-TRUNCATE_CHARS = 0
+# Whether output includes user-facing decisions, degraded features and complete startup settings
+# Independent of DEBUG_MODE, so enable both to see everything
+# Can also be enabled via --verbose, which turns it on regardless of this setting
+VERBOSE_MODE = False
+
+# Whether output includes sanitized operations, requests, files, retries and poll timing
+# Independent of VERBOSE_MODE, so enable both to see everything
+# Can also be enabled via --debug, which turns it on regardless of this setting
+DEBUG_MODE = False
+
+# Whether verbose output confirms each delivered email and webhook alert
+# Applies only when VERBOSE_MODE is enabled
+DELIVERY_CONFIRMATIONS = True
 
 # Maximum number of times to retry a failed GitHub API/network call
 NET_MAX_RETRIES = 5
@@ -470,9 +470,9 @@ WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION = False
 WEBHOOK_CONTRIB_NOTIFICATION = False
 WEBHOOK_ERROR_NOTIFICATION = False
 WEBHOOK_HEADERS = {}
+NTFY_ACCESS_TOKEN = ""
 WEBHOOK_TEMPLATE = {}
 WEBHOOK_TRANSFORMS = []
-NTFY_ACCESS_TOKEN = ""
 GITHUB_CHECK_INTERVAL = 0
 LOCAL_TIMEZONE = ""
 
@@ -495,12 +495,12 @@ DOTENV_FILE = ""
 GITHUB_LOGFILE = ""
 DISABLE_LOGGING = False
 ASCII_LOG_SEPARATORS = "Auto"
+TRUNCATE_CHARS = 0
 HORIZONTAL_LINE1 = 0
 HORIZONTAL_LINE2 = 0
 CLEAR_SCREEN = False
-VERBOSE_MODE = False
-DEBUG_MODE = False
-DELIVERY_CONFIRMATIONS = True
+COLORED_OUTPUT = False
+COLOR_THEME: dict = {}
 
 # True once monitoring has printed its header, so a verbose notice after that closes its own block
 MONITORING_ACTIVE = False
@@ -514,9 +514,9 @@ DEGRADED_FEATURES: dict = {}
 # Features reported unavailable during the check in progress, so the rest can be reported as recovered
 DEGRADED_FEATURES_SEEN: set = set()
 
-COLORED_OUTPUT = False
-COLOR_THEME: dict = {}
-TRUNCATE_CHARS = 0
+VERBOSE_MODE = False
+DEBUG_MODE = False
+DELIVERY_CONFIRMATIONS = True
 NET_MAX_RETRIES = 0
 NET_BASE_BACKOFF_SEC = 0
 GITHUB_CHECK_SIGNAL_VALUE = 0
