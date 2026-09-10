@@ -2508,7 +2508,7 @@ def smtp_connect_and_login(use_ssl, smtp_timeout=15):
 
 # Returns the advice for an SMTP setting or message field that makes a delivery impossible
 def email_settings_advice(validation_error, install_context=None):
-    return make_recovery_advice("smtp.configuration", f"The SMTP settings are incorrect: {validation_error}", f"Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL then run: {render_install_command(['--send-test-email'], install_context)}", False, "", SMTP_GUIDE_URL)
+    return make_recovery_advice("smtp.invalid", f"The SMTP settings are incorrect: {validation_error}", f"Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL then run: {render_install_command(['--send-test-email'], install_context)}", False, "", SMTP_GUIDE_URL)
 
 
 # Sends email notification
@@ -2853,18 +2853,20 @@ RECOVERY_CODES = frozenset({
     "github.forbidden",
     "github.not_found",
     "github.rate_limited",
-    "network.connection",
     "network.timeout",
+    "network.unavailable",
     "secret.entry",
     "smtp.authentication",
-    "smtp.configuration",
+    "smtp.connection",
     "smtp.delivery",
+    "smtp.invalid",
     "target.missing",
     "target.not_found",
     "timezone.invalid",
+    "webhook.connection",
     "webhook.invalid",
+    "webhook.rate_limited",
     "webhook.rejected",
-    "webhook.unreachable",
     "unknown",
 })
 
@@ -3015,13 +3017,13 @@ def classify_recovery_error(error, context="unknown", install_context=None):
         timed_out = isinstance(error, (req.Timeout, TimeoutError, socket.timeout))
         summary = "The connectivity endpoint did not answer in time" if timed_out else "The connectivity endpoint could not be reached"
         # No guide, because no page covers this check and the doctor report already ends with the troubleshooting link
-        return make_recovery_advice("network.timeout" if timed_out else "network.connection", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail)
+        return make_recovery_advice("network.timeout" if timed_out else "network.unavailable", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail)
     if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
         return make_recovery_advice("network.timeout", "The network request timed out", "Check connectivity and increase the configured timeout before trying again", True, detail, DEBUG_GUIDE_URL)
     if isinstance(error, (req.ConnectionError, socket.gaierror)):
-        return make_recovery_advice("network.connection", "The configured service could not be reached", "Check the network and configured service URL then try again", True, detail, DEBUG_GUIDE_URL)
+        return make_recovery_advice("network.unavailable", "The configured service could not be reached", "Check the network and configured service URL then try again", True, detail, DEBUG_GUIDE_URL)
     if isinstance(error, req.RequestException):
-        return make_recovery_advice("network.connection", "The configured service request failed", "Check the network and configured service URL then try again", True, detail, DEBUG_GUIDE_URL)
+        return make_recovery_advice("network.unavailable", "The configured service request failed", "Check the network and configured service URL then try again", True, detail, DEBUG_GUIDE_URL)
     if isinstance(error, BadCredentialsException):
         return make_recovery_advice("auth.github_token_invalid", "GitHub rejected the configured token", f"Create or review the token then run: {token_command}", False, detail, AUTH_GUIDE_URL)
     if isinstance(error, RateLimitExceededException):
@@ -3053,8 +3055,8 @@ def classify_recovery_error(error, context="unknown", install_context=None):
         if isinstance(error, (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError)):
             return make_recovery_advice("smtp.delivery", "The mail server refused the message", "Check SENDER_EMAIL and RECEIVER_EMAIL, then confirm the server accepts mail from this sender", False, detail, SMTP_GUIDE_URL)
         if isinstance(error, MailConfigurationError):
-            return make_recovery_advice("smtp.configuration", sanitize_error_text(error), "Set the named settings in the config file, or run --setup, then run the command again", False, detail, SMTP_GUIDE_URL)
-        return make_recovery_advice("smtp.configuration", "The SMTP server could not be reached", "Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", True, detail, SMTP_GUIDE_URL)
+            return make_recovery_advice("smtp.invalid", sanitize_error_text(error), "Set the named settings in the config file, or run --setup, then run the command again", False, detail, SMTP_GUIDE_URL)
+        return make_recovery_advice("smtp.connection", "The SMTP server could not be reached", "Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", True, detail, SMTP_GUIDE_URL)
     if selected_context == "config":
         # The parser already names the line and setting, so the summary carries it instead of only --debug
         reason = sanitize_error_text(error)
@@ -3498,11 +3500,13 @@ def webhook_failure_advice(message: Any, source: Any = None) -> RecoveryAdvice:
     lowered = summary.casefold()
     webhook_command = render_install_command(["--send-test-webhook"])
     detail = webhook_failure_detail(origin) or summary
+    status = webhook_failure_status(origin)
+    if status == 429 or "rate limit" in lowered:
+        return make_recovery_advice("webhook.rate_limited", "The webhook service is rate limiting deliveries", "Reduce how many alert types are enabled, or wait for the service to accept deliveries again", True, detail, WEBHOOK_GUIDE_URL)
     if any(term in lowered for term in ("must contain", "must be discord", "could not be formatted", "header", "priority", "tags")):
         return make_recovery_advice("webhook.invalid", summary or "The webhook configuration is not usable", f"Check WEBHOOK_URL, WEBHOOK_PROVIDER and the alert settings then run: {webhook_command}", False, detail, WEBHOOK_GUIDE_URL)
     if any(term in lowered for term in ("could not be reached", "connection", "timed out", "timeout")):
-        return make_recovery_advice("webhook.unreachable", "The webhook service could not be reached", "Check connectivity and the webhook host, then try again", True, detail, WEBHOOK_GUIDE_URL)
-    status = webhook_failure_status(origin)
+        return make_recovery_advice("webhook.connection", "The webhook service could not be reached", "Check connectivity and the webhook host, then try again", True, detail, WEBHOOK_GUIDE_URL)
     return make_recovery_advice("webhook.rejected", summary or "The webhook service refused the delivery", f"Confirm the webhook still exists and the URL is current then run: {webhook_command}", status is not None and status >= 500, detail, WEBHOOK_GUIDE_URL)
 
 

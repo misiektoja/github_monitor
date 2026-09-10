@@ -615,7 +615,7 @@ def test_a_refused_webhook_delivery_carries_the_shared_error_block(gm_module, mo
 @pytest.mark.parametrize("message, code", [
     ("WEBHOOK_URL must contain a complete HTTPS link", "webhook.invalid"),
     ("WEBHOOK_PROVIDER must be discord or ntfy", "webhook.invalid"),
-    ("The webhook service could not be reached (ConnectionError)", "webhook.unreachable"),
+    ("The webhook service could not be reached (ConnectionError)", "webhook.connection"),
     ("The webhook delivery did not complete", "webhook.rejected"),
 ])
 # Verifies each webhook failure reaches its own code rather than one catch-all the taxonomy cannot distinguish

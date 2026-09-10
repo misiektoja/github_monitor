@@ -904,7 +904,7 @@ def test_setup_abandoned_mail_server_sign_in_switches_email_off(gm_module, reque
 # Verifies an unreachable mail server keeps the answers, since being offline is the usual reason a correct setup fails here
 def test_setup_unreachable_mail_server_keeps_the_answers(gm_module, request, monkeypatch):
     state = fresh_wizard_state(gm_module, request)
-    advice = gm_module.make_recovery_advice("smtp.configuration", "The SMTP server could not be reached", "Check SMTP_HOST", True)
+    advice = gm_module.make_recovery_advice("smtp.connection", "The SMTP server could not be reached", "Check SMTP_HOST", True)
     monkeypatch.setattr(gm_module, "wizard_verify_smtp", lambda values, secrets: advice)
     output = io.StringIO()
 

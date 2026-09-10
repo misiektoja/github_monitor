@@ -27,7 +27,7 @@ def test_recovery_rendering_redacts_secrets_at_both_boundaries(gm_module, monkey
     webhook_url = "https://discord.com/api/webhooks/123/private-recovery-value"
     monkeypatch.setattr(gm_module, "GITHUB_TOKEN", github_token)
     monkeypatch.setattr(gm_module, "WEBHOOK_URL", webhook_url)
-    advice = gm_module.make_recovery_advice("network.connection", f"Request failed for {github_token}", "Check the connection", True, f"Authorization: Bearer {github_token} at {webhook_url}", gm_module.DEBUG_GUIDE_URL)
+    advice = gm_module.make_recovery_advice("network.unavailable", f"Request failed for {github_token}", "Check the connection", True, f"Authorization: Bearer {github_token} at {webhook_url}", gm_module.DEBUG_GUIDE_URL)
 
     normal = gm_module.render_recovery_advice(advice, verbose=False, debug=False)
     debug = gm_module.render_recovery_advice(advice, verbose=False, debug=True)
@@ -35,7 +35,7 @@ def test_recovery_rendering_redacts_secrets_at_both_boundaries(gm_module, monkey
     assert github_token not in normal + debug
     assert webhook_url not in normal + debug
     assert "Technical detail:" not in normal
-    assert "Recovery code: network.connection" in debug
+    assert "Recovery code: network.unavailable" in debug
     assert "Retryable: Yes" in debug
     assert "Technical detail:" in debug
     assert "<redacted>" in debug
@@ -68,11 +68,34 @@ def test_recovery_classifier_maps_representative_failures(gm_module, error, cont
     assert advice.retryable is retryable
 
 
+# Verifies a rate limited webhook is reported as itself, since waiting it out is not the fix for an unreachable host
+def test_a_rate_limited_webhook_is_not_reported_as_unreachable(gm_module):
+    class Throttled(Exception):
+        def __init__(self):
+            super().__init__("Too Many Requests")
+            self.response = SimpleNamespace(status_code=429)
+
+    throttled = Throttled()
+    advice = gm_module.webhook_failure_advice(str(throttled), throttled)
+
+    assert advice.code == "webhook.rate_limited"
+    assert advice.retryable is True
+    assert "rate limiting deliveries" in advice.summary
+
+
+# Verifies the taxonomy uses the names the sibling monitors report the same conditions under
+def test_the_taxonomy_uses_the_shared_names(gm_module):
+    declared = set(gm_module.RECOVERY_CODES)
+
+    assert {"network.unavailable", "smtp.invalid", "smtp.connection", "webhook.connection", "webhook.rate_limited"} <= declared
+    assert not {"network.connection", "smtp.configuration", "webhook.unreachable"} & declared
+
+
 # The connectivity check has no page of its own, and its fix already names the setting to look at
 def test_the_connectivity_advice_carries_no_guide_link(gm_module):
     advice = gm_module.classify_recovery_error(gm_module.req.ConnectionError("offline"), "connectivity")
 
-    assert advice.code == "network.connection"
+    assert advice.code == "network.unavailable"
     assert advice.fix == "Check network, DNS, proxy and CHECK_INTERNET_URL settings"
     assert advice.guide_url == ""
 
