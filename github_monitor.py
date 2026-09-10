@@ -2767,9 +2767,11 @@ def mask_secret(value, visible=3):
 
 
 # Redacts known values and common credential shapes from arbitrary error text
-def sanitize_error_text(value):
+def sanitize_error_text(value, extra_secrets=()):
     text = str(value or "")
-    for secret in sorted(known_secret_values(), key=len, reverse=True):
+    # A value being checked before it is saved is held by the caller and by no global, so it is passed in instead
+    entered = [secret for secret in extra_secrets if isinstance(secret, str) and len(secret) >= MIN_REDACTABLE_SECRET_LENGTH]
+    for secret in sorted(known_secret_values() + entered, key=len, reverse=True):
         text = text.replace(secret, "<redacted>")
     patterns = (
         (r"(?m)(\b(?:GITHUB_TOKEN|SMTP_PASSWORD|WEBHOOK_URL|NTFY_ACCESS_TOKEN)\b\s*=\s*).*$", r"\1<redacted>"),
@@ -6574,7 +6576,14 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
     finally:
         DEBUG_MODE = previous_debug_mode
     check = smtp_sign_in if sign_in is None else sign_in
-    signed_in_user = check(smtp_password, timeout=WIZARD_SMTP_TIMEOUT)
+    try:
+        signed_in_user = check(smtp_password, timeout=WIZARD_SMTP_TIMEOUT)
+    except RecoveryError:
+        raise
+    except Exception as exc:
+        # The sign-in restores the previous password before the failure reaches here, so the value that was tried
+        # is passed to the redaction explicitly rather than left to the global it would otherwise read
+        raise RecoveryError(classify_recovery_error(exc, context="email", detail=sanitize_error_text(exc, (smtp_password,)), install_context=install_context), exc) from None
     update_dotenv_file(destination, {"SMTP_PASSWORD": smtp_password})
     paths = []
     if config_path:

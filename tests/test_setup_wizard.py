@@ -1010,11 +1010,32 @@ def test_set_smtp_password_keeps_the_dotenv_file_on_a_refused_sign_in(gm_module,
     configure_mail(gm_module, monkeypatch)
     refuse = Mock(side_effect=gm_module.smtplib.SMTPAuthenticationError(535, b"authentication failed"))
 
-    with pytest.raises(gm_module.smtplib.SMTPAuthenticationError):
+    with pytest.raises(gm_module.RecoveryError):
         gm_module.run_set_smtp_password(str(destination), interactive=True, getpass_func=lambda prompt: "wrong", sign_in=refuse)
 
     assert destination.read_text(encoding="utf-8") == "UNRELATED=stay\n"
     assert gm_module.classify_recovery_error(refuse.side_effect, "email").code == "smtp.authentication"
+
+
+# Several providers quote the credentials back in the rejection reply, and the sign-in has already restored the
+# previous password by then, so the value that was tried has to reach the redaction from the caller
+def test_a_reply_quoting_the_password_is_redacted(gm_module, request, monkeypatch, capsys):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    destination = Path(directory.name) / ".env-monitor"
+    configure_mail(gm_module, monkeypatch)
+    echo = Mock(side_effect=gm_module.smtplib.SMTPAuthenticationError(535, b"5.7.8 Not accepted. Sent: pass=app-password-value"))
+
+    with pytest.raises(gm_module.RecoveryError) as error:
+        gm_module.run_set_smtp_password(str(destination), interactive=True, getpass_func=lambda prompt: "app-password-value", sign_in=echo)
+
+    advice = error.value.advice
+    rendered = " ".join((advice.summary, advice.fix, advice.detail))
+    assert "app-password-value" not in rendered
+    assert "<redacted>" in advice.detail
+    assert advice.code == "smtp.authentication"
+    assert "app-password-value" not in capsys.readouterr().out
+    assert not destination.exists()
 
 
 # Verifies the command refuses to prompt without an interactive terminal
