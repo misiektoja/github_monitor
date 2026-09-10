@@ -45,6 +45,10 @@ If you want to monitor changes to a user's public repositories (e.g. new stargaz
 github_monitor github_username -j
 ```
 
+By default, missing issues, pull requests and discussions are reported as closed only after a separate lookup confirms their closed state. Verification uses at most five extra HTTP requests per monitoring cycle across all repositories, with no automatic retries or redirects. Pending items take turns across cycles. Title and author edits do not count as closures or additions.
+
+Items that remain open, cannot be verified or exceed the budget stay in the previous snapshot, preventing false closure and addition alerts when they reappear. Deleted, transferred or inaccessible items are not reported as closed without confirmation, so their counts can remain unchanged. Set `VERIFY_REPOSITORY_CLOSURES = False` in the configuration file to restore immediate disappearance-based alerts without verification requests.
+
 By default, only user-owned repos are tracked. To include forks and collaborations, set `GET_ALL_REPOS` to `True` or use the `-a` flag:
 
 ```sh

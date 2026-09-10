@@ -287,6 +287,8 @@ It is generally not recommended to use values lower than 10 minutes as new event
 
 `NET_MAX_RETRIES` defaults to 5 and counts the first request as an attempt. `NET_BASE_BACKOFF_SEC` sets the base retry delay and defaults to 5 seconds. GitHub rate-limit headers can specify a different wait. If a monitored feed remains unavailable after its attempts, its previous snapshot is kept and monitoring tries again on the next check.
 
+`VERIFY_REPOSITORY_CLOSURES` defaults to `True`. Missing issues, pull requests and discussions require confirmation of their closed state, with a separate fixed limit of five extra HTTP requests per monitoring cycle across all repositories. These lookups do not use `NET_MAX_RETRIES` or follow redirects. Unverified items stay in the previous snapshot and are checked again on later cycles. Set `VERIFY_REPOSITORY_CLOSURES = False` to restore immediate disappearance-based alerts without verification requests. See [Monitoring Mode](usage.md#monitoring-mode).
+
 An interval below 30 seconds invites the GitHub rate limiter, which stops the tool seeing anything. `--doctor` warns when the configured interval is that short.
 
 
