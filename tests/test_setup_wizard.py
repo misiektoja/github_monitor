@@ -187,10 +187,39 @@ def test_setup_wizard_writes_reviewed_config_and_secrets(gm_module, request):
     assert gm_module.parse_config_content(config_content, str(config_path))["GITHUB_CHECK_INTERVAL"] == 1800
     assert gm_module.parse_config_content(config_content, str(config_path))["TARGET_GITHUB_USERNAME"] == "octocat"
     assert f"DOTENV_FILE = {str(dotenv_path.resolve())!r}" in config_content
-    assert "GITHUB_TOKEN" not in config_content
+    # The written file is the shipped template with the answers filled in, so the secret keeps its placeholder line
+    assert token not in config_content
+    assert 'GITHUB_TOKEN = "your_github_classic_personal_access_token"' in config_content
+    assert config_content.count("\nWEBHOOK_TEMPLATE = {\n") == 1
+    assert "# Optional saved target used when no positional GitHub username is supplied" in config_content
     assert token in dotenv_content
     assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(dotenv_path.stat().st_mode) == 0o600
+
+
+# Verifies the configuration renderer keeps the template placeholder for every secret whatever the values hold
+def test_the_configuration_renderer_never_writes_a_secret(gm_module):
+    values = {name: "leaked-secret-value" for name in gm_module.SECRET_KEYS}
+    rendered = gm_module.generate_config_with_current_values(values)
+
+    assert "leaked-secret-value" not in rendered
+
+
+# Verifies a setting still holding the shipped default keeps the template's own lines rather than a collapsed repr
+def test_an_unchanged_setting_keeps_the_template_formatting(gm_module):
+    rendered = gm_module.generate_config_with_current_values(dict(gm_module._config_template_defaults()))
+
+    assert rendered == gm_module.CONFIG_BLOCK.strip("\n") + "\n"
+
+
+# Verifies a changed setting is rewritten in place, replacing every line of the value it stood for
+def test_a_changed_setting_replaces_the_whole_template_value(gm_module):
+    values = dict(gm_module._config_template_defaults())
+    values["WEBHOOK_TEMPLATE"] = {"content": "one line"}
+    rendered = gm_module.generate_config_with_current_values(values)
+
+    assert "WEBHOOK_TEMPLATE = {'content': 'one line'}\n" in rendered
+    assert gm_module.parse_config_content(rendered)["WEBHOOK_TEMPLATE"] == {"content": "one line"}
 
 
 # Verifies cancellation cannot leave a partial config or dotenv file
@@ -305,7 +334,9 @@ def test_setup_save_backs_up_only_the_config_and_migrates_config_secrets(gm_modu
     assert Path(config_backup).read_text(encoding="utf-8") == config_original
     assert stat.S_IMODE(Path(config_backup).stat().st_mode) == 0o600
     assert [entry.name for entry in Path(directory.name).iterdir() if entry.name.endswith(".bak")] == [Path(config_backup).name]
-    assert "GITHUB_TOKEN" not in config_path.read_text(encoding="utf-8")
+    written_config = config_path.read_text(encoding="utf-8")
+    assert "legacy-config-token" not in written_config and "new-private-token" not in written_config
+    assert 'GITHUB_TOKEN = "your_github_classic_personal_access_token"' in written_config
     dotenv_content = dotenv_path.read_text(encoding="utf-8")
     assert 'UNRELATED="keep"' in dotenv_content
     assert 'GITHUB_TOKEN="new-private-token"' in dotenv_content
