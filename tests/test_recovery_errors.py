@@ -341,18 +341,6 @@ def test_a_changed_failure_category_is_reported_in_full(gm_module, monkeypatch, 
     assert "* Monitoring recovered for misiektoja after 1 minute" in output
 
 
-# Verifies the monitoring loop classifies its own failures instead of printing raw exception text
-def test_the_monitoring_loop_classifies_its_failures(gm_module):
-    source = inspect.getsource(gm_module.github_monitor_user)
-
-    assert 'classify_recovery_error(e, "target")' in source
-    assert "outage.failed(advice)" in source
-    assert "print_outage_liveness(user, advice, outage.since, outage.failures)" in source
-    assert "print_outage_recovery(user, outage_lasted)" in source
-    assert '"Forbidden"' not in source, "the loop must classify failures rather than match exception text"
-    assert '"Bad Request"' not in source, "the loop must classify failures rather than match exception text"
-
-
 # Verifies a named sub-operation keeps the shared line shape rather than inventing its own
 def test_a_labelled_failure_keeps_the_shared_shape(gm_module, capsys):
     advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
@@ -372,15 +360,6 @@ def test_the_liveness_banner_explains_itself_without_diagnostics(gm_module, monk
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == "* Monitoring healthy for misiektoja. No tracked change since the last check"
     assert lines[1].startswith("Liveness check, timestamp:")
-
-
-# Verifies the monitoring loop reports its healthy banner through the shared helper
-def test_the_loop_reports_its_healthy_banner_unconditionally(gm_module):
-    source = inspect.getsource(gm_module.github_monitor_user)
-
-    assert "print_liveness_banner(f\"Monitoring healthy for {user}." in source
-    assert "verbose_print(f\"Monitoring healthy" not in source, "the healthy banner is no longer verbose-only"
-    assert "int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS" in source, "the healthy banner is timed rather than counted"
 
 
 # Verifies a CSV row that cannot be written carries a fix and the page documenting the export

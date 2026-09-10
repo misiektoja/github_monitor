@@ -88,7 +88,7 @@ def recording_channels(gm_module, monkeypatch, outcomes):
 
 
 # Runs the real loop against the fake client until the given number of sleeps and returns the error alerts it handed out
-def error_alerts_for(gm_module, monkeypatch, tmp_path, lookups, delivery_outcomes, stop_after):
+def error_alerts_for(gm_module, monkeypatch, tmp_path, lookups, delivery_outcomes, stop_after, check_interval=300, liveness_seconds=None):
     calls = recording_channels(gm_module, monkeypatch, delivery_outcomes)
     sleeps = []
     now = [1_800_000_000.0]
@@ -102,8 +102,8 @@ def error_alerts_for(gm_module, monkeypatch, tmp_path, lookups, delivery_outcome
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(gm_module.time, "sleep", stopping_sleep)
     monkeypatch.setattr(gm_module.time, "time", lambda: now[0])
-    monkeypatch.setattr(gm_module, "GITHUB_CHECK_INTERVAL", 300)
-    monkeypatch.setattr(gm_module, "LIVENESS_REMINDER_SECONDS", 100 * 300)
+    monkeypatch.setattr(gm_module, "GITHUB_CHECK_INTERVAL", check_interval)
+    monkeypatch.setattr(gm_module, "LIVENESS_REMINDER_SECONDS", liveness_seconds if liveness_seconds is not None else 100 * check_interval)
     monkeypatch.setattr(gm_module, "TRACK_CONTRIB_CHANGES", False)
     monkeypatch.setattr(gm_module, "GET_ALL_REPOS", False)
     monkeypatch.setattr(gm_module, "DEBUG_MODE", False)
@@ -219,3 +219,33 @@ def test_a_lasting_outage_is_carried_by_the_hourly_reminder(gm_module, monkeypat
     assert output.count("* Monitoring degraded for watched. ") == 2
     assert ", 4 failed checks\n" in output and ", 7 failed checks\n" in output
     assert output.count("Liveness check, timestamp:") == 2
+
+
+# Verifies an outage the next check clears is announced on screen, not only ended in the alert state
+def test_a_check_that_succeeds_after_a_failure_announces_the_recovery(gm_module, monkeypatch, tmp_path, capsys):
+    error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE, OUTAGE, None], [(True, True)], 5)
+
+    output = capsys.readouterr().out
+    assert output.count("* Error:") == 1
+    assert output.count("* Monitoring recovered for watched after ") == 1
+
+
+# Verifies a run that never fails announces no recovery, so the line marks a real return rather than every check
+def test_a_run_that_never_fails_announces_no_recovery(gm_module, monkeypatch, tmp_path, capsys):
+    error_alerts_for(gm_module, monkeypatch, tmp_path, [None], [(True, True)], 5)
+
+    output = capsys.readouterr().out
+    assert "* Monitoring recovered" not in output
+    assert "* Error:" not in output
+
+
+# Verifies the healthy banner reaches a plain run and follows elapsed time rather than a count of checks, so the
+# same five checks report it once at a five-minute interval and three times at a fifteen-minute one
+@pytest.mark.parametrize("check_interval,expected", [(300, 1), (900, 3)])
+def test_the_healthy_banner_reaches_a_plain_run_on_its_own_clock(gm_module, monkeypatch, tmp_path, capsys, check_interval, expected):
+    error_alerts_for(gm_module, monkeypatch, tmp_path, [None], [(True, True)], 5, check_interval=check_interval, liveness_seconds=900)
+
+    lines = capsys.readouterr().out.splitlines()
+    banners = [number for number, line in enumerate(lines) if line == "* Monitoring healthy for watched. No tracked change since the last check"]
+    assert len(banners) == expected
+    assert all(lines[number + 1].startswith("Liveness check, timestamp:") for number in banners)
