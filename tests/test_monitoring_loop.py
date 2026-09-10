@@ -1,9 +1,11 @@
 """Offline tests for the primary monitoring loop's failure handling and the alerts it delivers."""
 
 import datetime
+import json
 from itertools import count
 
 import pytest
+import requests
 
 
 # Ends one monitoring run deterministically once the harness has counted enough sleeps
@@ -105,6 +107,17 @@ def error_alerts_for(gm_module, monkeypatch, tmp_path, lookups, delivery_outcome
     monkeypatch.setattr(gm_module.time, "time", lambda: now[0])
     monkeypatch.setattr(gm_module, "GITHUB_CHECK_INTERVAL", check_interval)
     monkeypatch.setattr(gm_module, "LIVENESS_REMINDER_SECONDS", liveness_seconds if liveness_seconds is not None else 100 * check_interval)
+    # Supplies the real HTTP responses used by the independent block-status check
+    def transport(session, request, **kwargs):
+        response = requests.Response()
+        response.request = request
+        response.url = request.url
+        response.status_code = 200
+        response._content = json.dumps({"login": "viewer"} if request.url.endswith("/user") else {"data": {"user": {"viewerCanFollow": True}}}).encode()
+        return response
+
+    monkeypatch.setattr(requests.Session, "send", transport)
+    monkeypatch.setattr(gm_module, "TRACK_REPOS_CHANGES", False)
     monkeypatch.setattr(gm_module, "TRACK_CONTRIB_CHANGES", False)
     monkeypatch.setattr(gm_module, "GET_ALL_REPOS", False)
     monkeypatch.setattr(gm_module, "DEBUG_MODE", False)

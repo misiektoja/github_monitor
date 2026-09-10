@@ -333,7 +333,7 @@ def test_setup_save_backs_up_only_the_config_and_migrates_config_secrets(gm_modu
 
     config_backup = gm_module.save_wizard_files(state)
 
-    assert Path(config_backup).read_text(encoding="utf-8") == config_original
+    assert Path(config_backup).read_text(encoding="utf-8") == 'GITHUB_CHECK_INTERVAL = 60\nGITHUB_TOKEN = ""\n'
     assert stat.S_IMODE(Path(config_backup).stat().st_mode) == 0o600
     assert [entry.name for entry in Path(directory.name).iterdir() if entry.name.endswith(".bak")] == [Path(config_backup).name]
     written_config = config_path.read_text(encoding="utf-8")

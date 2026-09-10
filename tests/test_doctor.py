@@ -446,7 +446,7 @@ def test_doctor_output_path_checks_are_read_only(gm_module, monkeypatch, request
     assert not csv_path.exists()
     assert not Path(f"{log_path}_octocat.log").exists()
     rows = {(check.section, check.label) for check in report.checks}
-    assert ("Configuration", "CSV destination appears writable") in rows
+    assert any(check.status == "FAIL" and check.label.startswith("CSV destination is not writable") for check in report.checks)
     assert ("Configuration", "Log destination appears writable") in rows
 
 

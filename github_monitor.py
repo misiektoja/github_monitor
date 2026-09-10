@@ -516,6 +516,9 @@ DEGRADED_FEATURES: dict = {}
 # Features reported unavailable during the check in progress, so the rest can be reported as recovered
 DEGRADED_FEATURES_SEEN: set = set()
 
+# Failures from the current check, retained until all enabled monitoring paths have finished
+MONITOR_CHECK_FAILURES: dict = {}
+
 VERBOSE_MODE = False
 DEBUG_MODE = False
 DELIVERY_CONFIRMATIONS = True
@@ -1132,6 +1135,13 @@ def _colorize_quoted_name(match, style_name=None):
     return f"{match.group(1)}{colorize(style_name, name)}{match.group(3)}"
 
 
+# Colors a count transition using decimal text comparison without unbounded integer conversion
+def _colorize_count_change(match):
+    before, after = ("".join(str(int(digit)) for digit in match.group(index)).lstrip("0") or "0" for index in (2, 4))
+    style = "count_up" if (len(after), after) >= (len(before), before) else "count_down"
+    return f"{match.group(1)}{colorize(style, match.group(2))}{match.group(3)}{colorize(style, match.group(4))}"
+
+
 # Applies the configured colour rules to one output line
 def _colorize_line(line):
     lowered = line.lower()
@@ -1186,7 +1196,7 @@ def _colorize_line(line):
             colored = f"{label}{colorize(style_name, rest)}"
             return colored + ("\n" if line.endswith("\n") else "")
     line = _sub_outside_color(_USER_TAG_RE, lambda match: f"{match.group(1)}{match.group(2)}{colorize('username', match.group(3))}", line)
-    line = _sub_outside_color(_FROM_TO_COUNT_RE, lambda match: f"{match.group(1)}{colorize('count_up' if int(match.group(4)) >= int(match.group(2)) else 'count_down', match.group(2))}{match.group(3)}{colorize('count_up' if int(match.group(4)) >= int(match.group(2)) else 'count_down', match.group(4))}", line)
+    line = _sub_outside_color(_FROM_TO_COUNT_RE, _colorize_count_change, line)
     line = _sub_outside_color(_DIFF_COUNT_UP_RE, lambda match: colorize("count_up", match.group(0)), line)
     line = _sub_outside_color(_DIFF_COUNT_DOWN_RE, lambda match: colorize("count_down", match.group(0)), line)
     line = _sub_outside_color(_DURATION_RE, lambda match: colorize("duration", match.group(0)), line)
@@ -2659,7 +2669,7 @@ def email_settings_problem():
         port = int(SMTP_PORT)
         if not (1 <= port <= 65535):
             raise ValueError
-    except ValueError:
+    except (TypeError, ValueError, OverflowError):
         return ("SMTP_PORT is not a port number between 1 and 65535", "Correct SMTP_PORT or turn the email alerts off")
     if not email_re.search(str(SENDER_EMAIL)) or not email_re.search(str(RECEIVER_EMAIL)):
         return ("SENDER_EMAIL or RECEIVER_EMAIL is not an email address", "Correct SENDER_EMAIL and RECEIVER_EMAIL or turn the email alerts off")
@@ -2872,12 +2882,13 @@ def sanitize_debug_params(params):
 def diagnostic_endpoint(url, host_only=False):
     try:
         parsed = urlsplit(str(url or "").strip())
+        selected_port = parsed.port
     except ValueError as exc:
         debug_print("Could not parse diagnostic endpoint", outcome="failed", error=f"{type(exc).__name__}: {exc}")
         return "<invalid endpoint>"
     if not parsed.scheme or not parsed.hostname:
         return sanitize_error_text(url)
-    port = f":{parsed.port}" if parsed.port else ""
+    port = f":{selected_port}" if selected_port else ""
     endpoint = f"{parsed.scheme}://{parsed.hostname}{port}"
     if not host_only:
         endpoint += parsed.path or ""
@@ -2907,6 +2918,8 @@ def verbose_degraded_feature(feature, alert, error=None):
     else:
         debug_print(feature, outcome="degraded", alert=alert)
     if MONITORING_ACTIVE:
+        if error is not None or feature not in MONITOR_CHECK_FAILURES:
+            MONITOR_CHECK_FAILURES[feature] = error
         DEGRADED_FEATURES_SEEN.add(feature)
         # An outage that lasts is news once, so the repeats are left to debug until the feature works again
         if DEGRADED_FEATURES.get(feature) == alert:
@@ -2922,6 +2935,7 @@ def verbose_degraded_feature(feature, alert, error=None):
 def reset_degraded_features():
     DEGRADED_FEATURES.clear()
     DEGRADED_FEATURES_SEEN.clear()
+    MONITOR_CHECK_FAILURES.clear()
 
 
 # Reports every feature that was unavailable before this check and worked during it
@@ -2943,10 +2957,10 @@ def debug_monitor_check_start(check_number, user):
 
 
 # Logs one completed monitoring poll with its duration and schedule
-def debug_monitor_check_timing(check_number, user, started_at, interval):
+def debug_monitor_check_timing(check_number, user, started_at, interval, outcome="OK"):
     duration = max(0.0, time.monotonic() - started_at)
     next_check = datetime.now() + dt.timedelta(seconds=interval)
-    debug_print("Completed monitoring check", check=f"#{check_number}", user=user, outcome="OK", duration=f"{duration:.3f}s", next=next_check.astimezone().isoformat(), interval=display_time(interval))
+    debug_print("Completed monitoring check", check=f"#{check_number}", user=user, outcome=outcome, duration=f"{duration:.3f}s", next=next_check.astimezone().isoformat(), interval=display_time(interval))
 
 
 # Logs one scheduled wait with its reason and next timestamp
@@ -3439,6 +3453,9 @@ class StartupSummaryRow:
 
 # Records where one secret resolved from and traces it, so a later layer overwrites the earlier answer instead of adding to it
 def record_secret_source(name, source, value=None):
+    if source == "command line" and DOTENV_RELOAD_STATE:
+        DOTENV_RELOAD_STATE["base"][name] = globals().get(name) if value is None else value
+        DOTENV_RELOAD_STATE.setdefault("base_sources", {})[name] = source
     if source not in SECRET_SOURCE_ORDER:
         raise ValueError(f"Unsupported secret source: {source}")
     resolved = globals().get(name) if value is None else value
@@ -3842,7 +3859,7 @@ def webhook_failure_status(source: Any) -> Optional[int]:
 # Returns the service response body a webhook failure carries, kept for the technical detail line --debug prints
 def webhook_failure_detail(source: Any) -> str:
     body = getattr(getattr(source, "response", source), "text", "")
-    return str(body)[:200] if isinstance(body, str) else ""
+    return sanitize_webhook_text(body)[:200] if isinstance(body, str) else ""
 
 
 # Maps one webhook configuration or delivery failure to the advice naming the setting or condition to check
@@ -4309,6 +4326,44 @@ def decrease_check_signal_handler(sig, frame):
     print_cur_ts("Timestamp:\t\t\t")
 
 
+DOTENV_RELOAD_STATE = {}
+
+
+# Names the effective source after a file-owned secret is reloaded or removed
+def dotenv_reload_source(key):
+    if key in DOTENV_RELOAD_STATE.get("managed", ()):
+        return "dotenv file reload" if "dotenv file reload" in SECRET_SOURCE_ORDER else "dotenv file"
+    return DOTENV_RELOAD_STATE.get("base_sources", {}).get(key, "environment" if key in DOTENV_RELOAD_STATE.get("exported", ()) else SECRET_SOURCE_ORDER[0])
+
+
+# Loads dotenv values and reconciles removed file-owned secrets without changing startup precedence
+def load_managed_dotenv(path, override=False, interpolate=True, protected_keys=()):
+    from io import StringIO
+    from dotenv.main import DotEnv
+    from dotenv.parser import parse_stream
+    if not override and not Path(path).is_file():
+        return False
+    content = Path(path).read_text(encoding="utf-8")
+    if override:
+        malformed = next((binding for binding in parse_stream(StringIO(content)) if binding.error), None)
+        if malformed is not None:
+            raise ValueError(f"Dotenv syntax error near line {malformed.original.line}. Correct the assignment and reload again")
+    values = DotEnv(dotenv_path=None, stream=StringIO(content), override=override, interpolate=interpolate).dict()
+    if not override or not DOTENV_RELOAD_STATE:
+        DOTENV_RELOAD_STATE.clear()
+        DOTENV_RELOAD_STATE.update(base={key: os.environ.get(key, globals().get(key, "")) for key in SECRET_KEYS}, exported=set(os.environ).intersection(SECRET_KEYS), managed=set())
+    protected = set(protected_keys)
+    applied = {key for key, value in values.items() if value is not None and key not in protected and (override or key not in os.environ)}
+    removed = DOTENV_RELOAD_STATE["managed"] - applied - protected
+    for key in removed:
+        value = DOTENV_RELOAD_STATE["base"].get(key)
+        os.environ[key] = "" if value is None else str(value)
+    for key in applied:
+        os.environ[key] = str(values[key])
+    DOTENV_RELOAD_STATE["managed"] = applied.intersection(SECRET_KEYS)
+    return bool(values)
+
+
 # Signal handler for SIGHUP allowing to reload secrets from .env
 def reload_secrets_signal_handler(sig, frame):
     global GITHUB_AUTH_REFRESH_VERSION, WEBHOOK_PROVIDER, SECRET_SOURCES
@@ -4321,14 +4376,14 @@ def reload_secrets_signal_handler(sig, frame):
     else:
         # reload .env if python-dotenv is installed
         try:
-            from dotenv import load_dotenv, find_dotenv
+            from dotenv import find_dotenv
             if DOTENV_FILE:
                 env_path = DOTENV_FILE
             else:
                 env_path = find_dotenv()
             if env_path:
                 debug_print("Reading dotenv file for signal reload", path=env_path)
-                load_dotenv(env_path, override=True)
+                load_managed_dotenv(env_path, override=True)
                 debug_print("Dotenv signal reload succeeded", path=env_path)
             else:
                 print("* No .env file found, skipping env-var reload")
@@ -4351,7 +4406,7 @@ def reload_secrets_signal_handler(sig, frame):
                 globals()[secret] = val
                 # A placeholder written back into the dotenv file clears the secret rather than becoming one
                 if secret_is_set(val):
-                    record_secret_source(secret, "dotenv file reload", val)
+                    record_secret_source(secret, dotenv_reload_source(secret), val)
                 else:
                     # A cleared secret is a change the trace has to show, which the recorder stays silent about
                     SECRET_SOURCES.pop(secret, None)
@@ -4453,9 +4508,9 @@ def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = N
                     print(f"* {fn.__name__} error: {sanitize_error_text(e)} (retry {i}/{retries})")
                     debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{retries}", delay)
                     time.sleep(delay)
-        verbose_degraded_feature(f"GitHub operation {fn.__name__}", "its dependent alerts")
         if raise_on_failure and last_error is not None:
             raise last_error
+        verbose_degraded_feature(f"GitHub operation {fn.__name__}", "its dependent alerts", last_error)
         debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="default", after=f"{retries} attempts")
         return default
     return wrapped
@@ -4489,7 +4544,7 @@ def github_repo_exists(full_name):
         return None
 
 
-# Builds a bracketed note when a removed list item vanished because its account or repository is gone, empty otherwise
+# Builds a bracketed availability note for removed accounts and repositories
 def removed_item_note(label, item, user=None):
     label_lower = label.lower()
     if label_lower in ("stargazers", "watchers", "followers", "followings"):
@@ -4500,10 +4555,10 @@ def removed_item_note(label, item, user=None):
             return " (owner account no longer exists)"
     elif label_lower == "starred repos":
         if github_repo_exists(item) is False:
-            return " (repository no longer exists)"
+            return " (repository is no longer accessible)"
     elif label_lower == "repos" and user:
         if github_repo_exists(f"{user}/{item}") is False:
-            return " (repository no longer exists)"
+            return " (repository is no longer accessible)"
     return ""
 
 
@@ -6234,7 +6289,7 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
         debug_print("Dotenv loading disabled by configuration or command line")
     else:
         try:
-            from dotenv import dotenv_values, find_dotenv, load_dotenv
+            from dotenv import dotenv_values, find_dotenv
 
             if DOTENV_FILE:
                 env_path = DOTENV_FILE
@@ -6248,14 +6303,14 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
                 else:
                     debug_print("Reading dotenv file", path=env_path)
                     dotenv_keys = {str(name) for name in dotenv_values(env_path) if name in SECRET_KEYS}
-                    load_dotenv(env_path, override=False)
+                    load_managed_dotenv(env_path, override=False)
                     debug_print("Dotenv file loaded", path=env_path, secret_names=sorted(dotenv_keys))
             else:
                 env_path = find_dotenv() or None
                 if env_path:
                     debug_print("Reading discovered dotenv file", path=env_path)
                     dotenv_keys = {str(name) for name in dotenv_values(env_path) if name in SECRET_KEYS}
-                    load_dotenv(env_path, override=False)
+                    load_managed_dotenv(env_path, override=False)
                     debug_print("Discovered dotenv file loaded", path=env_path, secret_names=sorted(dotenv_keys))
                 else:
                     debug_print("No dotenv file discovered")
@@ -6988,6 +7043,39 @@ def report_unavailable_profile_field(label, value, unavailable):
         verbose_degraded_feature(f"Profile {label}", f"{label} change alerts")
 
 
+# Reports one failed monitoring check and retries only error-alert channels that still owe delivery
+def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage):
+    # A failure that has not changed is left to the liveness cadence rather than repeated every check
+    outage_outcome = outage.failed(advice)
+    delivery_reported = False
+    if outage_outcome == "full":
+        print_recovery_advice(advice, tracker=monitor_recovery_tracker, retry_note=f"retrying in {display_time(GITHUB_CHECK_INTERVAL)}")
+    elif outage_outcome == "changed":
+        print_outage_change(user, advice)
+    elif outage_outcome == "reminder":
+        print_outage_liveness(user, advice, outage.since, outage.failures)
+
+    m_subject = f"github_monitor: {advice.summary} (user: {user})"
+    m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
+    m_body_html = f"<html><head></head><body><b>{html_text(advice.summary)}</b><br><br>To fix: {html_text(advice.fix)}<br><br>GitHub Monitor will retry in {html.escape(display_time(GITHUB_CHECK_INTERVAL))}.{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
+    # Attempted on every failing check rather than only on the report, so a channel that failed is tried again
+    # A failure the tool can retry away is alerted once the outage has lasted ERROR_ALERT_AFTER_SECONDS, one it cannot at once
+    alert_due = not advice.retryable or int(time.time()) - outage.since >= ERROR_ALERT_AFTER_SECONDS
+    now = int(time.time())
+    error_email_pending = alert_due and error_alert.pending("email", ERROR_NOTIFICATION, now)
+    error_webhook_pending = alert_due and error_alert.pending("webhook", webhook_event_enabled("error"), now)
+    if error_email_pending or error_webhook_pending:
+        email_delivered, webhook_delivered = send_notification_channels("error", m_subject, m_body, m_body_html, error_email_pending, error_webhook_pending)
+        error_alert.record("email", error_email_pending, email_delivered, now)
+        error_alert.record("webhook", error_webhook_pending, webhook_delivered, now)
+        delivery_reported = True
+
+    # A retry can reach the screen on a check the outage reporter keeps quiet, and a delivery line
+    # with nothing under it reads as a run that stopped there
+    if outage_outcome in ("full", "changed") or delivery_reported:
+        print_cur_ts("Timestamp:\t\t\t")
+
+
 # Monitors activity of the specified GitHub user
 def github_monitor_user(user, csv_file_name):
 
@@ -7241,6 +7329,8 @@ def github_monitor_user(user, csv_file_name):
     # Primary loop
     while True:
         check_number += 1
+        MONITOR_CHECK_FAILURES.clear()
+        DEGRADED_FEATURES_SEEN.clear()
         reports_before_check = REPORTS_PRINTED
         check_started_at = debug_monitor_check_start(check_number, user)
 
@@ -7256,45 +7346,12 @@ def github_monitor_user(user, csv_file_name):
                 print("* GitHub API client recreated after token reload")
             debug_github_operation("monitored user profile refresh", user)
             g_user = g.get_user(user)
-            error_alert.reset()
-            monitor_recovery_tracker.reset()
-            outage_lasted = outage.recovered()
-            if outage_lasted is not None:
-                print_outage_recovery(user, outage_lasted)
 
         except (GithubException, Exception) as e:
             verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
             advice = classify_recovery_error(e, "target")
 
-            # A failure that has not changed is left to the liveness cadence rather than repeated every check
-            outage_outcome = outage.failed(advice)
-            delivery_reported = False
-            if outage_outcome == "full":
-                print_recovery_advice(advice, tracker=monitor_recovery_tracker, retry_note=f"retrying in {display_time(GITHUB_CHECK_INTERVAL)}")
-            elif outage_outcome == "changed":
-                print_outage_change(user, advice)
-            elif outage_outcome == "reminder":
-                print_outage_liveness(user, advice, outage.since, outage.failures)
-
-            m_subject = f"github_monitor: {advice.summary} (user: {user})"
-            m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
-            m_body_html = f"<html><head></head><body><b>{html_text(advice.summary)}</b><br><br>To fix: {html_text(advice.fix)}<br><br>GitHub Monitor will retry in {html.escape(display_time(GITHUB_CHECK_INTERVAL))}.{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
-            # Attempted on every failing check rather than only on the report, so a channel that failed is tried again
-            # A failure the tool can retry away is alerted once the outage has lasted ERROR_ALERT_AFTER_SECONDS, one it cannot at once
-            alert_due = not advice.retryable or int(time.time()) - outage.since >= ERROR_ALERT_AFTER_SECONDS
-            now = int(time.time())
-            error_email_pending = alert_due and error_alert.pending("email", ERROR_NOTIFICATION, now)
-            error_webhook_pending = alert_due and error_alert.pending("webhook", webhook_event_enabled("error"), now)
-            if error_email_pending or error_webhook_pending:
-                email_delivered, webhook_delivered = send_notification_channels("error", m_subject, m_body, m_body_html, error_email_pending, error_webhook_pending)
-                error_alert.record("email", error_email_pending, email_delivered, now)
-                error_alert.record("webhook", error_webhook_pending, webhook_delivered, now)
-                delivery_reported = True
-
-            # A retry can reach the screen on a check the outage reporter keeps quiet, and a delivery line
-            # with nothing under it reads as a run that stopped there
-            if outage_outcome in ("full", "changed") or delivery_reported:
-                print_cur_ts("Timestamp:\t\t\t")
+            report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage)
             debug_print("Completed monitoring check", check=f"#{check_number}", user=user, outcome="failed", code=advice.code, error=f"{type(e).__name__}: {e}")
             debug_monitor_wait_timing("monitored user refresh failure", GITHUB_CHECK_INTERVAL)
             time.sleep(GITHUB_CHECK_INTERVAL)
@@ -7367,20 +7424,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed contributions in a day
         if TRACK_CONTRIB_CHANGES:
-            contrib_notify, contrib_curr, contrib_error_notify = check_daily_contribs(user, GITHUB_TOKEN, contrib_state, min_delta=1, fail_threshold=3)
-            if contrib_error_notify and (ERROR_NOTIFICATION or webhook_event_enabled("error")):
-                failures = contrib_state.get("consecutive_failures", 0)
-                last_err = contrib_state.get("last_error", "Unknown error")
-                err_msg = f"Error: GitHub daily contributions check failed {failures} times. Last error: {last_err}\n"
-                print(err_msg)
-                err_msg_html = (
-                    f"<html><head></head><body>"
-                    f"Error: GitHub daily contributions check failed <b>{failures}</b> times. Last error: <b>{html.escape(str(last_err))}</b><br>"
-                    f"{get_cur_ts('<br>Timestamp: ')}"
-                    f"</body></html>"
-                )
-                send_notification_channels("error", f"GitHub monitor errors for {user}", err_msg + get_cur_ts(nl_ch + "Timestamp: "), err_msg_html, ERROR_NOTIFICATION)
-
+            contrib_notify, contrib_curr, _ = check_daily_contribs(user, GITHUB_TOKEN, contrib_state, min_delta=1, fail_threshold=3)
             if contrib_notify:
                 contrib_old = contrib_state.get("prev_count")
                 print(f"* Daily contributions changed for user {user} on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}!\n")
@@ -7916,17 +7960,29 @@ def github_monitor_user(user, csv_file_name):
             else:
                 verbose_degraded_feature("Recent events", "new event alerts")
 
+        if MONITOR_CHECK_FAILURES:
+            failures = [(feature, classify_recovery_error(error) if error is not None else make_recovery_advice("github.api_error", "The monitoring check did not return usable data", recovery_fix_with_guide("Check connectivity and resource access, then let the next check retry", DEBUG_GUIDE_URL), True)) for feature, error in MONITOR_CHECK_FAILURES.items()]
+            feature, advice = next(((feature, advice) for feature, advice in failures if not advice.retryable), failures[0])
+            advice = make_recovery_advice(advice.code, f"{feature}: {advice.summary}", advice.fix, advice.retryable, advice.detail)
+            report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage)
+        else:
+            error_alert.reset()
+            monitor_recovery_tracker.reset()
+            outage_lasted = outage.recovered()
+            if outage_lasted is not None:
+                print_outage_recovery(user, outage_lasted)
+
         report_recovered_features()
         close_pending_notice_block()
 
         # The banner speaks for a quiet check, so anything this one reported restarts the clock instead of being contradicted by it
         if REPORTS_PRINTED != reports_before_check:
             alive_since = int(time.time())
-        elif LIVENESS_REMINDER_SECONDS and int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS:
+        elif not MONITOR_CHECK_FAILURES and LIVENESS_REMINDER_SECONDS and int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS:
             print_liveness_banner(f"Monitoring healthy for {user}. No tracked change since the last check")
             alive_since = int(time.time())
 
-        debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL)
+        debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL, outcome="degraded" if MONITOR_CHECK_FAILURES else "OK")
         debug_monitor_wait_timing("normal monitoring interval", GITHUB_CHECK_INTERVAL)
         time.sleep(GITHUB_CHECK_INTERVAL)
 
@@ -8174,6 +8230,8 @@ def validate_github_endpoint_url(value):
         return False
     try:
         parsed = urlsplit(value.strip())
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            return False
     except ValueError as exc:
         debug_swallowed_exception("GitHub endpoint parsing", exc)
         return False
@@ -8424,19 +8482,19 @@ def doctor_existing_parent(path):
 
 
 # Adds one read-only output destination check without creating anything
-def doctor_add_path_check(report, label, path):
+def doctor_add_path_check(report, label, path, creates_parents=False):
     selected = Path(path).expanduser()
     if selected.exists():
         writable = selected.is_file() and os.access(selected, os.W_OK)
         detail = f"Path: {selected}"
     else:
-        parent = doctor_existing_parent(selected)
+        parent = doctor_existing_parent(selected) if creates_parents else selected.parent
         writable = parent.is_dir() and os.access(parent, os.W_OK)
         detail = f"Path: {selected}"
     if writable:
         report.add("Configuration", "PASS", f"{label} appears writable", detail)
     else:
-        advice = make_recovery_advice("file.unwritable", f"{label} is not writable: {selected}", recovery_fix_with_guide(f"Choose a writable path for the {label.lower()} or correct its parent permissions", CONFIG_GUIDE_URL), False)
+        advice = make_recovery_advice("file.unwritable", f"{label} is not writable: {selected}", recovery_fix_with_guide(f"Choose a writable path for the {label.lower()} or create its parent directory and correct its permissions", CONFIG_GUIDE_URL), False)
         report.add("Configuration", "FAIL", advice.summary, detail, advice)
 
 
@@ -8449,7 +8507,7 @@ def doctor_check_output_paths(report):
     if DISABLE_LOGGING:
         report.add("Configuration", "PASS", "Output logging is disabled")
     elif report.target_name:
-        doctor_add_path_check(report, "Log destination", resolve_output_log_path(report.target_name))
+        doctor_add_path_check(report, "Log destination", resolve_output_log_path(report.target_name), creates_parents=True)
     else:
         # The log file name carries the target, so it is only resolved once a target is known
         report.add("Configuration", "PASS", "Log destination will be finalized after a target is selected", f"Base path: {Path(os.path.expanduser(GITHUB_LOGFILE))}")
@@ -9670,12 +9728,57 @@ def render_wizard_dotenv(state):
     return render_private_settings(existing, updates)
 
 
+# Removes inline secret assignments from a setup backup while preserving other configuration text
+def redact_config_backup(content):
+    import ast
+    try:
+        text = content.decode("utf-8")
+        tree = ast.parse(text)
+    except (UnicodeError, SyntaxError) as exc:
+        raise ValueError("Cannot create a secret-free configuration backup. Correct the existing file's UTF-8 encoding or assignment syntax before running setup") from exc
+    lines = text.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line.encode("utf-8")))
+    replacements = []
+    secret_values = set()
+    for statement in ast.walk(tree):
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+        if any(isinstance(target, ast.Name) and target.id in SECRET_KEYS for target in targets):
+            value = statement.value
+            if value is not None and value.end_lineno is not None and value.end_col_offset is not None:
+                start = offsets[value.lineno - 1] + value.col_offset
+                end = offsets[value.end_lineno - 1] + value.end_col_offset
+                replacements.append((start, end))
+                if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value:
+                    secret_values.add(value.value)
+    for start, end in sorted(replacements, reverse=True):
+        content = content[:start] + b'""' + content[end:]
+    import io
+    import tokenize
+    text = content.decode("utf-8")
+    lines = text.splitlines(keepends=True)
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type == tokenize.COMMENT:
+            comment = token.string
+            for secret in sorted(secret_values, key=len, reverse=True):
+                comment = comment.replace(secret, "<redacted>")
+            row, start = token.start
+            end = token.end[1]
+            lines[row - 1] = lines[row - 1][:start] + comment + lines[row - 1][end:]
+    return "".join(lines).encode("utf-8")
+
+
 # Copies an existing file to a timestamped owner-only .bak beside it, returning the backup path or None when there was nothing to copy
-def create_timestamped_backup(destination, attempts=100):
+def create_timestamped_backup(destination, attempts=100, redact_secrets=False):
     destination_path = Path(destination).expanduser()
     if not destination_path.is_file():
         return None
     existing_bytes = destination_path.read_bytes()
+    if redact_secrets:
+        existing_bytes = redact_config_backup(existing_bytes)
     stamp = datetime.now().strftime("%Y%m%d%H%M%S")
     for attempt in range(attempts):
         suffix = f".{stamp}.bak" if attempt == 0 else f".{stamp}-{attempt}.bak"
@@ -9770,7 +9873,7 @@ def save_wizard_files(state):
     config_content = render_wizard_config(state)
     dotenv_content = render_wizard_dotenv(state)
     # Only the configuration is backed up: a copy of the credentials being replaced is the one thing not worth keeping
-    config_backup = create_timestamped_backup(state.config_path)
+    config_backup = create_timestamped_backup(state.config_path, redact_secrets=True)
     # A dotenv with nothing in it is noise beside the config, so an empty one is never created
     destinations = [(state.config_path, config_content)]
     if dotenv_content.strip() or state.dotenv_path.exists():

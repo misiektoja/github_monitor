@@ -59,11 +59,15 @@ def test_diagnostic_printers_keep_broad_runtime_coverage():
 
 
 # Verifies the completed check stays a debug trace, since one verbose line per cycle buried the events worth reading
-def test_the_completed_check_is_a_debug_only_trace():
-    source = (PROJECT_ROOT / "github_monitor.py").read_text(encoding="utf-8")
-
-    assert "Monitoring check #" not in source
-    assert "debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL)" in source
+def test_the_completed_check_is_a_debug_only_trace(gm_module, monkeypatch, capsys):
+    monkeypatch.setattr(gm_module, "DEBUG_MODE", False)
+    gm_module.debug_monitor_check_timing(1, "watched", gm_module.time.monotonic(), 30, outcome="degraded")
+    assert capsys.readouterr().out == ""
+    monkeypatch.setattr(gm_module, "DEBUG_MODE", True)
+    gm_module.debug_monitor_check_timing(1, "watched", gm_module.time.monotonic(), 30, outcome="degraded")
+    output = capsys.readouterr().out
+    assert "Completed monitoring check" in output
+    assert "degraded" in output
 
 
 # Verifies a verbose notice prints its lines then closes the block with the shared timestamp trailer

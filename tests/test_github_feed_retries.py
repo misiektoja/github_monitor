@@ -101,3 +101,49 @@ def test_retry_settings_reach_the_request_and_preserve_failure(gm_module, monkey
         gm_module.gh_call(lambda: list(client.get_user("watched").get_events()), raise_on_failure=True)()
     assert caught.value.status == 403
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("feed", ["following", "followers", "repos", "starred", "events"])
+# Alerts once per failed-feed outage and re-arms only after a complete successful check
+def test_failed_feed_alerts_until_whole_check_recovers(gm_module, monkeypatch, capsys, restored_globals, feed):
+    gm = gm_module
+    settings = {"GITHUB_TOKEN": "synthetic-token", "GITHUB_CHECK_INTERVAL": 0, "NET_MAX_RETRIES": 1, "NET_BASE_BACKOFF_SEC": 0, "TRACK_REPOS_CHANGES": False, "TRACK_CONTRIB_CHANGES": False, "DO_NOT_MONITOR_GITHUB_EVENTS": False, "WEBHOOK_ENABLED": True, "WEBHOOK_ERROR_NOTIFICATION": True, "WEBHOOK_PROVIDER": "ntfy", "WEBHOOK_URL": "https://ntfy.sh/synthetic-test-topic", "ERROR_NOTIFICATION": False, "EVENT_NOTIFICATION": False, "LIVENESS_REMINDER_SECONDS": 0}
+    for key, value in settings.items():
+        monkeypatch.setattr(gm, key, value)
+    lookups = 0
+    deliveries = []
+
+    # Returns repeated feed failures around one healthy check through the real PyGithub transport
+    def send(session, request, **kwargs):
+        nonlocal lookups
+        path = urlsplit(request.url).path
+        if request.url.startswith("https://ntfy.sh/"):
+            deliveries.append(lookups)
+            return github_response(request, {"id": "synthetic-delivery"})
+        if path == "/users/watched":
+            lookups += 1
+            if lookups == 6:
+                raise MonitorComplete
+            payload = profile_payload("watched")
+            payload.update(followers=0, following=0, public_repos=0)
+            return github_response(request, payload)
+        if path == "/graphql":
+            return github_response(request, {"data": {"user": {"viewerCanFollow": True}}})
+        if path == "/user":
+            return github_response(request, profile_payload("viewer"))
+        if path == f"/users/watched/{feed}" and lookups in {2, 3, 5}:
+            return github_response(request, {"message": "Bad credentials"}, 401)
+        if request.url.startswith("https://github.com/"):
+            response = github_response(request, {})
+            response._content = b"<html><body>Activity is private</body></html>"
+            return response
+        if path in {"/users/watched/following", "/users/watched/followers", "/users/watched/repos", "/users/watched/starred", "/users/watched/events"}:
+            return github_response(request, [])
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    monkeypatch.setattr(requests.Session, "send", send)
+    with pytest.raises(MonitorComplete):
+        gm.github_monitor_user("watched", "")
+    assert deliveries == [2, 5]
+    output = capsys.readouterr().out
+    assert "GitHub rejected the configured token" in output

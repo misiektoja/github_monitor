@@ -12,8 +12,8 @@ def test_removed_item_note_variants(gm_module, monkeypatch):
     assert gm_module.removed_item_note("Followers", "ghosted") == " (account no longer exists)"
     assert gm_module.removed_item_note("Followings", "ghosted") == " (account no longer exists)"
     assert gm_module.removed_item_note("Forks", "ghosted/monitor") == " (owner account no longer exists)"
-    assert gm_module.removed_item_note("Starred Repos", "ghosted/monitor") == " (repository no longer exists)"
-    assert gm_module.removed_item_note("Repos", "gone", "owner") == " (repository no longer exists)"
+    assert gm_module.removed_item_note("Starred Repos", "ghosted/monitor") == " (repository is no longer accessible)"
+    assert gm_module.removed_item_note("Repos", "gone", "owner") == " (repository is no longer accessible)"
     assert gm_module.removed_item_note("Discussions", "#7 How should this work? (octocat)") == ""
 
 
