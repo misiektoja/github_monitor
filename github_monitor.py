@@ -2920,6 +2920,11 @@ def recovery_fix_with_guide(fix, guide_url):
     return f"{fix}\nGuide: {guide_url}"
 
 
+# Escapes text for an HTML email body and keeps its line breaks, which HTML would otherwise collapse into spaces
+def html_text(text):
+    return html.escape(text).replace("\n", "<br>")
+
+
 # Returns the advice a cancelled secret entry reports, worded the same way by every one-shot secret command
 def secret_entry_cancelled_advice(subject, flag, guide_url):
     return make_recovery_advice("secret.entry", f"{subject[:1].upper()}{subject[1:]} setup was cancelled and the dotenv file was not changed", recovery_fix_with_guide(f"Run {flag} again when you have the value ready", guide_url), False)
@@ -6919,7 +6924,7 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"github_monitor: {advice.summary} (user: {user})"
             m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
-            m_body_html = f"<html><head></head><body><b>{html.escape(advice.summary)}</b><br><br>To fix: {html.escape(advice.fix)}<br><br>GitHub Monitor will retry in {html.escape(display_time(GITHUB_CHECK_INTERVAL))}.{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
+            m_body_html = f"<html><head></head><body><b>{html_text(advice.summary)}</b><br><br>To fix: {html_text(advice.fix)}<br><br>GitHub Monitor will retry in {html.escape(display_time(GITHUB_CHECK_INTERVAL))}.{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
             # Attempted on every failing check rather than only on the report, so a channel that failed is tried again
             # A failure the tool can retry away is alerted once the outage has lasted ERROR_ALERT_AFTER_SECONDS, one it cannot at once
             alert_due = not advice.retryable or int(time.time()) - outage.since >= ERROR_ALERT_AFTER_SECONDS
