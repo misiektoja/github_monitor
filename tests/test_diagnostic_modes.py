@@ -53,7 +53,7 @@ def test_diagnostic_printers_keep_broad_runtime_coverage():
     calls = [node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
 
     assert calls.count("debug_print") >= 70
-    assert calls.count("verbose_print") >= 14
+    assert calls.count("verbose_print") >= 10
     assert source.count("debug_github_operation(") >= 40
     assert "except Exception:" not in source
 
@@ -229,7 +229,7 @@ def test_delivery_transcript_covers_retry_and_outcome(gm_module, monkeypatch, ca
     assert "reason=webhook HTTP 503 retry attempt 2/2" in output
     assert "attempt=2/2, status=204, retryable=False" in output
     assert "outcome=OK, attempt=2/2" in output
-    assert "Webhook delivery through discord succeeded" in output
+    assert "Webhook delivered through discord: Title" in output
     assert "private-diagnostic-token" not in output
     assert sleeps == [gm_module.WEBHOOK_FALLBACK_RETRY_SECONDS]
 
@@ -429,3 +429,58 @@ def test_a_redirected_stdout_is_never_cleared(gm_module, monkeypatch):
     gm_module.clear_screen(True)
 
     assert commands == []
+
+
+class FakeSMTP:
+    # Accepts one message without contacting a server, so a delivery transcript can be read offline
+    def __init__(self):
+        self.sent = []
+
+    # Records the message the caller handed over
+    def sendmail(self, sender, recipient, message):
+        self.sent.append((sender, recipient, message))
+
+    # Ends the session the way a real one is ended
+    def quit(self):
+        return None
+
+
+# Configures one usable SMTP destination for delivery transcript tests
+def configure_smtp(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(gm_module, "SMTP_PORT", 587)
+    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+    monkeypatch.setattr(gm_module, "SMTP_PASSWORD", "private-diagnostic-password")
+    monkeypatch.setattr(gm_module, "SENDER_EMAIL", "monitor@example.test")
+    monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "alerts@example.test")
+
+
+# Verifies a delivered email names where it went and what it was, the way the sibling monitors report it
+def test_the_delivered_email_names_the_recipient_and_the_subject(gm_module, monkeypatch, capsys):
+    configure_smtp(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", lambda *args, **kwargs: FakeSMTP())
+
+    assert gm_module.send_email("New release in misiektoja/github_monitor", "body", "", True) == 0
+
+    assert "* Email delivered to alerts@example.test: New release in misiektoja/github_monitor" in capsys.readouterr().out
+
+
+# Verifies verbose adds no line to a failed delivery, since the error printed under it is not conditional
+# on verbose and a second line would report the same failure twice
+def test_a_failed_delivery_reads_the_same_with_verbose_on(gm_module, monkeypatch, capsys):
+    configure_smtp(gm_module, monkeypatch)
+    configure_webhook(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", Mock(side_effect=OSError("the server refused the connection")))
+    monkeypatch.setattr(gm_module.WEBHOOK_SESSION, "post", Mock(return_value=FakeResponse(404)))
+    transcripts = {}
+
+    for verbose in (False, True):
+        monkeypatch.setattr(gm_module, "VERBOSE_MODE", verbose)
+        assert gm_module.send_email("subject", "body", "", True) == 1
+        assert gm_module.send_webhook("Title", "Body", "profile", sleeper=lambda seconds: None) == 1
+        transcripts[verbose] = capsys.readouterr().out
+
+    assert transcripts[True] == transcripts[False]
+    assert transcripts[True].count("Error sending email:") == 1
+    assert transcripts[True].count("Error sending webhook:") == 1
