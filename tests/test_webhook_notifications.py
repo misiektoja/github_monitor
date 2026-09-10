@@ -338,3 +338,35 @@ def test_the_test_messages_use_the_shared_wording(gm_module, monkeypatch):
 
     assert email.call_args.args[:2] == ("GitHub Monitor test email", "This test email was sent by --send-test-email. Your SMTP settings work.")
     assert delivery.call_args.args[:2] == ("GitHub Monitor test webhook", "This test notification was sent by --send-test-webhook. Your webhook settings work.")
+
+
+# Verifies a link whose text repeats its destination reaches Discord bare, because a masked link there prints as plain text
+def test_self_labeled_links_stay_bare_in_discord_markdown(gm_module):
+    body_html = (
+        "<html><head></head><body>"
+        "* Repo '<b>instagram_monitor</b>' update date changed<br>"
+        "* Repo URL: <a href=\"https://github.com/misiektoja/instagram_monitor\">https://github.com/misiektoja/instagram_monitor</a><br>"
+        "</body></html>"
+    )
+    markdown = gm_module.html_body_to_discord_markdown(body_html)
+    assert "* Repo URL: https://github.com/misiektoja/instagram_monitor" in markdown
+    assert "[https://" not in markdown
+
+
+# Verifies a link with its own text keeps the masked form Discord renders as a hyperlink
+def test_labeled_links_keep_the_masked_discord_form(gm_module):
+    assert gm_module.html_body_to_discord_markdown("Review by <a href=\"https://github.com/octocat\">@octocat</a>") == "Review by [@octocat](https://github.com/octocat)"
+    assert gm_module.html_body_to_discord_markdown("- <a href=\"https://github.com/a/b/issues/12\"><b>#12 Fix it</b></a><br>") == "- [**#12 Fix it**](https://github.com/a/b/issues/12)"
+
+
+# Verifies an image link becomes its alt text or a bare URL instead of an empty masked link
+def test_image_links_never_produce_an_empty_discord_label(gm_module):
+    with_alt = "<a href=\"https://example.com/i\"><img src=\"https://example.com/x.png\" alt=\"Screenshot\"></a>"
+    without_alt = "<a href=\"https://example.com/i\"><img src=\"https://example.com/x.png\"></a>"
+    assert gm_module.html_body_to_discord_markdown(with_alt) == "[Screenshot](https://example.com/i)"
+    assert gm_module.html_body_to_discord_markdown(without_alt) == "https://example.com/i"
+
+
+# Verifies an escaped query string reaches Discord as the real URL rather than as HTML entities
+def test_discord_markdown_unescapes_link_destinations(gm_module):
+    assert gm_module.html_body_to_discord_markdown("<a href=\"https://example.com/q?a=1&amp;b=2\">https://example.com/q?a=1&amp;b=2</a>") == "https://example.com/q?a=1&b=2"
