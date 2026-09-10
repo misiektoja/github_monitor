@@ -1376,7 +1376,7 @@ def test_a_rejected_target_can_be_entered_again(gm_module, request):
 
 # Verifies the port question rejects a number no TCP port can be, instead of saving it for the doctor to reject
 def test_the_smtp_port_question_rejects_a_number_above_the_port_range(gm_module):
-    answers = iter(["70000", "2525"])
+    answers = iter(["70000", "y", "2525"])
     destination = io.StringIO()
 
     chosen = gm_module.wizard_ask_positive_int("SMTP port", 587, maximum=65535, input_func=lambda: next(answers), stream=destination)
@@ -1387,7 +1387,7 @@ def test_the_smtp_port_question_rejects_a_number_above_the_port_range(gm_module)
 
 # Verifies declining the retry offer keeps the saved value rather than asking the same question forever
 def test_declining_the_retry_offer_keeps_the_saved_number(gm_module):
-    answers = iter(["", "n"])
+    answers = iter(["70000", "n"])
     destination = io.StringIO()
 
     assert gm_module.wizard_ask_positive_int("SMTP port", 587, maximum=65535, input_func=lambda: next(answers), stream=destination) == 587
@@ -1410,3 +1410,15 @@ def test_a_declined_required_question_returns_empty(gm_module):
     destination = io.StringIO()
 
     assert gm_module.wizard_ask_text("SMTP host", "", input_func=lambda: next(answers), stream=destination, required=True) == ""
+
+
+# Verifies declining the retry offer after a value the wizard cannot use keeps the default rather than asking again
+def test_a_rejected_duration_keeps_the_default(gm_module):
+    answers = iter(["later", "n"])
+    destination = io.StringIO()
+
+    assert gm_module.wizard_ask_duration("GitHub polling interval (seconds or use s/m/h/d)", 60, input_func=lambda: next(answers), stream=destination) == 60
+    written = destination.getvalue()
+    assert "  Keeping 60s - 1m." in written
+    # The hint the question carries belongs in the prompt, not in the offer that repeats it
+    assert "Try entering the GitHub polling interval again? [Y/n]: " in written

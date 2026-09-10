@@ -8553,6 +8553,11 @@ def wizard_format_duration(seconds):
     return raw if readable == raw else f"{raw} - {readable}"
 
 
+# Trims the parenthetical hint from a question, so the retry offer that repeats it stays one readable line
+def wizard_retry_label(label):
+    return label.split(" (")[0].strip()
+
+
 # Prompts until the user enters a positive duration or accepts the readable default
 def wizard_ask_duration(label, default, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
@@ -8564,6 +8569,9 @@ def wizard_ask_duration(label, default, input_func=input, stream=None):
             return wizard_parse_duration(answer)
         except ValueError:
             destination.write("  Enter a positive duration such as 120, 2m, 1.5h, 1h 30m or 1d." + "\n")
+            if not wizard_offer_retry(wizard_retry_label(label), input_func=input_func, stream=destination):
+                destination.write(f"  Keeping {wizard_format_duration(default)}.\n")
+                return int(default)
 
 
 # Reads one wizard answer after rendering its prompt to the selected stream
@@ -8670,6 +8678,10 @@ def wizard_ask_positive_int(label, default, maximum=None, input_func=input, stre
         if parsed > 0 and (maximum is None or parsed <= maximum):
             return parsed
         destination.write(f"  Enter a whole number from 1 through {maximum}.\n" if maximum is not None else "  Enter a positive whole number.\n")
+        # A value the helper cannot use is a rejected entry, so it gets the same way out an empty one gets
+        if not wizard_offer_retry(wizard_retry_label(label), input_func=input_func, stream=destination):
+            destination.write(f"  Keeping {default}.\n")
+            return int(default)
 
 
 # Returns a saved value fit to show as a prompt default, so a shipped placeholder is never offered back
