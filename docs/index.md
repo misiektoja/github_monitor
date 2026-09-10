@@ -29,26 +29,26 @@ For the manual single-file method, dependencies and upgrade commands, see [Insta
 
 ## Features
 
-### Activity and Profile Tracking
+### 🔍 Activity and Profile Tracking
 
 * **GitHub events**: Track pushes, pull requests, issues, forks, releases and reviews.
 * **Profile changes**: Detect changes to names, email, location, company, bio, blog URL, visibility and account metadata.
 * **Connections and contributions**: Track followers, followed accounts, daily contributions and blocking or unblocking.
 
-### Repository Insights
+### 📊 Repository Insights
 
 * **Repository lists**: Track added or removed public and starred repositories.
 * **Repository changes**: Monitor stars, watchers, forks, issues, pull requests, discussions, descriptions and update dates.
 * **Removal context**: Flag deleted accounts or repositories when reporting removals.
 * **GitHub links**: Open repositories, commits, issues and other activity from console and email links.
 
-### Notifications and History
+### 🔔 Notifications and History
 
 * **Event alerts**: Send email, Discord and ntfy notifications with event-specific controls.
 * **CSV history**: Save detected activity and profile changes with timestamps.
 * **Terminal colours**: Customize the theme, with colours disabled when output is redirected.
 
-### Setup and Configuration
+### ⚙️ Setup and Configuration
 
 * **Guided setup**: Configure a target, credentials and alerts with `--setup`, then check them with `--doctor`.
 * **Flexible settings**: Use configuration files, dotenv files, environment variables and command-line options.
