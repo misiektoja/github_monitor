@@ -529,7 +529,7 @@ def test_zero_argument_welcome_setup_starts_monitoring(gm_module, request, monke
     launched = []
 
     monkeypatch.setattr(gm_module, "validate_github_token", lambda _token, _url: "octocat")
-    monkeypatch.setattr(gm_module, "run_doctor_preflight", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(gm_module, "run_doctor", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(gm_module.getpass, "getpass", lambda _prompt="": "private-token")
     monkeypatch.setattr(gm_module, "launch_wizard_monitoring", lambda arguments: launched.append(arguments) or 0)
 
@@ -667,7 +667,7 @@ def test_doctor_cli_normalizes_complete_profile_url(gm_module, monkeypatch):
     captured = []
     monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
     monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", "--doctor", "https://github.com/octocat/"])
-    monkeypatch.setattr(gm_module, "run_doctor_preflight", lambda args, _parser, **_kwargs: captured.append(args.username) or 0)
+    monkeypatch.setattr(gm_module, "run_doctor", lambda args, _parser, **_kwargs: captured.append(args.username) or 0)
 
     with pytest.raises(SystemExit) as exit_error:
         gm_module.main()

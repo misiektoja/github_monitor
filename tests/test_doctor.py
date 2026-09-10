@@ -1,5 +1,6 @@
 """Offline contract tests for the comprehensive doctor preflight."""
 
+import inspect
 import io
 import tempfile
 from pathlib import Path
@@ -171,7 +172,7 @@ def test_doctor_healthy_transcript_is_complete(gm_module, monkeypatch):
     configure_healthy_doctor(gm_module, monkeypatch)
     output = io.StringIO()
 
-    result = gm_module.run_doctor_preflight(doctor_args(), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
+    result = gm_module.run_doctor(doctor_args(), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
 
     transcript = output.getvalue()
     assert result == 0
@@ -198,7 +199,7 @@ def test_doctor_reports_the_install_method_without_a_marker(gm_module, monkeypat
     configure_healthy_doctor(gm_module, monkeypatch)
     output = io.StringIO()
 
-    gm_module.run_doctor_preflight(doctor_args(), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
+    gm_module.run_doctor(doctor_args(), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
 
     transcript = output.getvalue()
     method = gm_module.detect_install_context().install_method
@@ -212,7 +213,7 @@ def test_doctor_reports_missing_authentication_and_target(gm_module, monkeypatch
     monkeypatch.setattr(gm_module, "GITHUB_TOKEN", "")
     output = io.StringIO()
 
-    result = gm_module.run_doctor_preflight(doctor_args(username=None), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
+    result = gm_module.run_doctor(doctor_args(username=None), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
 
     transcript = output.getvalue()
     assert result == 1
@@ -230,7 +231,7 @@ def test_doctor_uses_saved_target(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "TARGET_GITHUB_USERNAME", "octocat")
     output = io.StringIO()
 
-    result = gm_module.run_doctor_preflight(doctor_args(username=None), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
+    result = gm_module.run_doctor(doctor_args(username=None), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
 
     transcript = output.getvalue()
     assert result == 0
@@ -246,7 +247,7 @@ def test_doctor_offline_transcript_names_failed_paths(gm_module, monkeypatch):
     def offline_request(*args, **kwargs):
         raise gm_module.req.ConnectionError("offline for doctor")
 
-    result = gm_module.run_doctor_preflight(doctor_args(), Mock(), request_get=offline_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
+    result = gm_module.run_doctor(doctor_args(), Mock(), request_get=offline_request, github_factory=FakeGithub, module_finder=lambda name: object(), stream=output)
 
     transcript = output.getvalue()
     assert result == 1
@@ -574,7 +575,7 @@ def test_doctor_non_pass_rows_always_render_a_fix(gm_module):
     output = io.StringIO()
 
     for check in report.checks:
-        gm_module.render_doctor_check(check, output)
+        gm_module.print_doctor_check(check, stream=output)
 
     transcript = output.getvalue()
     assert transcript.count("To fix:") == 3
@@ -846,7 +847,7 @@ def test_a_failed_delivery_test_changes_the_exit_code(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "smtp_connect_and_login", lambda use_ssl, smtp_timeout=15: SimpleNamespace(quit=lambda: None))
     output = FakeTTY()
 
-    result = gm_module.run_doctor_preflight(doctor_args(), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), input_func=lambda: "yes", input_stream=FakeTTY(), stream=output, email_sender=Mock(return_value=1), webhook_sender=Mock(return_value=0))
+    result = gm_module.run_doctor(doctor_args(), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), input_func=lambda: "yes", input_stream=FakeTTY(), stream=output, email_sender=Mock(return_value=1), webhook_sender=Mock(return_value=0))
 
     transcript = output.getvalue()
     assert result == 1
@@ -1140,3 +1141,13 @@ def test_the_report_method_validates_through_the_builder(gm_module):
 
     assert report.checks == [added]
     assert added == gm_module.make_doctor_check("Environment", "warn", "A label", "A detail", "A fix")
+
+
+# Verifies the preflight and its row printer answer to the names every sibling uses for them
+def test_the_doctor_entry_points_carry_the_family_names(gm_module):
+    assert callable(gm_module.run_doctor) and callable(gm_module.print_doctor_check)
+    assert not hasattr(gm_module, "run_doctor_preflight") and not hasattr(gm_module, "render_doctor_check")
+    # The row printer takes the row alone, so the stream this tool injects cannot bind to a sibling's parameter
+    parameters = list(inspect.signature(gm_module.print_doctor_check).parameters.values())
+    assert parameters[0].name == "check"
+    assert all(parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in parameters[1:])

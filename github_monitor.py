@@ -8101,7 +8101,7 @@ def sanitize_doctor_text(value):
 
 
 # Renders one doctor result while sanitizing every user-visible field
-def render_doctor_check(check, stream=None):
+def print_doctor_check(check, *, stream=None):
     destination = sys.stdout if stream is None else stream
     marker = colorize(_DOCTOR_MARK_STYLES[check.status], f"[{check.status}]")
     destination.write(f"{marker} {sanitize_doctor_text(check.label)}\n")
@@ -8128,7 +8128,7 @@ def render_doctor_sections(report, stream=None):
             continue
         destination.write(f"\n{colorize('section', section)}\n")
         for check in section_checks:
-            render_doctor_check(check, destination)
+            print_doctor_check(check, stream=destination)
 
 
 # Returns whether stdin supports separate interactive delivery approvals
@@ -8194,7 +8194,7 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
                 check = report.add("Optional delivery tests", "FAIL", "Doctor test email delivery failed", "The approved test email could not be delivered", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
         else:
             check = report.add("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test. Run doctor again and approve the email test when ready")
-        render_doctor_check(check, destination)
+        print_doctor_check(check, stream=destination)
     if report.webhook_ready:
         provider = webhook_provider_display_name()
         approved = ask_doctor_approval(f"Send one test webhook through {provider} now? This will publish a real notification", input_func, destination)
@@ -8206,7 +8206,7 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
                 check = report.add("Optional delivery tests", "FAIL", f"Doctor test webhook through {provider} delivery failed", "The approved test webhook could not be delivered", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
         else:
             check = report.add("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test. Run doctor again and approve the webhook test when ready")
-        render_doctor_check(check, destination)
+        print_doctor_check(check, stream=destination)
 
 
 # Renders the single actionable doctor verdict and guide URL
@@ -8223,7 +8223,7 @@ def render_doctor_summary(report, stream=None):
 
 
 # Runs the complete read-only preflight and returns its healthcheck exit code
-def run_doctor_preflight(args, parser, request_get=None, github_factory=None, contribution_checker=None, module_finder=None, input_func=input, input_stream=None, stream=None, email_sender=None, webhook_sender=None, show_banner=True):
+def run_doctor(args, parser, request_get=None, github_factory=None, contribution_checker=None, module_finder=None, input_func=input, input_stream=None, stream=None, email_sender=None, webhook_sender=None, show_banner=True):
     destination = terminal_surface_stream(sys.stdout if stream is None else stream)
     if show_banner:
         _write_startup_banner(destination)
@@ -9389,7 +9389,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
             if wizard_ask_yes_no("Run doctor now? It writes no files and offers real delivery tests only with separate approval.", True, input_func, destination):
                 destination.write("\n")
                 doctor_args = parser.parse_args(doctor_arguments)
-                runner = run_doctor_preflight if doctor_runner is None else doctor_runner
+                runner = run_doctor if doctor_runner is None else doctor_runner
                 doctor_exit = runner(doctor_args, parser, input_func=input_func, input_stream=source, stream=destination, show_banner=False)
     except WizardCancelled:
         destination.write(colorize("warning", "Setup is saved. Use the commands below when ready.") + "\n")
@@ -9919,7 +9919,7 @@ def main():
         incompatible = (args.setup, args.generate_config, args.set_github_token, args.set_smtp_password, args.set_webhook_url, args.send_test_email, args.send_test_webhook, args.list_repos, args.list_starred_repos, args.list_followers_and_followings, args.list_recent_events)
         if any(incompatible):
             parser.error("--doctor cannot be combined with setup, listing or one-shot delivery commands")
-        doctor_exit = run_doctor_preflight(args, parser, show_banner=False)
+        doctor_exit = run_doctor(args, parser, show_banner=False)
         print_doctor_next_steps(terminal_surface_stream(sys.stdout), args.username, TARGET_GITHUB_USERNAME, doctor_exit)
         sys.exit(doctor_exit)
 
