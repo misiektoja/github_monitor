@@ -6254,8 +6254,6 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
         detail = f"Config file '{config_path}' has invalid Python syntax"
         if exc.lineno is not None:
             detail += f" at line {exc.lineno}"
-        if exc.text:
-            detail += f" | Source: {exc.text.rstrip()}"
         detail += f" | Parser: {exc.msg}"
     # Checked before ValueError because UnicodeDecodeError derives from it
     except UnicodeDecodeError:
@@ -8260,7 +8258,7 @@ def runtime_boolean_errors():
 # Returns a recovery message for an unusable liveness interval
 def runtime_liveness_error():
     value = LIVENESS_CHECK_INTERVAL
-    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0 or (isinstance(value, float) and not math.isfinite(value)):
+    if not finite_number(value) or value < 0 or (isinstance(value, float) and not math.isfinite(value)):
         return f"LIVENESS_CHECK_INTERVAL must be a finite number zero or greater, not {value!r}"
     return None
 
@@ -8273,10 +8271,10 @@ def runtime_configuration_errors():
     nonnegative_numbers = (("NET_BASE_BACKOFF_SEC", NET_BASE_BACKOFF_SEC),)
     positive_integers = (("GITHUB_CHECK_INTERVAL", GITHUB_CHECK_INTERVAL), ("EVENTS_NUMBER", EVENTS_NUMBER), ("NET_MAX_RETRIES", NET_MAX_RETRIES))
     for name, value in positive_numbers:
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        if not finite_number(value) or value <= 0:
             errors.append(f"{name} must be a number greater than zero, not {value!r}")
     for name, value in nonnegative_numbers:
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+        if not finite_number(value) or value < 0:
             errors.append(f"{name} must be a number zero or greater, not {value!r}")
     for name, value in positive_integers:
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
@@ -9745,6 +9743,42 @@ def render_wizard_dotenv(state):
     return render_private_settings(existing, updates)
 
 
+# Accepts finite numeric values without overflowing on unusually large integers
+def finite_number(value):
+    import math
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+# Preserves inline credentials privately before setup replaces their only saved source
+def preserve_inline_config_secrets(config_path, env_path):
+    from dotenv import dotenv_values
+    source = Path(config_path).expanduser()
+    if not source.is_file():
+        return None
+    original = {}
+    if not load_config_file(source, namespace=original, report_errors=False):
+        raise ValueError("Existing configuration could not be read before preserving its inline secrets")
+    defaults = _config_template_defaults()
+    destination = Path(env_path).expanduser()
+    saved = dotenv_values(str(destination), interpolate=False) if destination.exists() else {}
+    updates = {}
+    for key in SECRET_KEYS:
+        value = original.get(key)
+        if isinstance(value, str) and value and value != defaults.get(key) and saved.get(key) is None:
+            updates[key] = value
+    if not updates:
+        return None
+    try:
+        return update_dotenv_file(destination, updates)
+    except Exception as exc:
+        raise OSError(f"Could not preserve inline secrets in '{destination}'. The original configuration was not replaced") from exc
+
+
 # Removes inline secret assignments from a setup backup while preserving other configuration text
 def redact_config_backup(content):
     import ast
@@ -9892,6 +9926,7 @@ def save_wizard_files(state):
     for path in (state.config_path, state.dotenv_path):
         if not path.parent.is_dir():
             raise FileNotFoundError(f"Parent directory does not exist: {path.parent}")
+    preserve_inline_config_secrets(state.config_path, state.dotenv_path)
     config_content = render_wizard_config(state)
     dotenv_content = render_wizard_dotenv(state)
     # Only the configuration is backed up: a copy of the credentials being replaced is the one thing not worth keeping
@@ -10617,11 +10652,15 @@ def main():
     apply_webhook_cli_overrides(args, parser)
     trace_unresolved_secrets()
     apply_monitoring_cli_overrides(args, parser)
-
     liveness_error = runtime_liveness_error()
     if liveness_error:
         advice = make_recovery_advice("config.value_invalid", liveness_error, recovery_fix_with_guide("Set LIVENESS_CHECK_INTERVAL to seconds, or 0 to disable liveness output", CONFIG_GUIDE_URL), False)
         print_recovery_advice(advice)
+        sys.exit(1)
+
+    configuration_errors = runtime_configuration_errors() + runtime_boolean_errors()
+    if configuration_errors:
+        print_recovery_advice(make_recovery_advice("config.invalid", "Invalid settings: " + ". ".join(configuration_errors), recovery_fix_with_guide("Correct the reported settings in the configuration file or command line", CONFIG_GUIDE_URL), False))
         sys.exit(1)
 
     try:
@@ -10638,6 +10677,12 @@ def main():
     timezone_advice = resolve_local_timezone()
     if timezone_advice is not None:
         print_recovery_advice(timezone_advice)
+        sys.exit(1)
+
+    # Missing input is reported before credentials or connectivity
+    if not args.username and not (args.send_test_email or args.send_test_webhook):
+        advice = make_recovery_advice("target.missing", "No GitHub username was provided", recovery_fix_with_guide("Add the GitHub username to the monitoring command", QUICK_START_GUIDE_URL), False, "The positional GITHUB_USERNAME argument was empty")
+        print_recovery_advice(advice)
         sys.exit(1)
 
     if not check_internet():
@@ -10666,12 +10711,6 @@ def main():
         else:
             sys.exit(1)
         sys.exit(0)
-
-    # Checked before the token, so a first run is told the simplest missing thing first
-    if not args.username:
-        advice = make_recovery_advice("target.missing", "No GitHub username was provided", recovery_fix_with_guide("Add the GitHub username to the monitoring command", QUICK_START_GUIDE_URL), False, "The positional GITHUB_USERNAME argument was empty")
-        print_recovery_advice(advice)
-        sys.exit(1)
 
     if not GITHUB_TOKEN or GITHUB_TOKEN == "your_github_classic_personal_access_token":
         token_command = render_command(["--set-github-token"])
