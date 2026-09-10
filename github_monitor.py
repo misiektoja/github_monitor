@@ -2843,7 +2843,6 @@ RECOVERY_CODES = frozenset({
     "config.invalid",
     "config.missing",
     "config.value_invalid",
-    "dependency.missing",
     "dotenv.missing",
     "file.exists",
     "file.unreadable",
@@ -2855,13 +2854,11 @@ RECOVERY_CODES = frozenset({
     "network.connection",
     "network.timeout",
     "secret.entry",
-    "secret.missing",
     "smtp.authentication",
     "smtp.configuration",
     "smtp.delivery",
     "target.missing",
     "target.not_found",
-    "target.not_visible",
     "timezone.invalid",
     "webhook.invalid",
     "webhook.rejected",
@@ -3050,6 +3047,9 @@ def classify_recovery_error(error, context="unknown", install_context=None):
     if selected_context == "email":
         # A settings problem is reported as itself. Only a failure that actually reached the network is
         # described as one, so an unconfigured mail server is not reported as an unreachable host
+        # A server that refused the message is not a server that could not be reached, so the fix names the addresses
+        if isinstance(error, (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError)):
+            return make_recovery_advice("smtp.delivery", "The mail server refused the message", "Check SENDER_EMAIL and RECEIVER_EMAIL, then confirm the server accepts mail from this sender", False, detail, SMTP_GUIDE_URL)
         if isinstance(error, MailConfigurationError):
             return make_recovery_advice("smtp.configuration", sanitize_error_text(error), "Set the named settings in the config file, or run --setup, then run the command again", False, detail, SMTP_GUIDE_URL)
         return make_recovery_advice("smtp.configuration", "The SMTP server could not be reached", "Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", True, detail, SMTP_GUIDE_URL)
