@@ -261,6 +261,8 @@ List of supported signals:
 | ABRT | Decrease the user check interval (by 1 min) |
 | HUP | Reload secrets from .env file |
 
+`SIGHUP` keeps command-line credentials and nonempty environment values exported before startup. Change those values and restart to replace them.
+
 Send signals with `kill` or `pkill`, e.g.:
 
 ```sh

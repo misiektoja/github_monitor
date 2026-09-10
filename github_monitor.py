@@ -4474,7 +4474,7 @@ def dotenv_reload_source(key):
 
 
 # Resolves dotenv references while keeping explicitly marked private values literal
-def resolve_dotenv_values(content, override=False, interpolate=True):
+def resolve_dotenv_values(content, override=False, interpolate=True, environment=None):
     from io import StringIO
     try:
         from dotenv.main import with_warn_for_invalid_lines
@@ -4483,9 +4483,12 @@ def resolve_dotenv_values(content, override=False, interpolate=True):
     # A python-dotenv without these internals still reads the file, only without the literal marker. Writing a
     # value that needs the marker then fails its own read-back check rather than saving something unreadable
     except ImportError:
+        if environment is not None:
+            raise ValueError("The installed python-dotenv cannot resolve this file safely. Update python-dotenv") from None
         from dotenv.main import DotEnv
         debug_print("Dotenv literal markers are unavailable in the installed python-dotenv", outcome="skipped")
         return DotEnv(dotenv_path=None, stream=StringIO(content), override=override, interpolate=interpolate).dict()
+    base_environment = dict(os.environ) if environment is None else environment
     values = {}
     for binding in with_warn_for_invalid_lines(parse_stream(StringIO(content))):
         if binding.key is None:
@@ -4493,17 +4496,22 @@ def resolve_dotenv_values(content, override=False, interpolate=True):
         value = binding.value
         literal = binding.key in SECRET_KEYS and binding.original.string.rstrip().endswith("# monitor:literal")
         if value is not None and interpolate and not literal:
-            environment = dict(os.environ)
+            resolved_environment = dict(base_environment)
             if override:
-                environment.update(values)
+                resolved_environment.update(values)
             else:
-                environment = dict(values, **environment)
-            value = "".join(atom.resolve(environment) for atom in parse_variables(value))
+                resolved_environment = dict(values, **resolved_environment)
+            value = "".join(atom.resolve(resolved_environment) for atom in parse_variables(value))
         values[binding.key] = value
     return values
 
 
-# Loads dotenv values and reconciles removed file-owned secrets without changing startup precedence
+# Returns the secrets explicitly supplied on the command line
+def command_line_secret_keys():
+    return frozenset(globals().get("COMMAND_LINE_SECRET_KEYS", ())) | frozenset(key for key, source in globals().get("SECRET_SOURCES", {}).items() if source == "command line")
+
+
+# Reloads file-owned credentials while preserving startup exports and command-line choices
 def load_managed_dotenv(path, override=False, interpolate=True, protected_keys=()):
     from io import StringIO
     from dotenv.parser import parse_stream
@@ -4514,19 +4522,24 @@ def load_managed_dotenv(path, override=False, interpolate=True, protected_keys=(
         malformed = next((binding for binding in parse_stream(StringIO(content)) if binding.error), None)
         if malformed is not None:
             raise ValueError(f"Dotenv syntax error near line {malformed.original.line}. Correct the assignment and reload again")
-    values = resolve_dotenv_values(content, override=override, interpolate=interpolate)
-    if not override or not DOTENV_RELOAD_STATE:
-        DOTENV_RELOAD_STATE.clear()
-        DOTENV_RELOAD_STATE.update(base={key: os.environ.get(key, globals().get(key, "")) for key in SECRET_KEYS}, exported=set(os.environ).intersection(SECRET_KEYS), managed=set())
-    protected = set(protected_keys)
-    applied = {key for key, value in values.items() if value is not None and key not in protected and (override or key not in os.environ)}
-    removed = DOTENV_RELOAD_STATE["managed"] - applied - protected
+    state: dict = DOTENV_RELOAD_STATE if override and DOTENV_RELOAD_STATE else dict(base={key: os.environ.get(key) or globals().get(key, "") for key in SECRET_KEYS}, exported={key for key, value in os.environ.items() if value}, managed=set())
+    command_keys = command_line_secret_keys()
+    protected = set(protected_keys) | state["exported"] | command_keys
+    environment = {key: value for key, value in os.environ.items() if value and key not in state.get("loaded", state["managed"])}
+    environment.update({key: str(globals().get(key) or "") for key in command_keys})
+    values = resolve_dotenv_values(content, override=False, interpolate=interpolate, environment=environment)
+    applied = {key for key, value in values.items() if value is not None and key not in protected and (override or not os.environ.get(key))}
+    removed = state["managed"] - applied - protected
     for key in removed:
-        value = DOTENV_RELOAD_STATE["base"].get(key)
+        value = state["base"].get(key)
         os.environ[key] = "" if value is None else str(value)
     for key in applied:
         os.environ[key] = str(values[key])
-    DOTENV_RELOAD_STATE["managed"] = applied.intersection(SECRET_KEYS)
+    state["managed"] = applied.intersection(SECRET_KEYS)
+    state["loaded"] = set(state.get("loaded", ())) | applied
+    if state is not DOTENV_RELOAD_STATE:
+        DOTENV_RELOAD_STATE.clear()
+        DOTENV_RELOAD_STATE.update(state)
     return bool(values)
 
 
@@ -4566,6 +4579,8 @@ def reload_secrets_signal_handler(sig, frame):
     webhook_url_changed = False
     if env_path:
         for secret in SECRET_KEYS:
+            if secret in command_line_secret_keys():
+                continue
             old_val = globals().get(secret)
             val = os.getenv(secret)
             if val is not None and val != old_val:
@@ -9647,6 +9662,8 @@ def wizard_clear_section(state, config_keys, secret_keys=()):
             state.values.pop(name, None)
     for name in secret_keys:
         state.secrets.pop(name, None)
+        if name in state.baseline_secrets:
+            state.secrets[name] = state.baseline_secrets[name]
 
 
 # Switches every email alert off together, so an abandoned answer cannot leave half a mail server configured
@@ -9676,7 +9693,7 @@ def wizard_verify_smtp(values, secrets):
     try:
         globals().update({name: values[name] for name in WIZARD_SMTP_CONFIG_KEYS})
         # A password kept from an earlier run is the one the sign-in has to prove
-        globals()["SMTP_PASSWORD"] = secrets.get("SMTP_PASSWORD") or previous["SMTP_PASSWORD"]
+        globals()["SMTP_PASSWORD"] = _wizard_exported_secrets().get("SMTP_PASSWORD", secrets.get("SMTP_PASSWORD", previous["SMTP_PASSWORD"]))
         smtp_object = smtp_connect_and_login(SMTP_SSL, smtp_timeout=WIZARD_SMTP_TIMEOUT)
         return None
     except Exception as exc:
@@ -9724,7 +9741,7 @@ def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None
         state.values["RECEIVER_EMAIL"] = wizard_ask_text("Receiver email", wizard_default(state.values["RECEIVER_EMAIL"]), input_func=input_func, stream=destination, required=True)
         # A blank answer keeps the password already saved in the dotenv file
         password = wizard_read_secret("SMTP password", getpass_func, destination, strip=False)
-        if password:
+        if password and ("SMTP_PASSWORD" not in read_private_settings(state.dotenv_path) or wizard_ask_yes_no("The dotenv file already contains SMTP_PASSWORD. Replace that value?", False, input_func, destination)):
             state.secrets["SMTP_PASSWORD"] = password
         validation_error = wizard_email_settings_error(state.values, state.secrets)
         if validation_error:
@@ -9956,16 +9973,41 @@ def wizard_destination_error(value, label):
     return ""
 
 
+# Returns genuine environment credentials without treating previously loaded file values as exports
+def _wizard_exported_secrets():
+    state = globals().get("DOTENV_RELOAD_STATE", {})
+    owned = set(globals().get("DOTENV_MANAGED_KEYS", ())) | set(globals().get("DOTENV_BASE_VALUES", ())) | set(state.get("base", ()))
+    exported = set(globals().get("EXPORTED_ENVIRONMENT_KEYS", ())) | set(globals().get("EXPORTED_SECRET_KEYS", ())) | set(state.get("exported", ()))
+    sources = globals().get("SECRET_SOURCES", {})
+    return {key: os.environ[key] for key in SECRET_KEYS if os.environ.get(key) and key not in command_line_secret_keys() and (key in exported or (key not in owned and sources.get(key) not in ("dotenv file", "dotenv file reload")))}
+
+
+# Reads the selected private file before setup changes paths or pending answers
+def read_private_settings(env_path):
+    path = Path(env_path)
+    if not path.exists():
+        return {}
+    content = path.read_text(encoding="utf-8")
+    bindings = list(_dotenv_bindings(content))
+    invalid = next((binding for binding in bindings if binding.error), None)
+    if invalid is not None:
+        raise ValueError(f"Dotenv file '{path}' has invalid syntax near line {invalid.original.line}. Correct that assignment before retrying.")
+    owned = globals().get("DOTENV_RELOAD_STATE", {}).get("loaded", ())
+    environment = {key: value for key, value in os.environ.items() if value and key not in owned}
+    return resolve_dotenv_values(content, override=False, environment=environment)
+
+
 # Changes where setup writes, re-asking the sections that hold secrets when the dotenv destination moves
 def wizard_collect_file_destinations(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
     destination = sys.stdout if stream is None else stream
+    new_config_path = state.config_path
     config_text = wizard_ask_text("Configuration file destination", str(state.config_path), lambda value: wizard_destination_error(value, "Configuration destination"), input_func, destination, required=True)
     selected_config = wizard_validate_destination(config_text, "Configuration destination")
     if selected_config != state.config_path:
         chosen_config = wizard_choose_config_destination(selected_config, input_func, destination)
         # Giving up on every offered path keeps the current destination rather than cancelling the whole setup
         if chosen_config is not None:
-            state.config_path = chosen_config
+            new_config_path = chosen_config
     while True:
         env_text = wizard_ask_text("Dotenv file destination", str(state.dotenv_path), lambda value: wizard_destination_error(value, "Dotenv destination"), input_func, destination, required=True)
         if env_text.casefold() == "none":
@@ -9973,16 +10015,23 @@ def wizard_collect_file_destinations(state, input_func=input, getpass_func=None,
             continue
         selected_env = wizard_validate_destination(env_text, "Dotenv destination")
         # One file cannot hold both, since saving the configuration would overwrite the secrets beside it
-        if selected_env == state.config_path:
+        if selected_env == new_config_path:
             destination.write("  The dotenv file has to be a different file from the configuration." + "\n")
             continue
         break
-    state.values["DOTENV_FILE"] = str(selected_env)
     if selected_env == state.dotenv_path:
+        state.config_path = new_config_path
+        state.values["DOTENV_FILE"] = str(selected_env)
         return
+    selected_private = read_private_settings(selected_env)
+    retained = {key: value for key, value in state.secrets.items() if key in SECRET_KEYS}
+    retained.update({key: value for key, value in selected_private.items() if key in SECRET_KEYS and isinstance(value, str)})
+    state.secrets = retained
+    state.baseline_secrets = dict(retained)
     state.dotenv_path = selected_env
-    # A secret kept rather than retyped was never queued, so it would be missing from a dotenv file that just moved
-    destination.write(colorize("info", "  The dotenv destination changed. Re-enter authentication and notification settings that may contain secrets.") + "\n")
+    state.config_path = new_config_path
+    state.values["DOTENV_FILE"] = str(selected_env)
+    destination.write(colorize("info", "  The dotenv destination changed. Review authentication and notification settings. Values in the selected file are kept unless you replace them.") + "\n")
     wizard_collect_authentication(state, input_func, getpass_func, destination, token_validator)
     destination.write("\n")
     wizard_collect_email(state, input_func, getpass_func, destination)
@@ -10111,7 +10160,8 @@ def render_wizard_config(state):
 # Updates selected dotenv assignments in memory while preserving unrelated lines
 def render_wizard_dotenv(state):
     existing = state.dotenv_path.read_text(encoding="utf-8") if state.dotenv_path.exists() else ""
-    updates = {key: value for key, value in state.secrets.items() if key in SECRET_KEYS}
+    saved = read_private_settings(state.dotenv_path)
+    updates = {key: value for key, value in state.secrets.items() if key in SECRET_KEYS and saved.get(key) != value}
     return render_private_settings(existing, updates)
 
 
