@@ -3742,14 +3742,19 @@ def format_payload(template: Any, payload: dict) -> Any:
 
 # Parses legacy and current Discord templates before validating their object shape
 def render_discord_template(template, values):
-    if isinstance(template, str):
-        try:
-            template = json.loads(template)
-        except json.JSONDecodeError:
-            template = json.loads(str(format_payload(template, values)))
-    if not isinstance(template, dict):
-        raise ValueError("WEBHOOK_TEMPLATE must be a dictionary or a JSON object string")
-    return format_payload(template, values)
+    # A placeholder the payload cannot fill, such as the positional {0}, fails inside str.format rather than as a
+    # value error, so every parsing and rendering failure is reported as the one error callers already handle
+    try:
+        if isinstance(template, str):
+            try:
+                template = json.loads(template)
+            except json.JSONDecodeError:
+                template = json.loads(str(format_payload(template, values)))
+        if isinstance(template, dict):
+            return format_payload(template, values)
+    except Exception as exc:
+        raise ValueError("WEBHOOK_TEMPLATE must be a dictionary or a JSON object string") from exc
+    raise ValueError("WEBHOOK_TEMPLATE must be a dictionary or a JSON object string")
 
 
 # Returns a configuration error for unsafe or unsupported webhook customization
@@ -3960,7 +3965,8 @@ def _retain_webhook_secrets(deliver):
         headers = settings.get("WEBHOOK_HEADERS")
         if isinstance(headers, dict):
             values.extend(value for name, value in headers.items() if isinstance(name, str) and name.casefold() == "authorization")
-        secrets = tuple(value for value in values if isinstance(value, str) and value and not value.startswith("your_"))
+        # The same minimum length every other redaction path applies, so a short secret cannot blank out ordinary words
+        secrets = tuple(value for value in values if isinstance(value, str) and len(value) >= MIN_REDACTABLE_SECRET_LENGTH and not value.startswith("your_"))
         token = _DELIVERY_SECRET_VALUES.set(_DELIVERY_SECRET_VALUES.get() + secrets)
         try:
             return deliver(*args, **kwargs)
