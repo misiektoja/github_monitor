@@ -323,6 +323,13 @@ class TestDocumentationSite:
         assert any("mkdocs build --strict" in command for command in commands), "CI does not build the documentation site"
         assert any("docs/requirements.txt" in command for command in commands), "CI does not install the documentation dependencies"
 
+    # Verifies the documented doctor sections are exactly the ones the report renders
+    def test_the_documented_doctor_sections_match_the_code(self):
+        text = read_asset("docs/troubleshooting.md")
+
+        for section in gm.DOCTOR_SECTIONS:
+            assert f"**{section}**" in text, f"the {section} doctor section is not documented"
+
     # A site nothing deploys is a site the runtime guide links point at and nobody can read
     def test_the_site_publishes_through_a_workflow(self):
         commands = re.findall(r"^\s*run:\s*(.+)$", read_asset(".github/workflows/docs.yml"), flags=re.MULTILINE)

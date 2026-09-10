@@ -10,11 +10,11 @@ github_monitor --doctor <github_target>
 
 Doctor is read-only by default. It checks the effective configuration after config, dotenv, environment and command-line precedence without creating logs, CSV files or directories. It opens with the detected install method, then reports these fixed sections:
 
-* Environment: Python support, required dependencies and optional dependencies.
-* Configuration: selected files, secret names and sources, [TLS verification](configuration.md#tls-verification), GitHub URLs, timezone, the timing and count settings, log separator mode and the log and CSV files monitoring would write.
-* Authentication and connectivity: live token validation plus the configured connectivity endpoint. The connectivity row reports whether that endpoint answers at all, the same test monitoring runs at startup, so a temporary error returned by the server is not reported as a broken setup.
-* Target and monitoring: target access, repository, starred repository and event feeds and optional contribution tracking.
-* Notifications: whether email and webhook alerts are disabled, unusable or ready.
+* **Environment**: Python support, required dependencies and optional dependencies.
+* **Configuration**: selected files, secret names and sources, [TLS verification](configuration.md#tls-verification), GitHub URLs, timezone, the timing and count settings, log separator mode and the log and CSV files monitoring would write.
+* **Authentication** and **Connectivity**: live token validation plus the configured connectivity endpoint. The connectivity row reports whether that endpoint answers at all, the same test monitoring runs at startup, so a temporary error returned by the server is not reported as a broken setup.
+* **Target** and **Monitoring**: target access, repository, starred repository and event feeds and optional contribution tracking.
+* **Notifications**: whether email and webhook alerts are disabled, unusable or ready.
 
 Every check uses one of four stable markers: `[PASS]`, `[WARN]`, `[FAIL]` or `[SKIP]`, colour-coded by status when colour output is on. Every `[WARN]` and `[FAIL]` row carries an indented `To fix:` line under its marker, plus a `Guide:` link when a documentation page covers that row specifically. A `[SKIP]` row names a check that could not run and says why. Warnings keep exit status `0`. Any failed check or approved delivery test returns exit status `1`, so doctor can be used in a container healthcheck or CI smoke test.
 
