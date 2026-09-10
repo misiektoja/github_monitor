@@ -170,6 +170,8 @@ To disable sending an email on errors (enabled by default):
 github_monitor github_username -e
 ```
 
+An error alert goes out once the same failure has lasted **5 minutes**, so a short outage or one lost request reaches nobody, while a failure that cannot clear on its own, such as a rejected token, is alerted at once. Each kind of failure alerts once per channel, a channel that could not deliver is tried again on the next failing check and a run that recovered alerts again when it fails later. The same rule governs the webhook error alert.
+
 You can combine all email notifications flags together if needed.
 
 Make sure you defined your SMTP settings first, as described in [SMTP Settings](configuration.md#smtp-settings).
