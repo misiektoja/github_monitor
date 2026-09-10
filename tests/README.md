@@ -40,6 +40,8 @@ and again before anything is published to PyPI.
 | `test_smtp_error_privacy.py` | Short and escaped passwords in rejected SMTP sign-ins through commands, setup, Doctor and delivery |
 | `test_setup_resolution_regressions.py` | Saved dotenv destinations, empty secrets, export precedence and recovery paths |
 | `test_dotenv_quoted_keys.py` | Quoted dotenv keys, export prefixes, multiline values and duplicate removal |
+| `test_secret_file_safety.py` | Real failed-write preservation, owner-only secret files and existing dotenv symlinks |
+| `test_github_feed_retries.py` | Real PyGithub feed exhaustion, retained snapshots, continued monitoring and effective retry settings |
 | `test_documentation_layout.py` | Unique anchors, main screenshot placement and matching entry-page feature summaries |
 | `conftest.py` | Import setup plus shared fixtures: the working-tree module, deterministic globals and the degraded-feature tracker reset between tests |
 | `test_config_loading.py` | Config files read as data, rejected content naming its line and setting, and guarded replacement of a generated config |

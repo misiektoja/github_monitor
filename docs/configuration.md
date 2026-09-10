@@ -251,6 +251,8 @@ A secret still holding its `your_...` placeholder counts as unset and is left ou
 
 When a `--set-*` command or the setup wizard replaces a secret, it rewrites that one assignment in place and leaves every other line alone. A line you wrote as `export NAME=...` keeps its `export`, so a dotenv file you also source in a shell still exports it. A value you clear has its line removed rather than left empty.
 
+Secret commands finish writing the replacement before changing the existing dotenv file. A failed write leaves the original contents intact. On POSIX systems the replacement is readable and writable only by its owner. Existing dotenv symlinks continue to point to the updated file.
+
 ## TLS Verification
 
 The tool verifies the TLS certificate of every server it contacts: the GitHub API, the GitHub web pages it reads, the connectivity check endpoint, the mail server that delivers email alerts and, when enabled, the webhook service.
@@ -268,5 +270,7 @@ github_monitor <github_target> -c 900
 ```
 
 It is generally not recommended to use values lower than 10 minutes as new events are very often delayed by the GitHub API.
+
+`NET_MAX_RETRIES` defaults to 5 and counts the first request as an attempt. `NET_BASE_BACKOFF_SEC` sets the base retry delay and defaults to 5 seconds. GitHub rate-limit headers can specify a different wait. If a monitored feed remains unavailable after its attempts, its previous snapshot is kept and monitoring tries again on the next check.
 
 An interval below 30 seconds invites the GitHub rate limiter, which stops the tool seeing anything. `--doctor` warns when the configured interval is that short.
