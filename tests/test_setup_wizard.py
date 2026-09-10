@@ -1017,7 +1017,7 @@ def test_set_smtp_password_keeps_the_dotenv_file_on_a_refused_sign_in(gm_module,
     assert gm_module.classify_recovery_error(refuse.side_effect, "email").code == "smtp.authentication"
 
 
-# Several providers quote the credentials back in the rejection reply, and the sign-in has already restored the
+# Several providers quote the credentials back in the rejection reply. The sign-in has already restored the
 # previous password by then, so the value that was tried has to reach the redaction from the caller
 def test_a_reply_quoting_the_password_is_redacted(gm_module, request, monkeypatch, capsys):
     directory = make_test_directory()
