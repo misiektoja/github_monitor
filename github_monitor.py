@@ -7645,6 +7645,18 @@ class DoctorCheck:
     guide: str = ""
 
 
+# Builds one validated doctor row, which is where the status, the required action and a duplicated detail are decided
+def make_doctor_check(section, status, label, detail="", fix="", guide=""):
+    normalized_status = str(status).upper()
+    if normalized_status not in DOCTOR_STATUSES:
+        raise ValueError(f"Unsupported doctor status {status}")
+    # A row the user has to act on is useless without an action, so the row is rejected rather than printed bare
+    if normalized_status in ("WARN", "FAIL") and not fix:
+        raise ValueError(f"Doctor {normalized_status} rows require a fix")
+    # Several rows carry the same text as their label and printing it twice reads as two problems
+    return DoctorCheck(section, normalized_status, label, "" if str(detail).strip() == str(label).strip() else detail, fix, guide)
+
+
 @dataclass
 class DoctorReport:
     checks: list[DoctorCheck] = field(default_factory=list)
@@ -7658,14 +7670,7 @@ class DoctorReport:
 
     # Adds one validated result row to the report and returns it, so a row rendered on its own is still validated here
     def add(self, section, status, label, detail="", fix="", guide=""):
-        normalized_status = str(status).upper()
-        if normalized_status not in DOCTOR_STATUSES:
-            raise ValueError(f"Unsupported doctor status {status}")
-        # A row the user has to act on is useless without an action, so the row is rejected rather than printed bare
-        if normalized_status in ("WARN", "FAIL") and not fix:
-            raise ValueError(f"Doctor {normalized_status} rows require a fix")
-        # Several rows carry the same text as their label and printing it twice reads as two problems
-        check = DoctorCheck(section, normalized_status, label, "" if str(detail).strip() == str(label).strip() else detail, fix, guide)
+        check = make_doctor_check(section, status, label, detail, fix, guide)
         self.checks.append(check)
         return check
 

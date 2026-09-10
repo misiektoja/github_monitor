@@ -1117,3 +1117,26 @@ def test_doctor_warns_when_email_is_configured_but_nothing_is_selected(gm_module
     assert (email.status, email.label) == ("WARN", "Email is configured but no alert types are selected")
     assert email.fix == "Turn on at least one email alert in the configuration file"
     assert report.email_ready is False
+
+
+# Every sibling builds its doctor rows through this name, and the report method is one caller among them
+def test_the_doctor_row_builder_carries_the_family_name(gm_module):
+    row = gm_module.make_doctor_check("Environment", "pass", "A label", "A label")
+
+    assert row.status == "PASS"
+    # A detail that repeats its label reads as two problems, so the builder drops it
+    assert row.detail == ""
+    with pytest.raises(ValueError, match="Unsupported doctor status"):
+        gm_module.make_doctor_check("Environment", "NOTE", "A label")
+    with pytest.raises(ValueError, match="rows require a fix"):
+        gm_module.make_doctor_check("Environment", "FAIL", "A label")
+
+
+# The report method has to stay the same validation rather than a second copy of it
+def test_the_report_method_validates_through_the_builder(gm_module):
+    report = gm_module.DoctorReport()
+
+    added = report.add("Environment", "warn", "A label", "A detail", "A fix")
+
+    assert report.checks == [added]
+    assert added == gm_module.make_doctor_check("Environment", "warn", "A label", "A detail", "A fix")
