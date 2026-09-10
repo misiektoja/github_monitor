@@ -139,13 +139,20 @@ def test_the_guide_link_keeps_its_own_line_in_the_html_body(gm_module, monkeypat
     assert "\n" not in parts[fix_index]
 
 
-# A failure that changes category is a different failure, so it earns each channel a new alert
-def test_a_changed_failure_category_earns_a_new_alert(gm_module, monkeypatch, tmp_path):
+# One outage earns one alert per channel, however the failure changes, until a check succeeds again
+def test_a_changed_failure_category_does_not_earn_a_second_alert(gm_module, monkeypatch, tmp_path):
     rejected = gm_module.GithubException(401, {"message": "Bad credentials"}, None)
     errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE, OUTAGE, OUTAGE, rejected], [(True, True)], 6)
 
-    assert len(errors) == 2
-    assert errors[0]["subject"] != errors[1]["subject"]
+    assert len(errors) == 1
+
+
+# Alternating categories used to forget the delivered alert on every transition, so one outage sent one per check
+def test_alternating_failure_categories_deliver_one_alert(gm_module, monkeypatch, tmp_path):
+    rejected = gm_module.GithubException(401, {"message": "Bad credentials"}, None)
+    errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE, rejected, OUTAGE, rejected], [(True, True)], 6)
+
+    assert len(errors) == 1
 
 
 # Each channel is tracked on its own, so the one that failed is retried while the one that landed is left alone

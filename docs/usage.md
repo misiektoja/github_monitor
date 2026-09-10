@@ -13,6 +13,8 @@ Examples use the PyPI command. For a downloaded script, run commands from the di
 
 For example, `github_monitor --setup` becomes `python3 github_monitor.py --setup` on macOS or Linux. Use `python` on Windows. Replace placeholders such as `<github_target>` with a GitHub username or complete profile URL.
 
+The manual-script prefix names the file rather than its path, so run it from the directory holding `github_monitor.py`. From another directory, use the full path instead, for example `python3 /opt/github-monitor/github_monitor.py --setup`. The commands the tool prints after setup and Doctor use the same short form.
+
 For first-time configuration, follow [Setup & First Run](setup-and-first-run.md). Use [Doctor Preflight](troubleshooting.md#doctor-preflight) to check a setup before monitoring.
 
 ## Monitoring Mode

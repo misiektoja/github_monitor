@@ -7144,9 +7144,8 @@ def github_monitor_user(user, csv_file_name):
     debug_monitor_wait_timing("initial monitoring interval", GITHUB_CHECK_INTERVAL)
     time.sleep(GITHUB_CHECK_INTERVAL)
     alive_since = int(time.time())
-    # The error alert is tracked once per channel and per failure category
+    # The error alert is tracked once per channel and per outage
     error_alert = ErrorAlertState()
-    error_delivery_code = None
     monitor_recovery_tracker = RecoveryHintTracker()
     outage = OutageReporter()
     profile_field_unavailable = object()
@@ -7170,7 +7169,6 @@ def github_monitor_user(user, csv_file_name):
             debug_github_operation("monitored user profile refresh", user)
             g_user = g.get_user(user)
             error_alert.reset()
-            error_delivery_code = None
             monitor_recovery_tracker.reset()
             outage_lasted = outage.recovered()
             if outage_lasted is not None:
@@ -7180,11 +7178,6 @@ def github_monitor_user(user, csv_file_name):
         except (GithubException, Exception) as e:
             verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
             advice = classify_recovery_error(e, "target")
-            # A failure that changes family is a different failure, so each channel earns a new alert for it, while an
-            # internet outage that flaps between a timeout and an unreachable host stays one failure
-            if outage_family(advice.code) != outage_family(error_delivery_code):
-                error_alert.reset()
-                error_delivery_code = advice.code
 
             # A failure that has not changed is left to the liveness cadence rather than repeated every check
             outage_outcome = outage.failed(advice)
