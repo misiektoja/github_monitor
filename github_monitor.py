@@ -2854,6 +2854,7 @@ RECOVERY_CODES = frozenset({
     "github.not_found",
     "github.rate_limited",
     "network.timeout",
+    "resource.exhausted",
     "network.unavailable",
     "secret.entry",
     "smtp.authentication",
@@ -3002,6 +3003,27 @@ def print_outage_recovery(target, lasted):
     print_cur_ts("Timestamp:\t\t\t")
 
 
+# Yields the exception and each cause or context up to max_depth, to walk an exception chain
+def iter_exc_chain(error, max_depth=8):
+    current = error
+    for _ in range(max_depth):
+        if current is None:
+            return
+        yield current
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+
+
+# Reports whether any exception in the chain is the local file descriptor limit rather than a remote failure
+def is_too_many_open_files(error):
+    for current in iter_exc_chain(error):
+        if isinstance(current, OSError) and getattr(current, "errno", None) == 24:
+            return True
+        message = str(current).lower()
+        if "too many open files" in message or "errno 24" in message:
+            return True
+    return False
+
+
 # Maps one exception and operation context to stable recovery advice
 def classify_recovery_error(error, context="unknown", install_context=None):
     if isinstance(error, RecoveryError):
@@ -3012,6 +3034,9 @@ def classify_recovery_error(error, context="unknown", install_context=None):
     webhook_command = render_install_command(["--set-webhook-url"], install_context)
     config_command = render_install_command(["--generate-config", "github_monitor.conf"], install_context, include_paths=False)
     debug_command = render_install_command(["--debug"], install_context)
+    # Checked ahead of every context, since a local descriptor limit is not a failure of whatever call hit it
+    if error is not None and is_too_many_open_files(error):
+        return make_recovery_advice("resource.exhausted", "This process ran out of file descriptors, which is a local limit and not a GitHub problem", "Raise the file descriptor limit, for example with 'ulimit -n 4096', or set LimitNOFILE= if you run under systemd, then restart the tool", False, detail, DEBUG_GUIDE_URL)
     if selected_context == "connectivity":
         # Classified from the error, because a failed endpoint check has one answer whatever the exception was
         timed_out = isinstance(error, (req.Timeout, TimeoutError, socket.timeout))

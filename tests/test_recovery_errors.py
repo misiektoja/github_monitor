@@ -91,6 +91,22 @@ def test_the_taxonomy_uses_the_shared_names(gm_module):
     assert not {"network.connection", "smtp.configuration", "webhook.unreachable"} & declared
 
 
+# Verifies a local file descriptor limit is reported as itself rather than as a failure of the call that hit it
+def test_a_file_descriptor_limit_is_not_reported_as_a_service_failure(gm_module):
+    try:
+        try:
+            raise OSError(24, "Too many open files")
+        except OSError as inner:
+            raise RuntimeError("the GitHub request failed") from inner
+    except RuntimeError as error:
+        advice = gm_module.classify_recovery_error(error, "runtime")
+
+    assert advice.code == "resource.exhausted"
+    assert advice.retryable is False
+    assert "not a GitHub problem" in advice.summary
+    assert "ulimit -n 4096" in advice.fix
+
+
 # The connectivity check has no page of its own, and its fix already names the setting to look at
 def test_the_connectivity_advice_carries_no_guide_link(gm_module):
     advice = gm_module.classify_recovery_error(gm_module.req.ConnectionError("offline"), "connectivity")
