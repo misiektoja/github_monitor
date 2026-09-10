@@ -40,7 +40,7 @@ A run that has neither a username nor a token reports the missing username first
 
 ## Verbose and Debug Output
 
-Verbose mode answers "what did the tool decide?" It expands the startup summary and states when missing data prevents a specific alert from firing during the current check. The expanded summary names the webhook service alerts go to and the mail server that sends them, with the recipient address masked, whether the delivery confirmations are printed and the process id, Python version and operating system the run is on:
+Verbose mode answers "what did the tool decide?" It expands the startup summary and states when missing data prevents a specific alert from firing during the current check. The expanded summary names the webhook service alerts go to and whether that channel is switched on, the mail server that sends them with the recipient address masked, whether the delivery confirmations are printed and the process id, Python version and operating system the run is on, with each channel's own settings indented under it:
 
 ```sh
 github_monitor <github_target> --verbose

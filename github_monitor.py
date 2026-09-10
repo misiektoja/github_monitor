@@ -3493,24 +3493,12 @@ def startup_email_transport():
     return f"{SMTP_HOST}:{SMTP_PORT} ({'STARTTLS' if SMTP_SSL else 'TLS off'})"
 
 
-# Names the webhook service alerts would reach, with its host and, for ntfy, whether an access token is set
+# Names the configured webhook service and whether the channel is switched on, which are two separate settings
 def startup_webhook_provider():
-    if not WEBHOOK_ENABLED or not str(WEBHOOK_URL or "").strip():
+    if not normalized_webhook_provider() or not str(WEBHOOK_URL or "").strip():
         return "Not configured"
-    host = webhook_destination_host()
-    details = [host] if host else []
-    if normalized_webhook_provider() == "ntfy":
-        details.append("access token set" if NTFY_ACCESS_TOKEN else "no access token")
-    return webhook_provider_display_name() + (f" ({', '.join(details)})" if details else "")
+    return f"{webhook_provider_display_name()} ({'enabled' if WEBHOOK_ENABLED else 'disabled'})"
 
-
-
-# Returns the webhook destination's host alone, so a trace can name it without exposing the private path
-def webhook_destination_host():
-    try:
-        return urlsplit(str(WEBHOOK_URL or "").strip()).hostname or ""
-    except ValueError:
-        return ""
 
 
 # Builds concise and complete startup rows without exposing private values
@@ -3560,9 +3548,14 @@ def build_startup_summary(target, config_path, env_path, output_path):
     ]
 
 
+# Rows that detail the channel named right above them, indented so the block reads as one setting with its details
+STARTUP_SUMMARY_NESTED_LABELS = ("Email transport", "Email recipient", "Email images", "Webhook provider", "ntfy images")
+
+
 # Formats one startup summary row with aligned plain ASCII columns
 def format_startup_summary_row(row):
-    prefix = f"* {(row.label + ':'):<30}"
+    indent = "  " if row.label in STARTUP_SUMMARY_NESTED_LABELS else ""
+    prefix = f"* {indent}{(row.label + ':'):<{30 - len(indent)}}"
     if row.label in ("Notifications (email)", "Notifications (webhook)"):
         return textwrap.fill(row.value, width=100, initial_indent=prefix, subsequent_indent=" " * len(prefix), break_long_words=False, break_on_hyphens=False) + "\n"
     return f"{prefix}{row.value}\n"
