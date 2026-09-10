@@ -2743,10 +2743,9 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
         smtpObj.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, email_msg.as_string())
         smtpObj.quit()
         debug_print("SMTP delivery", outcome="OK", host=SMTP_HOST, attempt="1/1")
-        verbose_print("Email delivery succeeded")
+        verbose_print(f"Email delivered to {RECEIVER_EMAIL}: {subject}")
     except Exception as e:
         debug_print("SMTP delivery", outcome="failed", host=SMTP_HOST, attempt="1/1", error=f"{type(e).__name__}: {e}")
-        verbose_print("Email delivery failed")
         print(f"Error sending email: {sanitize_error_text(e)}")
         return 1
     return 0
@@ -3760,12 +3759,11 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
             retryable = response.status_code == 429 or 500 <= response.status_code <= 599
             debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", status=response.status_code, retryable=retryable)
             if 200 <= response.status_code <= 299:
-                verbose_print(f"Webhook delivery through {provider} succeeded")
+                verbose_print(f"Webhook delivered through {provider}: {webhook_values['title']}")
                 debug_print("Webhook delivery", channel=provider, outcome="OK", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 return 0
             last_error = response
             if not retryable or attempt == WEBHOOK_MAX_ATTEMPTS - 1:
-                verbose_print(f"Webhook delivery through {provider} failed")
                 debug_print("Webhook delivery", channel=provider, outcome="failed", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 print_webhook_error(f"HTTP {response.status_code}: {getattr(response, 'text', '')[:200]}")
                 return 1
@@ -3777,13 +3775,11 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
             attempt_number = attempt + 1
             debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", outcome="failed", error=f"{type(exc).__name__}: {exc}", retryable=attempt < WEBHOOK_MAX_ATTEMPTS - 1)
             if attempt == WEBHOOK_MAX_ATTEMPTS - 1:
-                verbose_print(f"Webhook delivery through {provider} failed")
                 debug_print("Webhook delivery", channel=provider, outcome="failed", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 print_webhook_error(exc)
                 return 1
             debug_monitor_wait_timing(f"webhook request retry attempt {attempt_number + 1}/{WEBHOOK_MAX_ATTEMPTS}", WEBHOOK_FALLBACK_RETRY_SECONDS)
             sleep_func(WEBHOOK_FALLBACK_RETRY_SECONDS)
-    verbose_print(f"Webhook delivery through {provider} failed")
     debug_print("Webhook delivery", channel=provider, outcome="failed", after=f"{WEBHOOK_MAX_ATTEMPTS} attempts")
     print_webhook_error(last_error)
     return 1
