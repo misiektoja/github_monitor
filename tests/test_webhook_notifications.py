@@ -223,6 +223,8 @@ def test_webhook_cli_overrides_match_runtime_settings(gm_module, monkeypatch):
 # Verifies a known ntfy URL corrects a stale configured provider and sends native text
 def test_runtime_provider_detection_corrects_config_mismatch(gm_module, monkeypatch, capsys):
     configure_webhook(gm_module, monkeypatch)
+    # Only a provider the configuration actually sets is worth warning about, so the warning needs it named here
+    monkeypatch.setattr(gm_module, "CONFIGURED_SETTING_NAMES", {"WEBHOOK_PROVIDER"})
     args = SimpleNamespace(webhook_provider=None, webhook_url="https://ntfy.sh/private-topic", webhook_enabled=None, webhook_profile=None, webhook_events=None, webhook_repo_changes=None, webhook_repo_update_date=None, webhook_daily_contribs=None, webhook_errors=None)
     parser = Mock()
     gm_module.apply_webhook_cli_overrides(args, parser)
