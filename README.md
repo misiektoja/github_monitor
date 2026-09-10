@@ -42,27 +42,31 @@ For the manual single-file method, dependencies and upgrade commands, see [Insta
 
 ## Features
 
-- **Real-time tracking** of GitHub users' activities, including profile and repository changes:
-   - **new GitHub events** for the user like new pushes, PRs, issues, forks, releases, reviews etc.
-   - **repository changes** such as updated stargazers, watchers, forks, issues, PRs, discussions, description and repo update dates
-   - added/removed **followings and followers**
-   - added/removed **starred repositories**
-   - added/removed **public repositories**
-   - detection whether a removal was caused by a **deleted account or repository**, flagged in the alert
-   - changes in **user name, email, location, company, bio and blog URL**
-   - changes in **profile visibility** (public to private and vice versa)
-   - changes in **user's daily contributions**
-   - detection when a **user blocks or unblocks you**
-   - detection of **account metadata** changes (such as account update date)
-- **Email and webhook notifications** through **Discord**, **ntfy** and custom Discord-format integrations for different events
-- **Guided setup** with `--setup`, and **preflight diagnostics** with `--doctor`
-- **Saving all user activities** with timestamps to the **CSV file**
-- **Clickable GitHub URLs** printed in the console and included in email notifications (repos, PRs, commits, issues, releases etc.)
-- **Coloured terminal output** with a configurable theme, switched off automatically when the output is redirected
-- **Flexible configuration** through config files, dotenv files, environment variables and command-line arguments
-- **Control of the running copy** through signals
-- Support for **Public Web GitHub** and **GitHub Enterprise**
-- **Functional, procedural Python** (minimal OOP)
+### Activity and Profile Tracking
+
+* **GitHub events**: Track pushes, pull requests, issues, forks, releases and reviews.
+* **Profile changes**: Detect changes to names, email, location, company, bio, blog URL, visibility and account metadata.
+* **Connections and contributions**: Track followers, followed accounts, daily contributions and blocking or unblocking.
+
+### Repository Insights
+
+* **Repository lists**: Track added or removed public and starred repositories.
+* **Repository changes**: Monitor stars, watchers, forks, issues, pull requests, discussions, descriptions and update dates.
+* **Removal context**: Flag deleted accounts or repositories when reporting removals.
+* **GitHub links**: Open repositories, commits, issues and other activity from console and email links.
+
+### Notifications and History
+
+* **Event alerts**: Send email, Discord and ntfy notifications with event-specific controls.
+* **CSV history**: Save detected activity and profile changes with timestamps.
+* **Terminal colours**: Customize the theme, with colours disabled when output is redirected.
+
+### Setup and Configuration
+
+* **Guided setup**: Configure a target, credentials and alerts with `--setup`, then check them with `--doctor`.
+* **Flexible settings**: Use configuration files, dotenv files, environment variables and command-line options.
+* **Runtime controls**: Adjust the running monitor through supported signals.
+* **GitHub deployments**: Connect to public GitHub or GitHub Enterprise.
 
 <a id="common-commands"></a>
 ## Common Commands
