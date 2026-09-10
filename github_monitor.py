@@ -20,34 +20,6 @@ wcwidth (optional, measures wide characters correctly when TRUNCATE_CHARS is set
 
 VERSION = "2.7"
 
-PROJECT_URL = "https://github.com/misiektoja/github_monitor"
-DOCUMENTATION_URL = "https://misiektoja.github.io/github_monitor"
-QUICK_START_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/"
-CONFIG_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#configuration-file"
-INSTALL_GUIDE_URL = f"{DOCUMENTATION_URL}/installation/"
-CSV_GUIDE_URL = f"{DOCUMENTATION_URL}/usage/#csv-export"
-INTERVALS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#check-intervals"
-AUTH_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#github-personal-access-token"
-GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
-SECRETS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#storing-secrets"
-SMTP_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#smtp-settings"
-WEBHOOK_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#webhook-settings"
-DEBUG_GUIDE_URL = f"{DOCUMENTATION_URL}/troubleshooting/#verbose-and-debug-output"
-TLS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#tls-verification"
-SUPPORT_GUIDE_URL = f"{DOCUMENTATION_URL}/about/#support"
-DOCTOR_GUIDE_URL = f"{DOCUMENTATION_URL}/troubleshooting/#doctor-preflight"
-
-# Shared doctor labels for the two delivery channels, kept identical to the sibling monitors
-SMTP_READY_CHECK_LABEL = "SMTP connection and login succeeded"
-WEBHOOK_READY_CHECK_LABEL = "Webhook URL, headers and alert choices look valid"
-
-# The label every sibling monitor uses when email alerts are on but the settings they would use cannot deliver
-EMAIL_UNUSABLE_CHECK_LABEL = "Email alerts are enabled but unusable"
-
-# Declared once so the startup gate, the packaging metadata and the doctor environment check cannot disagree
-MINIMUM_PYTHON_VERSION = (3, 10)
-MINIMUM_PYTHON_VERSION_TEXT = ".".join(str(part) for part in MINIMUM_PYTHON_VERSION)
-
 # ---------------------------
 # CONFIGURATION SECTION START
 # ---------------------------
@@ -546,6 +518,31 @@ SECRET_SOURCES = {}
 # Every layer that can supply a secret, so a source outside the set is a typo rather than a new layer
 SECRET_SOURCE_ORDER = ("built-in configuration", "configuration file", "dotenv file", "dotenv file reload", "environment", "command line")
 
+# Documentation the tool links to from errors, doctor rows and the welcome screen
+PROJECT_URL = "https://github.com/misiektoja/github_monitor"
+DOCUMENTATION_URL = "https://misiektoja.github.io/github_monitor"
+QUICK_START_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/"
+CONFIG_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#configuration-file"
+INSTALL_GUIDE_URL = f"{DOCUMENTATION_URL}/installation/"
+CSV_GUIDE_URL = f"{DOCUMENTATION_URL}/usage/#csv-export"
+INTERVALS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#check-intervals"
+AUTH_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#github-personal-access-token"
+GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
+SECRETS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#storing-secrets"
+SMTP_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#smtp-settings"
+WEBHOOK_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#webhook-settings"
+DEBUG_GUIDE_URL = f"{DOCUMENTATION_URL}/troubleshooting/#verbose-and-debug-output"
+TLS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#tls-verification"
+SUPPORT_GUIDE_URL = f"{DOCUMENTATION_URL}/about/#support"
+DOCTOR_GUIDE_URL = f"{DOCUMENTATION_URL}/troubleshooting/#doctor-preflight"
+
+# Shared doctor labels for the two delivery channels, kept identical to the sibling monitors
+SMTP_READY_CHECK_LABEL = "SMTP connection and login succeeded"
+WEBHOOK_READY_CHECK_LABEL = "Webhook URL, headers and alert choices look valid"
+
+# The label every sibling monitor uses when email alerts are on but the settings they would use cannot deliver
+EMAIL_UNUSABLE_CHECK_LABEL = "Email alerts are enabled but unusable"
+
 # Version incremented when SIGHUP reloads the GitHub token
 GITHUB_AUTH_REFRESH_VERSION = 0
 
@@ -631,6 +628,10 @@ import functools
 import importlib.util
 import shlex
 import platform
+
+# Declared once so the startup gate, the packaging metadata and the doctor environment check cannot disagree
+MINIMUM_PYTHON_VERSION = (3, 10)
+MINIMUM_PYTHON_VERSION_TEXT = ".".join(str(part) for part in MINIMUM_PYTHON_VERSION)
 
 
 # Writes the uncoloured startup banner for bootstrap failures
