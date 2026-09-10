@@ -679,7 +679,7 @@ def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
             destination.write(f"[PASS] Required dependency {package_name} is installed\n")
         else:
             failures += 1
-            install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
+            install_command = shlex.join([("python" if platform.system() == "Windows" else "python3"), "-m", "pip", "install", package_name])
             destination.write(f"[FAIL] Required dependency {package_name} is missing\n  The full preflight cannot continue without this package\n  To fix: Install it with: {install_command}\n")
     for package_name, module_name, feature in optional:
         try:
@@ -690,7 +690,7 @@ def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
             destination.write(f"[PASS] Optional dependency {package_name} is installed\n  Used only for {feature}\n")
         else:
             warnings += 1
-            install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
+            install_command = shlex.join([("python" if platform.system() == "Windows" else "python3"), "-m", "pip", "install", package_name])
             destination.write(f"[WARN] Optional dependency {package_name} is not installed\n  {feature[:1].upper() + feature[1:]} will not work while other features remain available\n  To fix: Install it with: {install_command}\n")
     destination.write(f"\nSummary\n  {failures} check(s) failed, {warnings} warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
     destination.flush()
@@ -750,7 +750,7 @@ import urllib3
 import socket
 from typing import Any, Callable, cast
 import shutil
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import Optional
 import datetime as dt
 import requests
@@ -3063,13 +3063,10 @@ def command_targets(explicit_target=None, saved_target=None, placeholder="<githu
 
 
 # Renders one install-aware command with platform quoting, carrying the paths this run was given
-def render_command(arguments=None, include_paths=True, *, install_context=None, exact=True):
+def render_command(arguments=None, include_paths=True, *, install_context=None):
     context = detect_install_context() if install_context is None else install_context
-    prefix = context.command_prefix
-    if not exact:
-        executable = "python" if context.operating_system.casefold() == "windows" else "python3"
-        path_class = PureWindowsPath if context.operating_system.casefold() == "windows" else Path
-        prefix = (executable, path_class(context.command_prefix[-1]).name) if context.install_method == "manual" else ("github_monitor",)
+    executable = "python" if context.operating_system.casefold() == "windows" else "python3"
+    prefix = (executable, "github_monitor.py") if context.install_method == "manual" else ("github_monitor",)
     selected = [str(argument) for argument in (arguments or ())]
     parts = [*prefix, *selected]
     if include_paths:
@@ -3988,7 +3985,7 @@ def print_degraded_error(subject, error, label="Error"):
 
 # Returns the advice an optional library that is missing carries, naming what the run loses and how to install it
 def missing_dependency_advice(package, effect, alternative=""):
-    return make_recovery_advice("dependency.missing", f"{effect} because the optional '{package}' library is missing", recovery_fix_with_guide(f"Install it with: {shlex.join([sys.executable, '-m', 'pip', 'install', package])}" + (f". {alternative}" if alternative else ""), INSTALL_GUIDE_URL), False)
+    return make_recovery_advice("dependency.missing", f"{effect} because the optional '{package}' library is missing", recovery_fix_with_guide(f"Install it with: {shlex.join([('python' if platform.system() == 'Windows' else 'python3'), '-m', 'pip', 'install', package])}" + (f". {alternative}" if alternative else ""), INSTALL_GUIDE_URL), False)
 
 
 # Reports a CSV row or header that could not be written, which never stops a monitoring cycle
@@ -8214,7 +8211,7 @@ def doctor_check_environment(report, module_finder=None):
         if doctor_dependency_available(module_name, module_finder):
             report.add("Environment", "PASS", f"Required dependency {package_name} is installed")
         else:
-            install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
+            install_command = shlex.join([("python" if platform.system() == "Windows" else "python3"), "-m", "pip", "install", package_name])
             advice = make_recovery_advice("dependency.missing", f"Required dependency {package_name} is missing", recovery_fix_with_guide(f"Install it with: {install_command}", INSTALL_GUIDE_URL), False)
             report.add("Environment", "FAIL", advice.summary, "The monitor cannot run its required path without this package", advice)
     optional = (("python-dotenv", "dotenv", "dotenv discovery and loading"), ("tzlocal", "tzlocal", "automatic timezone detection"))
@@ -8225,7 +8222,7 @@ def doctor_check_environment(report, module_finder=None):
         if doctor_dependency_available(module_name, module_finder):
             report.add("Environment", "PASS", f"Optional dependency {package_name} is installed", f"Used only for {feature}")
         else:
-            install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
+            install_command = shlex.join([("python" if platform.system() == "Windows" else "python3"), "-m", "pip", "install", package_name])
             advice = make_recovery_advice("dependency.missing", f"Optional dependency {package_name} is not installed", recovery_fix_with_guide(f"Install it with: {install_command}", INSTALL_GUIDE_URL), False)
             report.add("Environment", "WARN", advice.summary, f"{feature[:1].upper() + feature[1:]} will not work. Every other feature is unaffected", advice)
 

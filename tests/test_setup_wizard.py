@@ -1,4 +1,3 @@
-import shlex
 """Offline contract tests for guided setup and the zero-argument welcome."""
 
 from command_expectations import runtime_command
@@ -613,11 +612,12 @@ def test_zero_argument_welcome_offers_guided_setup_on_a_tty(gm_module):
     transcript = output.getvalue()
     assert exit_code == 7
     assert transcript.startswith(gm_module.STARTUP_BANNER + f"\n                     v{gm_module.VERSION}\n\nFor <github_target>, use a GitHub username or complete profile URL.\n\n")
-    assert runtime_command("Quickest start (already configured):\n    python3 github_monitor.py <github_target>\n\n", prefix=shlex.join(context.command_prefix)) in transcript
-    assert runtime_command("Easiest start (guided setup wizard):\n    python3 github_monitor.py --setup   (or just answer Y below)\n\n", prefix=shlex.join(context.command_prefix)) in transcript
-    assert runtime_command("Check setup before monitoring:\n    python3 github_monitor.py --doctor <github_target>\n\n", prefix=shlex.join(context.command_prefix)) in transcript
-    assert runtime_command("Full options: python3 github_monitor.py --help", prefix=shlex.join(context.command_prefix)) in transcript
-    assert "/private/runtime/python3 /private/install/github_monitor.py" in transcript
+    assert runtime_command("Quickest start (already configured):\n    python3 github_monitor.py <github_target>\n\n") in transcript
+    assert runtime_command("Easiest start (guided setup wizard):\n    python3 github_monitor.py --setup   (or just answer Y below)\n\n") in transcript
+    assert runtime_command("Check setup before monitoring:\n    python3 github_monitor.py --doctor <github_target>\n\n") in transcript
+    assert runtime_command("Full options: python3 github_monitor.py --help") in transcript
+    assert "/private/runtime/python3" not in transcript
+    assert "/private/install/github_monitor.py" not in transcript
     assert "Run the guided setup wizard now? [Y/n]: " in transcript
     assert gm_module.QUICK_START_GUIDE_URL in transcript
     assert calls[0]["show_banner"] is False
@@ -633,7 +633,7 @@ def test_zero_argument_welcome_non_interactive_has_no_prompt(gm_module):
     assert exit_code == 1
     assert "Run the guided setup wizard now?" not in output.getvalue()
     assert runtime_command("python3 github_monitor.py") in output.getvalue()
-    assert str(PROJECT_ROOT) in output.getvalue()
+    assert str(PROJECT_ROOT) not in output.getvalue()
 
 
 # Verifies the empty CLI path reaches the welcome instead of argparse help

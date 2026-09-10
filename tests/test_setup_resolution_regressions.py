@@ -1,5 +1,4 @@
 import copy
-from pathlib import Path
 
 import pytest
 
@@ -54,13 +53,11 @@ def test_exported_secret_keeps_precedence(monkeypatch, tmp_path):
     assert monitor.SMTP_PASSWORD == "synthetic-export"
 
 
-# Recovery commands identify the active installation even from an unrelated working directory
-def test_recovery_prefix_uses_running_interpreter(monkeypatch, tmp_path):
-    import sys
+# Recovery commands stay readable independently of the installation directory
+def test_recovery_prefix_uses_short_names(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    context = monitor.detect_install_context()
-    command = monitor.render_command([], include_paths=False, install_context=context)
-    assert str(Path(sys.executable)) in command
+    context = monitor.detect_install_context(argv0="/opt/private/tools/github_monitor.py", module_path="/opt/private/tools/github_monitor.py")
+    assert monitor.render_command(["--setup"], include_paths=False, install_context=context) == "python3 github_monitor.py --setup"
 
 
 
