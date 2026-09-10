@@ -250,6 +250,8 @@ As Windows supports a limited number of signals, this functionality is available
 
 `COLORED_OUTPUT` controls whether live terminal output is coloured. It defaults to `True` and is read before the startup banner is printed, so a configured value applies to the first line. `--no-color` disables colour for one run. Colour also switches itself off when output is redirected or piped, when `TERM` is unset or `dumb` and when the standard [`NO_COLOR`](https://no-color.org/) environment variable is set. Log files always remain plain text with ANSI escape sequences stripped.
 
+The `--help` screen is coloured too. Group headings, option names, the values those options take, the example commands and the comments above them each get their own colour, so the screen can be scanned instead of read.
+
 `COLOR_THEME` overrides individual colours. It is merged over the built-in theme, so name only the parts you want to change:
 
 Generated configuration files ship this block commented out, so the built-in defaults apply and a later change to them reaches you. A configuration file written by an earlier version sets every colour explicitly and therefore keeps the old ones: delete its `COLOR_THEME` block to follow the current defaults, or edit the values you want to keep. Such a file still loads unchanged.
@@ -293,6 +295,14 @@ A value combines one colour with any number of style attributes separated by spa
 | `count_up` | Values in reported increases such as `from 10 to 12` and `(+2)` |
 | `count_down` | Values in reported decreases such as `from 12 to 10` and `(-2)` |
 | `link` | HTTP and HTTPS links |
+| `help_heading` | The `--help` group headings and example task names |
+| `help_usage` | The `usage:` label |
+| `help_option` | Option names such as `--doctor` |
+| `help_metavar` | The value each option takes, such as a path or a number of seconds |
+| `help_placeholder` | Values to replace in the help examples |
+| `help_command` | The commands in the help examples |
+| `help_comment` | The `#` comment above each help example |
+| `help_default` | The `(default: ...)` notes |
 
 Static counts stay plain. Only values that report a change receive `count_up` or `count_down`.
 
