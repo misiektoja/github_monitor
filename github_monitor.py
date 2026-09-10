@@ -4398,9 +4398,13 @@ def github_object_name(value):
 
 # Callers wrap a lambda and invoke the result immediately, so a lambda that reads a loop variable is
 # evaluated inside the same iteration. Those call sites carry a noqa marker for the loop-binding rule
-# Wraps GitHub API call with retry and linear back-off, returning a specified default on failure
-def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BACKOFF_SEC, default: Any = None,) -> Callable[..., Any]:
+# Retries a GitHub operation with current settings and either returns its fallback or raises the final failure
+def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = None, *, raise_on_failure=False) -> Callable[..., Any]:
+    retries = NET_MAX_RETRIES if retries is None else retries
+    backoff = NET_BASE_BACKOFF_SEC if backoff is None else backoff
+    # Keeps the original exception available to callers that must distinguish an unavailable feed from an empty one
     def wrapped(*args: Any, **kwargs: Any) -> Any:
+        last_error = None
         for i in range(1, retries + 1):
             try:
                 debug_print("PyGithub retry wrapper", operation=fn.__name__, attempt=f"{i}/{retries}")
@@ -4408,6 +4412,7 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
                 debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="OK", attempt=f"{i}/{retries}")
                 return result
             except RateLimitExceededException as e:
+                last_error = e
                 headers = getattr(e, "headers", None)
 
                 reset_str = None
@@ -4440,6 +4445,7 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
                 continue
 
             except NET_ERRORS as e:
+                last_error = e
                 retryable = i < retries
                 delay = backoff * i
                 debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
@@ -4448,6 +4454,8 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
                     debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{retries}", delay)
                     time.sleep(delay)
         verbose_degraded_feature(f"GitHub operation {fn.__name__}", "its dependent alerts")
+        if raise_on_failure and last_error is not None:
+            raise last_error
         debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="default", after=f"{retries} attempts")
         return default
     return wrapped
@@ -7295,7 +7303,7 @@ def github_monitor_user(user, csv_file_name):
         # Changed followings
         try:
             debug_github_operation("followings refresh", user)
-            followings_raw = list(gh_call(g_user.get_following)())
+            followings_raw = gh_call(lambda: list(g_user.get_following()), raise_on_failure=True)()  # noqa: B023
             followings_count = gh_call(lambda: g_user.following)()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followings", "following change alerts", e)
@@ -7310,7 +7318,7 @@ def github_monitor_user(user, csv_file_name):
         # Changed followers
         try:
             debug_github_operation("followers refresh", user)
-            followers_raw = list(gh_call(g_user.get_followers)())
+            followers_raw = gh_call(lambda: list(g_user.get_followers()), raise_on_failure=True)()  # noqa: B023
             followers_count = gh_call(lambda: g_user.followers)()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followers", "follower change alerts", e)
@@ -7326,11 +7334,11 @@ def github_monitor_user(user, csv_file_name):
         try:
             if GET_ALL_REPOS:
                 debug_github_operation("all repository refresh", user)
-                repos_raw = list(gh_call(g_user.get_repos)())
+                repos_raw = gh_call(lambda: list(g_user.get_repos()), raise_on_failure=True)()  # noqa: B023
                 repos_count = gh_call(lambda: g_user.public_repos)()  # noqa: B023
             else:
                 debug_github_operation("owned repository refresh", user)
-                repos_raw = list(gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])())  # noqa: B023
+                repos_raw = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], raise_on_failure=True)()  # noqa: B023
                 repos_count = len(repos_raw)
         except NET_ERRORS as e:
             verbose_degraded_feature("Repositories", "repository change alerts", e)
@@ -7345,13 +7353,8 @@ def github_monitor_user(user, csv_file_name):
         # Changed starred repositories
         try:
             debug_github_operation("starred repository refresh", user)
-            starred_raw = gh_call(g_user.get_starred)()
-            if starred_raw is not None:
-                starred_list = list(starred_raw)
-                starred_count = starred_raw.totalCount
-            else:
-                starred_list = None
-                starred_count = None
+            starred_list = gh_call(lambda: list(g_user.get_starred()), raise_on_failure=True)()  # noqa: B023
+            starred_count = len(starred_list)
         except NET_ERRORS as e:
             verbose_degraded_feature("Starred repositories", "starred repository change alerts", e)
             print_degraded_error("Starred repositories could not be refreshed", e)
@@ -7661,11 +7664,17 @@ def github_monitor_user(user, csv_file_name):
         # Changed repos details
         if TRACK_REPOS_CHANGES:
 
-            if GET_ALL_REPOS:
-                repos_list = gh_call(g_user.get_repos)()
-            else:
-                debug_github_operation("owned repository detail refresh", user)
-                repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])()  # noqa: B023
+            try:
+                if GET_ALL_REPOS:
+                    repos_list = gh_call(lambda: list(g_user.get_repos()), raise_on_failure=True)()  # noqa: B023
+                else:
+                    debug_github_operation("owned repository detail refresh", user)
+                    repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], raise_on_failure=True)()  # noqa: B023
+            except NET_ERRORS as e:
+                repos_list = None
+                verbose_degraded_feature("Repository detail feed", "repository detail alerts", e)
+                print_degraded_error("The repository detail feed could not be refreshed, so the previous snapshot is kept", e)
+                print_cur_ts("Timestamp:\t\t\t")
 
             # Filter repos for detailed monitoring only (keep full repos_list for profile change detection)
             repos_list_filtered = repos_list
@@ -7817,7 +7826,13 @@ def github_monitor_user(user, csv_file_name):
         # New GitHub events
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
             debug_github_operation("recent event refresh", user)
-            events = list(gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)))())  # noqa: B023
+            try:
+                events = gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)), raise_on_failure=True)()  # noqa: B023
+            except NET_ERRORS as e:
+                events = None
+                verbose_degraded_feature("Recent events", "new event alerts", e)
+                print_degraded_error("Recent events could not be refreshed, so the previous snapshot is kept", e)
+                print_cur_ts("Timestamp:\t\t\t")
             if events is not None:
                 available_events = len(events)
                 if available_events == 0:
