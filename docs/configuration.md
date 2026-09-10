@@ -92,6 +92,8 @@ python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
 
 ## SMTP Settings
 
+Private password entry preserves leading and trailing spaces. The exact value checked with the mail server is saved.
+
 If you want to use email notifications functionality, configure SMTP settings in the `github_monitor.conf` file.
 
 Save the mail server password through the hidden prompt, which signs in to the server before saving without sending anything:
@@ -109,6 +111,8 @@ github_monitor --send-test-email
 Which alerts each channel sends is covered in [Email Notifications](usage.md#email-notifications).
 
 ## Webhook Settings
+
+A delivery keeps its original destination and credentials for every retry. Reloaded settings apply to the next delivery. Discord templates must produce a JSON object. Dictionary templates and JSON strings are supported, including strings with escaped format braces. Mentions remain disabled in every template.
 
 GitHub Monitor can send activity alerts through Discord or the native [ntfy publish API](https://docs.ntfy.sh/publish/). Webhook alerts work with or without email.
 
@@ -180,7 +184,7 @@ WEBHOOK_HEADERS = {
 
 Header values support the same placeholders as `WEBHOOK_TEMPLATE`. GitHub Monitor validates header names and values before and after placeholder expansion so formatted values cannot introduce line breaks or invalid headers. Prefer `NTFY_ACCESS_TOKEN` for ntfy bearer authentication. Basic authentication remains available through a custom `Authorization` header. Long ntfy messages are visibly truncated below ntfy's 4 KB boundary so they remain notifications instead of temporary attachments.
 
-`WEBHOOK_TEMPLATE` controls the Discord-format request body. It supports `{title}`, `{description}`, `{version}`, `{image_url}`, `{fields}`, `{fields_str}`, `{color}`, `{timestamp}`, `{username}` and `{avatar_url}`. A dictionary or list is sent as JSON. A string template is sent as the raw request body for compatible custom integrations. Dictionary payloads always replace `allowed_mentions` with `{"parse": []}` so alert text cannot trigger Discord mentions.
+`WEBHOOK_TEMPLATE` controls the Discord-format request body. It supports `{title}`, `{description}`, `{version}`, `{image_url}`, `{fields}`, `{fields_str}`, `{color}`, `{timestamp}`, `{username}` and `{avatar_url}`. Use a dictionary or a JSON string encoding an object. Lists and non-JSON strings are rejected before delivery. All payloads replace `allowed_mentions` with `{"parse": []}` so alert text cannot trigger Discord mentions.
 
 `WEBHOOK_TEMPLATE`, `WEBHOOK_USERNAME` and `WEBHOOK_AVATAR_URL` apply only to Discord and are ignored when `WEBHOOK_PROVIDER` is `"ntfy"`. The ntfy provider needs no template: it sends the alert body as a native ntfy message with the subject as its title. Customize ntfy delivery through `WEBHOOK_HEADERS` (for example `X-Priority` or `X-Tags`).
 
