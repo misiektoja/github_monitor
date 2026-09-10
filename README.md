@@ -14,17 +14,27 @@ Powerful real-time GitHub OSINT tool that tracks everything from profile updates
 
 **Full documentation: [misiektoja.github.io/github_monitor](https://misiektoja.github.io/github_monitor/)**
 
-### 🚀 Quick Install
+<a id="-quick-install"></a>
+<a id="-quick-install-run"></a>
+### 🚀 Quick Install & Run
+
+New to Python or unsure what is installed? Follow the [Python install walkthrough](https://misiektoja.github.io/github_monitor/installation/#new-to-python-install-everything) first.
+
+Install from PyPI:
 
 ```sh
 pip install github_monitor
 ```
 
-The guided setup asks a few questions and writes a ready-to-run configuration:
+Run the setup wizard:
 
 ```sh
 github_monitor --setup
 ```
+
+The wizard asks for the target, authentication, polling intervals and optional notifications. Review the settings before saving them. See [Setup & First Run](https://misiektoja.github.io/github_monitor/setup-and-first-run/) for the service-specific steps.
+
+For the manual single-file method, dependencies and upgrade commands, see [Installation](https://misiektoja.github.io/github_monitor/installation/).
 
 <p align="center">
    <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
@@ -54,11 +64,30 @@ github_monitor --setup
 - Support for **Public Web GitHub** and **GitHub Enterprise**
 - **Functional, procedural Python** (minimal OOP)
 
+<a id="common-commands"></a>
+## Common Commands
+
+Use [Quick Install & Run](#-quick-install-run) for first-time setup. These examples use the PyPI command. See [Command Format by Installation Method](https://misiektoja.github.io/github_monitor/usage/#command-format) for manual-script equivalents.
+
+Replace the target placeholders with a GitHub username or complete profile URL. Monitoring requires the [GitHub personal access token](https://misiektoja.github.io/github_monitor/setup-and-first-run/#github-personal-access-token) described in the setup guide.
+
+| I want to... | Run this |
+| --- | --- |
+| Configure the target, credentials and alerts | `github_monitor --setup` |
+| Start monitoring with saved credentials | `github_monitor <github_target>` |
+| Check setup before monitoring | `github_monitor --doctor <github_target>` |
+| Enter or replace credentials through hidden prompts | `github_monitor --set-github-token` |
+| Use a specific configuration and secrets file | `github_monitor --config-file github_monitor.conf --env-file .env <github_target>` |
+| List public repositories | `github_monitor <github_target> -r` |
+| List every supported command-line option | `github_monitor --help` |
+
+Monitoring runs until you press `Ctrl+C`. For email, Discord and ntfy alerts, CSV output and service-specific commands, see [Usage](https://misiektoja.github.io/github_monitor/usage/). If a run fails, start with [Doctor Preflight](https://misiektoja.github.io/github_monitor/troubleshooting/#doctor-preflight).
+
 ## Documentation
 
 | Page | What it covers |
 | --- | --- |
-| [Installation](https://misiektoja.github.io/github_monitor/installation/) | Requirements, installing from PyPI or by hand, upgrading |
+| [Installation](https://misiektoja.github.io/github_monitor/installation/) | Python walkthrough, PyPI or manual installation, upgrades |
 | [Setup & First Run](https://misiektoja.github.io/github_monitor/setup-and-first-run/) | The guided wizard, the personal access token, the first monitoring run |
 | [Configuration](https://misiektoja.github.io/github_monitor/configuration/) | Config file, events and repositories to monitor, SMTP, webhooks, TLS verification, storing secrets, check intervals |
 | [Usage](https://misiektoja.github.io/github_monitor/usage/) | Monitoring mode, listing mode, notifications, CSV export, signals, terminal colours |

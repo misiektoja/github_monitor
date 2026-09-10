@@ -1,5 +1,20 @@
 # Usage
 
+<a id="command-format"></a>
+## Command Format by Installation Method
+
+Examples use the PyPI command. For a downloaded script, run commands from the directory containing `github_monitor.py` and keep the same arguments:
+
+| Installation | Command |
+| --- | --- |
+| PyPI or pipx | `github_monitor [OPTIONS]` |
+| Manual script on macOS or Linux | `python3 github_monitor.py [OPTIONS]` |
+| Manual script on Windows | `python github_monitor.py [OPTIONS]` |
+
+For example, `github_monitor --setup` becomes `python3 github_monitor.py --setup` on macOS or Linux. Use `python` on Windows. Replace placeholders such as `<github_target>` with a GitHub username or complete profile URL.
+
+For first-time configuration, follow [Setup & First Run](setup-and-first-run.md). Use [Doctor Preflight](troubleshooting.md#doctor-preflight) to check a setup before monitoring.
+
 ## Monitoring Mode
 
 To monitor specific user activities and profile changes, simply enter the GitHub username as a command-line argument (`github_username` in the example below):

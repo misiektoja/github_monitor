@@ -1,5 +1,12 @@
 # Setup & First Run
 
+## Before You Start
+
+Install the tool using [Installation](installation.md). You will need a GitHub username or complete profile URL and the [GitHub personal access token](#github-personal-access-token). The wizard collects credentials through hidden prompts.
+
+Open a terminal in the directory where you want to keep the configuration and monitoring output. Later commands should use that directory or explicitly select the same `--config-file` and `--env-file` paths. Manual installations use the [command equivalents](usage.md#command-format).
+
+<a id="setup-wizard"></a>
 ## Guided Setup
 
 The easiest first run is the guided setup wizard:
@@ -94,3 +101,7 @@ Fallback methods are:
 - Hard-code it in the configuration file or source code
 
 If you update `GITHUB_TOKEN` in the active dotenv file, send a `SIGHUP` signal to reload it without restarting the tool. More information is available in [Storing Secrets](configuration.md#storing-secrets) and [Signal Controls](usage.md#signal-controls-macoslinuxunix).
+
+## Continue with Usage
+
+Use [Usage](usage.md) for monitoring and output options or [Configuration](configuration.md) to adjust saved settings. If setup or monitoring fails, run [Doctor Preflight](troubleshooting.md#doctor-preflight) and follow the reported recovery steps.
