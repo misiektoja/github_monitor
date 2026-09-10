@@ -21,7 +21,7 @@ When the named file already exists, `--generate-config` asks before replacing it
 
 Edit the `github_monitor.conf` file and change any desired configuration options (detailed comments are provided for each).
 
-By default the tool looks for a configuration file named `github_monitor.conf` in the current directory, the home directory (`~`) and the script directory. Use `--config-file` to name another location, or `--config-file none` to disable automatic config discovery for one run.
+By default the tool looks for a configuration file named `github_monitor.conf` in the current directory, the home directory (`~`) and the script directory. Use `--config-file` to name another location, or `--config-file none` to disable automatic config discovery for one run. The startup summary reports `Discovery disabled` when it is in effect.
 
 `TARGET_GITHUB_USERNAME` stores the optional default monitoring target. The setup wizard writes it only when you choose to persist the target. A positional GitHub username or profile URL takes precedence.
 

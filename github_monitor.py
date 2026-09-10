@@ -3305,6 +3305,43 @@ def help_examples():
     return render_help_examples(groups, QUICK_START_GUIDE_URL)
 
 
+# Hides the middle of an address's local part, so a log can be shared while the reader can still spot a typo
+def mask_email_address(address):
+    text = str(address or "").strip()
+    local, at_sign, domain = text.partition("@")
+    if not at_sign or not local or not domain:
+        return text
+    masked = f"{local[0]}{'*' * (len(local) - 2)}{local[-1]}" if len(local) > 2 else f"{local[0]}{'*' * (len(local) - 1)}"
+    return f"{masked}@{domain}"
+
+
+# Names the mail server this run would use, leaving out the account that signs in to it
+def startup_email_transport():
+    if not SMTP_HOST or not SMTP_PORT:
+        return "Not configured"
+    return f"{SMTP_HOST}:{SMTP_PORT} ({'STARTTLS' if SMTP_SSL else 'TLS off'})"
+
+
+# Names the webhook service alerts would reach, with its host and, for ntfy, whether an access token is set
+def startup_webhook_provider():
+    if not WEBHOOK_ENABLED or not str(WEBHOOK_URL or "").strip():
+        return "Not configured"
+    host = webhook_destination_host()
+    details = [host] if host else []
+    if normalized_webhook_provider() == "ntfy":
+        details.append("access token set" if NTFY_ACCESS_TOKEN else "no access token")
+    return webhook_provider_display_name() + (f" ({', '.join(details)})" if details else "")
+
+
+
+# Returns the webhook destination's host alone, so a trace can name it without exposing the private path
+def webhook_destination_host():
+    try:
+        return urlsplit(str(WEBHOOK_URL or "").strip()).hostname or ""
+    except ValueError:
+        return ""
+
+
 # Builds concise and complete startup rows without exposing private values
 def build_startup_summary(target, config_path, env_path, output_path):
     install_context = detect_install_context()
@@ -3317,10 +3354,14 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Target", str(target), concise=True),
         StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
         StartupSummaryRow("Notifications (email)", email_state, concise=True),
+        StartupSummaryRow("Email transport", startup_email_transport()),
+        StartupSummaryRow("Email recipient", mask_email_address(RECEIVER_EMAIL) if RECEIVER_EMAIL else "Not configured"),
         StartupSummaryRow("Notifications (webhook)", webhook_state, concise=True),
+        StartupSummaryRow("Webhook provider", startup_webhook_provider()),
+        StartupSummaryRow("Delivery confirmations", str(DELIVERY_CONFIRMATIONS)),
         StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only (logging disabled)", concise=True, full=False),
         StartupSummaryRow("Output logging", str(output_path) if output_path else "Disabled"),
-        StartupSummaryRow("Config", str(config_path) if config_path else "None", concise=True),
+        StartupSummaryRow("Config", str(config_path) if config_path else ("Discovery disabled" if CONFIG_DISCOVERY_DISABLED else "None"), concise=True),
         StartupSummaryRow("Dotenv", str(env_path) if env_path else "None", concise=True),
         StartupSummaryRow("GitHub API URL", str(GITHUB_API_URL)),
         StartupSummaryRow("Track repository changes", str(TRACK_REPOS_CHANGES)),
@@ -3330,6 +3371,9 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Liveness output", display_time(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_INTERVAL else "Disabled", concise=bool(LIVENESS_CHECK_INTERVAL)),
         StartupSummaryRow("CSV output", str(CSV_FILE) if CSV_FILE else "Disabled", concise=bool(CSV_FILE)),
         StartupSummaryRow("Terminal truncation", f"{TRUNCATE_CHARS} chars" if TRUNCATE_CHARS else "Disabled", concise=bool(TRUNCATE_CHARS)),
+        StartupSummaryRow("Process id", str(os.getpid())),
+        StartupSummaryRow("Python version", platform.python_version()),
+        StartupSummaryRow("Operating system", f"{platform.platform(terse=True)} ({platform.machine()})"),
         StartupSummaryRow("Local timezone", str(LOCAL_TIMEZONE)),
         StartupSummaryRow("Install method", install_method_display_name(install_context.install_method)),
         StartupSummaryRow("Secrets from dotenv", ", ".join(from_dotenv) if from_dotenv else "None"),
@@ -3718,7 +3762,7 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
         print(f"Sending email notification to {RECEIVER_EMAIL}")
         send_email(subject, body, body_html, SMTP_SSL)
     if webhook_attempted:
-        print("Sending webhook notification")
+        print(f"Sending webhook notification via {webhook_provider_display_name()}")
         send_webhook(subject, body, notification_type, force=True)
     return email_attempted, webhook_attempted
 

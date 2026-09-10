@@ -55,6 +55,7 @@ and again before anything is published to PyPI.
 | `test_setup_wizard.py` | Buffered setup, section editing, target and duration normalization, config and dotenv separation, backups, doctor and monitoring handoffs, non-interactive fallback and pseudo-terminal transcripts |
 | `test_startup_configuration.py` | Config, dotenv, exported environment and two-phase CLI precedence at startup consumer boundaries |
 | `test_removed_identity_notes.py` | The notes printed when a followed account or repository disappears |
+| `test_startup_summary_channels.py` | Summary rows naming the webhook provider, the mail server, the masked recipient, the delivery confirmations and the runtime |
 | `test_terminal_color.py` | Theme parity, token colours, wrapper order, ANSI-free logs, terminal sanitizing, truncation, progress redraws, setup, Doctor and recovery surfaces |
 | `test_tls_verification.py` | Every connection honouring `VERIFY_SSL` and the single shared TLS context builder |
 | `test_webhook_notifications.py` | Webhook URL validation, provider detection and per-event notification switches |
