@@ -518,6 +518,9 @@ SECRET_KEYS = ("GITHUB_TOKEN", "SMTP_PASSWORD", "WEBHOOK_URL", "NTFY_ACCESS_TOKE
 # Effective source name for each configured secret without storing another copy of its value
 SECRET_SOURCES = {}
 
+# Every layer that can supply a secret, so a source outside the set is a typo rather than a new layer
+SECRET_SOURCE_ORDER = ("built-in configuration", "configuration file", "dotenv file", "dotenv file reload", "environment", "command line")
+
 # Version incremented when SIGHUP reloads the GitHub token
 GITHUB_AUTH_REFRESH_VERSION = 0
 
@@ -2624,6 +2627,10 @@ def secret_is_set(value):
     return isinstance(value, str) and bool(value.strip()) and not value.strip().startswith("your_")
 
 
+# Returns the diagnostic fields describing one secret, reporting presence alone since GitHub issues no secret at a fixed length
+def secret_fields(value): return {"value": "set" if secret_is_set(value) else "not set"}
+
+
 # Renders one diagnostic line as an operation followed by comma-separated key=value fields, dropping unset ones
 def format_diagnostic_line(operation, fields):
     rendered = ", ".join(f"{key}={value}" for key, value in fields.items() if value is not None)
@@ -3154,6 +3161,19 @@ class StartupSummaryRow:
     value: str
     concise: bool = False
     full: bool = True
+
+
+# Records where one secret resolved from and traces it, so a later layer overwrites the earlier answer instead of adding to it
+def record_secret_source(name, source, value=None):
+    if source not in SECRET_SOURCE_ORDER:
+        raise ValueError(f"Unsupported secret source: {source}")
+    resolved = globals().get(name) if value is None else value
+    # A placeholder is not a value, so it earns neither a source nor a row
+    if not secret_is_set(resolved):
+        SECRET_SOURCES.pop(name, None)
+        return
+    SECRET_SOURCES[name] = source
+    debug_print("Secret resolution", name=name, source=source, **secret_fields(resolved))
 
 
 # Groups every resolved secret name into the four buckets the summary prints, one per source that can supply one
@@ -4015,10 +4035,11 @@ def reload_secrets_signal_handler(sig, frame):
                 globals()[secret] = val
                 # A placeholder written back into the dotenv file clears the secret rather than becoming one
                 if secret_is_set(val):
-                    SECRET_SOURCES[secret] = "dotenv file reload"
+                    record_secret_source(secret, "dotenv file reload", val)
                 else:
+                    # A cleared secret is a change the trace has to show, which the recorder stays silent about
                     SECRET_SOURCES.pop(secret, None)
-                debug_print("Secret resolution", name=secret, source=SECRET_SOURCES.get(secret, "nowhere"))
+                    debug_print("Secret resolution", name=secret, source="nowhere", **secret_fields(val))
                 if secret == "GITHUB_TOKEN":
                     github_token_changed = True
                 if secret == "WEBHOOK_URL":
@@ -5923,19 +5944,21 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
         if not secret_is_set(globals().get(secret)):
             continue
         if secret in environment_values:
-            SECRET_SOURCES[secret] = "environment"
+            source = "environment"
         elif secret in dotenv_keys and value is not None:
-            SECRET_SOURCES[secret] = "dotenv file"
+            source = "dotenv file"
         elif secret in configured_names:
-            SECRET_SOURCES[secret] = "configuration file"
+            source = "configuration file"
         else:
-            SECRET_SOURCES[secret] = "built-in configuration"
-    if SECRET_SOURCES:
-        for secret, source in SECRET_SOURCES.items():
-            debug_print("Secret resolution", name=secret, source=source)
-    else:
-        debug_print("No private settings were resolved from config, dotenv or environment")
+            source = "built-in configuration"
+        record_secret_source(secret, source)
     return env_path
+
+
+# Reports that no layer supplied a secret, called once the command line has had its say so the answer is final
+def trace_unresolved_secrets():
+    if not SECRET_SOURCES:
+        debug_print("No private settings were resolved from config, dotenv, environment or the command line")
 
 
 # Applies startup CLI overrides before any check consumes effective configuration
@@ -5946,8 +5969,7 @@ def apply_startup_cli_overrides(args, configured_settings=None):
     connectivity_follows_api = "CHECK_INTERNET_URL" not in configured_names or CHECK_INTERNET_URL == previous_api_url
     if args.github_token is not None:
         GITHUB_TOKEN = args.github_token
-        SECRET_SOURCES["GITHUB_TOKEN"] = "command line"
-        debug_print("Secret resolution name=GITHUB_TOKEN source=command line")
+        record_secret_source("GITHUB_TOKEN", "command line")
     if args.github_url is not None:
         GITHUB_API_URL = args.github_url
     if connectivity_follows_api:
@@ -7493,8 +7515,7 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
             parser.error("--webhook-url must contain a complete HTTPS link without embedded credentials")
         WEBHOOK_URL = str(args.webhook_url).strip()
         WEBHOOK_ENABLED = True
-        SECRET_SOURCES["WEBHOOK_URL"] = "command line"
-        debug_print("Secret resolution name=WEBHOOK_URL source=command line")
+        record_secret_source("WEBHOOK_URL", "command line")
     if args.webhook_enabled is not None:
         WEBHOOK_ENABLED = args.webhook_enabled
     if args.webhook_profile is True:
@@ -7778,6 +7799,7 @@ def doctor_check_configuration(report, args, parser):
     env_path = load_startup_secrets(args.env_file, configured_settings, report_errors=False, errors_out=dotenv_errors)
     apply_startup_cli_overrides(args, configured_settings)
     apply_webhook_cli_overrides(args, parser, report_warnings=False)
+    trace_unresolved_secrets()
     if args.repos is not None and not (TRACK_REPOS_CHANGES or args.track_repos_changes is True):
         report.add("Configuration", "FAIL", "Repository selection cannot take effect", "--repos requires repository detail tracking", "Add --track-repos-changes or remove --repos")
     apply_monitoring_cli_overrides(args, parser, strict=False)
@@ -9918,6 +9940,7 @@ def main():
         sys.exit(0)
 
     apply_webhook_cli_overrides(args, parser)
+    trace_unresolved_secrets()
     apply_monitoring_cli_overrides(args, parser)
 
     try:

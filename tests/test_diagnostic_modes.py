@@ -294,9 +294,9 @@ def test_config_and_secret_resolution_transcript(gm_module, monkeypatch, capsys,
     assert f"Reading configuration file: path={config}" in output
     assert "Configuration applied" in output and "settings=2" in output
     assert f"Reading dotenv file: path={dotenv}" in output
-    assert "Secret resolution: name=GITHUB_TOKEN, source=dotenv file" in output
-    assert "Secret resolution: name=SMTP_PASSWORD, source=configuration file" in output
-    assert "Secret resolution: name=NTFY_ACCESS_TOKEN, source=environment" in output
+    assert "Secret resolution: name=GITHUB_TOKEN, source=dotenv file, value=set" in output
+    assert "Secret resolution: name=SMTP_PASSWORD, source=configuration file, value=set" in output
+    assert "Secret resolution: name=NTFY_ACCESS_TOKEN, source=environment, value=set" in output
     # The settings count is a mechanical detail, so it belongs to debug rather than to the verbose narration
     assert "Loaded 2 settings from the configuration file" not in output
     for secret in ("config-private-value", "dotenv-private-token", "private-diagnostic-topic", "environment-private-token"):
@@ -460,6 +460,112 @@ def test_broken_target_transcript_exercises_real_cli_path(gm_module, monkeypatch
         # --list-repos exits before the notification gates, so verbose has only the recovery block to show here
         assert "Loaded 9 settings from the configuration file" not in output
         assert "[DEBUG " not in output
+
+
+# The diagnostic line is documented as an operation followed by comma-separated key=value fields
+@pytest.mark.parametrize("value, expected", [
+    ("github_pat_a_real_looking_token", {"value": "set"}),
+    ("your_github_token", {"value": "not set"}),
+    ("", {"value": "not set"}),
+    (None, {"value": "not set"}),
+])
+def test_no_secret_field_value_carries_a_comma(gm_module, value, expected):
+    assert gm_module.secret_fields(value) == expected
+    assert all("," not in str(part) for part in expected.values())
+
+
+# A source outside the set is a typo rather than a new layer, so it is rejected instead of reaching the summary
+def test_an_unsupported_secret_source_is_refused(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "SECRET_SOURCES", {})
+
+    with pytest.raises(ValueError, match="Unsupported secret source"):
+        gm_module.record_secret_source("GITHUB_TOKEN", "somewhere else", "github_pat_value")
+
+    assert gm_module.SECRET_SOURCES == {}
+
+
+# A placeholder is not a value, so recording it clears the earlier answer rather than adding a row
+def test_a_placeholder_clears_the_recorded_source(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "SECRET_SOURCES", {"GITHUB_TOKEN": "dotenv file"})
+
+    gm_module.record_secret_source("GITHUB_TOKEN", "command line", "your_github_token")
+
+    assert gm_module.SECRET_SOURCES == {}
+
+
+# The secret trace is one operation followed by fields, which a hand-written line silently broke for command-line secrets
+@pytest.mark.parametrize("extra_args, expected", [
+    (["--github-token", "github_pat_command_line_secret", "--webhook-url", "https://ntfy.sh/command-line-topic"], ["GITHUB_TOKEN", "WEBHOOK_URL"]),
+    (["--webhook-url", "https://ntfy.sh/command-line-topic"], ["WEBHOOK_URL"]),
+])
+def test_a_command_line_secret_is_traced_as_fields(gm_module, monkeypatch, capsys, request, extra_args, expected):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config = Path(directory.name) / "github_monitor.conf"
+    config.write_text('GITHUB_API_URL = "https://api.example.test"\nCHECK_INTERNET_URL = GITHUB_API_URL\nCLEAR_SCREEN = False\nLOCAL_TIMEZONE = "UTC"\nDISABLE_LOGGING = True\n', encoding="utf-8")
+
+    class MissingTargetGithub:
+        # Accepts the real client constructor settings without making a network call
+        def __init__(self, *args, **kwargs):
+            pass
+
+        # Raises the same exception as GitHub for a missing user
+        def get_user(self, login=None):
+            raise gm_module.UnknownObjectException(404, {"message": "Not Found"})
+
+    monkeypatch.setattr(gm_module, "Github", MissingTargetGithub)
+    for name in ("CLI_CONFIG_PATH", "DOTENV_FILE", "GITHUB_TOKEN", "GITHUB_API_URL", "CHECK_INTERNET_URL", "CLEAR_SCREEN", "LOCAL_TIMEZONE", "DISABLE_LOGGING", "VERBOSE_MODE", "DEBUG_MODE", "WEBHOOK_URL", "WEBHOOK_ENABLED", "SECRET_SOURCES"):
+        monkeypatch.setattr(gm_module, name, getattr(gm_module, name))
+    for name in gm_module.SECRET_KEYS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(gm_module.req, "get", Mock(return_value=FakeResponse(200)))
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", "missing-user", "--config-file", str(config), "--env-file", "none", "--debug"] + extra_args + ["--list-repos"])
+
+    with pytest.raises(SystemExit):
+        gm_module.main()
+
+    output = capsys.readouterr().out
+    traced = [line.split("name=")[1].split(",")[0] for line in output.splitlines() if "Secret resolution: name=" in line]
+    assert traced == expected
+    for name in expected:
+        assert f"Secret resolution: name={name}, source=command line, value=set" in output
+    assert "Secret resolution name=" not in output
+    assert "No private settings were resolved" not in output
+    assert "github_pat_command_line_secret" not in output
+
+
+# The command line is the last layer to supply a secret, so a run with none says so only after it has had its say
+def test_a_run_with_no_secret_anywhere_says_so(gm_module, monkeypatch, capsys, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    config = Path(directory.name) / "github_monitor.conf"
+    config.write_text('GITHUB_API_URL = "https://api.example.test"\nCHECK_INTERNET_URL = GITHUB_API_URL\nCLEAR_SCREEN = False\nLOCAL_TIMEZONE = "UTC"\nDISABLE_LOGGING = True\n', encoding="utf-8")
+
+    class MissingTargetGithub:
+        # Accepts the real client constructor settings without making a network call
+        def __init__(self, *args, **kwargs):
+            pass
+
+        # Raises the same exception as GitHub for a missing user
+        def get_user(self, login=None):
+            raise gm_module.UnknownObjectException(404, {"message": "Not Found"})
+
+    monkeypatch.setattr(gm_module, "Github", MissingTargetGithub)
+    for name in ("CLI_CONFIG_PATH", "DOTENV_FILE", "GITHUB_TOKEN", "GITHUB_API_URL", "CHECK_INTERNET_URL", "CLEAR_SCREEN", "LOCAL_TIMEZONE", "DISABLE_LOGGING", "VERBOSE_MODE", "DEBUG_MODE", "WEBHOOK_URL", "WEBHOOK_ENABLED", "SECRET_SOURCES"):
+        monkeypatch.setattr(gm_module, name, getattr(gm_module, name))
+    for name in gm_module.SECRET_KEYS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(gm_module.req, "get", Mock(return_value=FakeResponse(200)))
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", "missing-user", "--config-file", str(config), "--env-file", "none", "--debug", "--list-repos"])
+
+    with pytest.raises(SystemExit):
+        gm_module.main()
+
+    output = capsys.readouterr().out
+    assert "Secret resolution:" not in output
+    assert "No private settings were resolved from config, dotenv, environment or the command line" in output
 
 
 # The rows shared with the sibling monitors, in the order every one of them prints
