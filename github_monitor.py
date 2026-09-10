@@ -6376,7 +6376,9 @@ def update_dotenv_file(destination, updates):
         # An already exported assignment is rewritten in place. Appending a second one would leave the old
         # credential on disk, with only the load order deciding which one wins
         head = original[len(blank_prefix):]
-        output_parts.append(f"{blank_prefix}{render_dotenv_assignment(binding.key, updates[binding.key], head[:head.index(binding.key)])}\n")
+        # Keep key quotes out of the indentation and export prefix
+        written_prefix = head[:head.index(binding.key)].rstrip("'")
+        output_parts.append(f"{blank_prefix}{render_dotenv_assignment(binding.key, updates[binding.key], written_prefix)}\n")
     content = "".join(output_parts)
     # A file that did not end in a newline would otherwise take the first new assignment onto its last line
     if content and not content.endswith("\n"):
