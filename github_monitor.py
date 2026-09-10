@@ -270,6 +270,11 @@ EVENTS_NUMBER = 30  # 1 page
 # Can also be enabled using the -j flag
 TRACK_REPOS_CHANGES = False
 
+# Verify missing issues, PRs and discussions before reporting them as closed
+# Shares five extra requests per check across repositories, with pending items checked later
+# Set to False to report disappearances immediately without extra verification requests
+VERIFY_REPOSITORY_CLOSURES = True
+
 # Repositories to monitor when TRACK_REPOS_CHANGES is enabled
 # Use 'ALL' to monitor all repositories (default behavior)
 # Use 'user/repo_name' format to monitor specific repositories for specific users
@@ -481,6 +486,7 @@ LOCAL_TIMEZONE_STATE = "config"
 EVENTS_TO_MONITOR = []
 EVENTS_NUMBER = 0
 TRACK_REPOS_CHANGES = False
+VERIFY_REPOSITORY_CLOSURES = True
 REPOS_TO_MONITOR = []
 DO_NOT_MONITOR_GITHUB_EVENTS = False
 GET_ALL_REPOS = False
@@ -726,6 +732,7 @@ import ast
 import csv
 import json
 from dataclasses import dataclass, field
+from collections import deque
 import getpass
 import subprocess
 import tempfile
@@ -761,7 +768,7 @@ from typing import Optional
 import datetime as dt
 import requests
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 NET_ERRORS = (
     req.exceptions.RequestException,
@@ -782,6 +789,9 @@ WEBHOOK_EMBED_DESCRIPTION_LIMIT = 4096
 NTFY_MESSAGE_LIMIT_BYTES = 4095
 NTFY_TRUNCATION_SUFFIX = "\n\n[Notification truncated to fit ntfy's 4 KB message limit]"
 PYGITHUB_TIMEOUT_SECONDS = 15
+
+# Extra closure checks share one request allowance across repositories in each monitoring cycle
+REPOSITORY_CLOSURE_REQUEST_BUDGET = 5
 
 # Calendar days requested to stabilize one-day contribution count lookups
 DAILY_CONTRIBUTION_LOOKBACK_DAYS = 30
@@ -4902,8 +4912,111 @@ def github_get_repo_discussions(repo):
     return len(discussions), discussions_list
 
 
+# Returns an item's repository number without treating title or author edits as membership changes
+def repository_item_key(item):
+    match = re.match(r"^#([1-9][0-9]*)\s", item)
+    return int(match.group(1)) if match else item
+
+
+# Reads one item's closure state without automatic retries or redirects consuming extra requests
+def github_verify_repository_closure(full_name, kind, number):
+    operation = f"{kind} closure verification for {full_name} #{number}"
+    try:
+        owner, name = full_name.split("/")
+        base_url = GITHUB_API_URL.rstrip("/")
+        headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
+        payload = None
+        if kind == "discussions":
+            endpoint = (base_url[:-3] if base_url.endswith("/api/v3") else base_url) + "/graphql"
+            method = "POST"
+            payload = {"query": "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number closed } } }", "variables": {"owner": owner, "name": name, "number": number}}
+        else:
+            if kind not in ("issues", "pulls"):
+                raise ValueError("Unsupported repository item type")
+            endpoint = f"{base_url}/repos/{quote(owner, safe='')}/{quote(name, safe='')}/{kind}/{number}"
+            method = "GET"
+        debug_http_request(method, endpoint, operation, PYGITHUB_TIMEOUT_SECONDS, headers=headers, token=GITHUB_TOKEN)
+        with req.request(method, endpoint, json=payload, headers=headers, timeout=PYGITHUB_TIMEOUT_SECONDS, verify=VERIFY_SSL, allow_redirects=False) as response:
+            debug_http_response(method, endpoint, operation, response.status_code)
+            if response.status_code != 200:
+                error_type = {401: BadCredentialsException, 404: UnknownObjectException, 429: RateLimitExceededException}.get(response.status_code, GithubException)
+                if response.status_code == 403 and (response.headers.get("X-RateLimit-Remaining") == "0" or "Retry-After" in response.headers):
+                    error_type = RateLimitExceededException
+                raise error_type(response.status_code, {"message": f"Closure verification returned HTTP {response.status_code}"}, dict(response.headers))
+            data = response.json()
+        if kind == "discussions":
+            if not isinstance(data, dict) or data.get("errors"):
+                raise ValueError("Discussion closure verification returned GraphQL errors")
+            item = ((data.get("data") or {}).get("repository") or {}).get("discussion")
+        else:
+            item = data
+        if not isinstance(item, dict) or type(item.get("number")) is not int or item["number"] != number:
+            raise ValueError("Closure verification did not return the requested item")
+        if kind == "discussions":
+            closed = item.get("closed")
+            if type(closed) is not bool:
+                raise ValueError("Discussion closure verification omitted its closed state")
+        else:
+            if item.get("state") not in ("open", "closed") or (kind == "issues" and item.get("pull_request") is not None):
+                raise ValueError("Closure verification returned an invalid item state or type")
+            closed = item["state"] == "closed"
+        debug_print(operation, outcome="closed" if closed else "still open")
+        return closed
+    except Exception as error:
+        verbose_degraded_feature(operation, "verified closure alerts", error)
+        return None
+
+
+class RepositoryClosureVerifier:
+    # Keeps pending checks in rotation so unavailable items cannot monopolize the request allowance
+    def __init__(self):
+        self.pending: deque[tuple[str, str, int]] = deque()
+
+    # Retains missing items until their closure is verified within the shared allowance
+    def reconcile(self, repositories, previous_repos):
+        previous_by_name = {repo["name"]: repo for repo in previous_repos}
+        candidates = {}
+        for repo in repositories:
+            previous = previous_by_name.get(repo["name"], {})
+            for kind in ("issues", "pulls", "discussions"):
+                list_key = f"{kind}_list"
+                current_items = repo.get(list_key)
+                previous_items = previous.get(list_key)
+                if current_items is None or previous_items is None:
+                    continue
+                retained = {repository_item_key(item): item for item in current_items}
+                for item in previous_items:
+                    number = repository_item_key(item)
+                    if number in retained:
+                        continue
+                    retained[number] = item
+                    if isinstance(number, int):
+                        key = (repo["full_name"], kind, number)
+                        candidates[key] = (repo, item)
+                    else:
+                        verbose_degraded_feature(f"{kind} closure verification for {repo['name']}", "closure alerts for an item without a number")
+                repo[list_key] = list(retained.values())
+                repo[kind] = len(retained)
+
+        self.pending = deque(key for key in self.pending if key in candidates)
+        queued = set(self.pending)
+        self.pending.extend(key for key in candidates if key not in queued)
+        attempts = min(REPOSITORY_CLOSURE_REQUEST_BUDGET, len(self.pending))
+        for _ in range(attempts):
+            key = self.pending.popleft()
+            full_name, kind, number = key
+            repo, item = candidates[key]
+            if github_verify_repository_closure(full_name, kind, number) is True:
+                repo[f"{kind}_list"].remove(item)
+                repo[kind] = len(repo[f"{kind}_list"])
+            else:
+                self.pending.append(key)
+        if candidates:
+            debug_print("Repository closure verification", attempts=attempts, pending=len(self.pending), budget=REPOSITORY_CLOSURE_REQUEST_BUDGET)
+
+
 # Processes items from all passed repositories and returns a list of dictionaries
-def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=True, previous_repos=None):
+def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=True, previous_repos=None, closure_verifier=None):
     import logging
     import warnings
 
@@ -4990,7 +5103,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                 issues_list = [f"#{i.number} {i.title} ({i.user.login}) [ {i.html_url} ]" for i in real_issues]
                 pr_list = [f"#{pr.number} {pr.title} ({pr.user.login}) [ {pr.html_url} ]" for pr in pulls]
 
-                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "discussions": discussion_count, "issues_list": issues_list, "pulls_list": pr_list, "discussions_list": discussions_list})
+                list_of_repos.append({"name": repo.name, "full_name": getattr(repo, "full_name", urlsplit(repo.html_url).path.strip("/")), "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "discussions": discussion_count, "issues_list": issues_list, "pulls_list": pr_list, "discussions_list": discussions_list})
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))  # Final refresh after successful processing
 
@@ -5041,6 +5154,11 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
             else:
                 print("- Stargazer/watcher user lists:\tSkipped (counts only)")
 
+    verifier = closure_verifier if closure_verifier is not None else RepositoryClosureVerifier()
+    if VERIFY_REPOSITORY_CLOSURES:
+        verifier.reconcile(list_of_repos, previous_repos or ())
+    else:
+        verifier.pending.clear()
     list_of_repos.extend(repo for repo in (previous_repos or ()) if repo.get("name") in failed_names)
     return list_of_repos
 
@@ -6092,6 +6210,17 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
         verbose_degraded_feature(f"{label} identities for {repo_name}", f"{label.lower()} membership alerts")
         return
 
+    if VERIFY_REPOSITORY_CLOSURES and label in ("Issues", "Pull Requests", "Discussions"):
+        old_by_key = {repository_item_key(item): item for item in list_old}
+        new_by_key = {repository_item_key(item): item for item in list_new}
+        removed_items = [item for key, item in old_by_key.items() if key not in new_by_key]
+        added_items = [item for key, item in new_by_key.items() if key not in old_by_key]
+        if not removed_items and not added_items:
+            return
+    else:
+        removed_items = list(set(list_old) - set(list_new))
+        added_items = list(set(list_new) - set(list_old))
+
     old_count = len(list_old)
     new_count = len(list_new)
 
@@ -6121,9 +6250,6 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     removed_list_str_html = ""
     added_mbody_html = ""
     removed_mbody_html = ""
-
-    removed_items = list(set(list_old) - set(list_new))
-    added_items = list(set(list_new) - set(list_old))
 
     # If lists are different but sets are the same (just reordered or duplicates), no actual change
     if not removed_items and not added_items:
@@ -7260,6 +7386,7 @@ def github_monitor_user(user, csv_file_name):
     public = False
     contrib_state = {}
     contrib_curr = 0
+    closure_verifier = RepositoryClosureVerifier()
 
     print("Sneaking into GitHub like a ninja ...")
 
@@ -7905,7 +8032,7 @@ def github_monitor_user(user, csv_file_name):
 
             if repos_list_filtered is not None:
                 try:
-                    list_of_repos = github_process_repos(repos_list_filtered, show_progress=False, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()), previous_repos=list_of_repos_old)
+                    list_of_repos = github_process_repos(repos_list_filtered, show_progress=False, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()), previous_repos=list_of_repos_old, closure_verifier=closure_verifier)
                     list_of_repos_ok = True
                 except Exception as e:
                     list_of_repos = list_of_repos_old
