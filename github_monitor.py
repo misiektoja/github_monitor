@@ -1317,7 +1317,7 @@ def check_internet(url=None, timeout=None, quiet=False, operation="startup conne
         debug_swallowed_exception(f"{operation[:1].upper() + operation[1:]} request", e)
         # Quiet callers render the failure themselves, which doctor needs so nothing lands on its progress line
         if not quiet:
-            print_recovery_advice(classify_recovery_error(e, "connectivity"))
+            print_recovery_error(e, "connectivity")
         return False
 
 
@@ -2544,7 +2544,7 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
         verbose_print(f"Email delivered to {RECEIVER_EMAIL}: {subject}")
     except Exception as e:
         debug_print("SMTP delivery", outcome="failed", host=SMTP_HOST, attempt="1/1", error=f"{type(e).__name__}: {e}")
-        print_recovery_advice(classify_recovery_error(e, "email"))
+        print_recovery_error(e, "email")
         return 1
     return 0
 
@@ -2929,9 +2929,20 @@ def render_recovery_advice(advice, debug=None, retry_note="", with_fix=True, lab
     return "\n".join(lines)
 
 
-# Prints advice in full the first time its category appears and as one line while the same category persists
-def print_recovery_advice(advice, debug=None, tracker=None, retry_note="", label="Error"):
-    print(render_recovery_advice(advice, debug=debug, retry_note=retry_note, with_fix=tracker is None or tracker.should_render(advice), label=label))
+# Prints one built advice through the shared recovery block and returns it
+def print_recovery_advice(advice, debug=None, retry_note="", with_fix=True, label="Error", tracker=None):
+    print(render_recovery_advice(advice, debug, retry_note, with_fix and (tracker is None or tracker.should_render(advice)), label))
+    return advice
+
+
+# Classifies one failure and renders it through the shared recovery block
+def render_recovery_error(error=None, context="runtime", debug=None, detail="", retry_note="", with_fix=True, label="Error", install_context=None):
+    return render_recovery_advice(classify_recovery_error(error, context, detail, install_context), debug, retry_note, with_fix, label)
+
+
+# Classifies one failure, prints it through the shared recovery block and returns its stable advice
+def print_recovery_error(error=None, context="runtime", debug=None, detail="", retry_note="", with_fix=True, label="Error", tracker=None, install_context=None):
+    return print_recovery_advice(classify_recovery_error(error, context, detail, install_context), debug, retry_note, with_fix, label, tracker)
 
 
 # Suppresses a repeated fix paragraph until the failure category changes or a check succeeds
@@ -3029,11 +3040,12 @@ def is_too_many_open_files(error):
 
 
 # Maps one exception and operation context to stable recovery advice
-def classify_recovery_error(error, context="unknown", install_context=None):
+def classify_recovery_error(error, context="runtime", detail="", install_context=None):
     if isinstance(error, RecoveryError):
         return error.advice
     selected_context = str(context or "unknown").casefold()
-    detail = f"{type(error).__name__}: {error}"
+    # The caller knows which step failed, the exception only knows how, so its own text wins when it has one
+    detail = str(detail) if detail else f"{type(error).__name__}: {error}"
     token_command = render_install_command(["--set-github-token"], install_context)
     webhook_command = render_install_command(["--set-webhook-url"], install_context)
     config_command = render_install_command(["--generate-config", "github_monitor.conf"], install_context, include_paths=False)
@@ -6661,7 +6673,7 @@ def github_monitor_user(user, csv_file_name):
 
     except Exception as e:
         print()
-        print_recovery_advice(classify_recovery_error(e))
+        print_recovery_error(e, detail=f"Reading the event feed of '{user}' failed: {e}")
         sys.exit(1)
 
     last_event_id = 0
@@ -6808,7 +6820,7 @@ def github_monitor_user(user, csv_file_name):
         repos_old = [repo.name for repo in repos_list]
         starred_old = [star.full_name for star in starred_list]
     except Exception as e:
-        print_recovery_advice(classify_recovery_error(e))
+        print_recovery_error(e, detail=f"Reading the initial profile snapshot of '{user}' failed: {e}")
         sys.exit(1)
 
     verbose_notice(f"Initial snapshot completed for {user}")
@@ -9918,7 +9930,7 @@ def main():
         try:
             run_set_github_token(args.env_file, api_url=args.github_url, config_path=cfg_path)
         except Exception as e:
-            print_recovery_advice(classify_recovery_error(e, "github_token"))
+            print_recovery_error(e, "github_token")
             sys.exit(1)
         sys.exit(0)
 
@@ -9927,7 +9939,7 @@ def main():
         try:
             run_set_smtp_password(args.env_file, config_path=cfg_path)
         except Exception as e:
-            print_recovery_advice(classify_recovery_error(e, "email"))
+            print_recovery_error(e, "email")
             sys.exit(1)
         sys.exit(0)
 
@@ -9935,7 +9947,7 @@ def main():
         try:
             run_set_webhook_url(args.env_file, config_path=cfg_path)
         except Exception as e:
-            print_recovery_advice(classify_recovery_error(e, "webhook"))
+            print_recovery_error(e, "webhook")
             sys.exit(1)
         sys.exit(0)
 
@@ -9946,7 +9958,7 @@ def main():
     try:
         TRUNCATE_CHARS = resolve_truncate_chars(args.truncate, TRUNCATE_CHARS, DISABLE_LOGGING)
     except OSError as exc:
-        print_recovery_advice(classify_recovery_error(exc, "terminal"))
+        print_recovery_error(exc, "terminal")
         sys.exit(1)
 
     if type(GITHUB_CHECK_INTERVAL) is not int or GITHUB_CHECK_INTERVAL <= 0:
@@ -10007,7 +10019,7 @@ def main():
         try:
             github_print_followers_and_followings(args.username)
         except Exception as e:
-            print_recovery_advice(classify_recovery_error(e, "target"))
+            print_recovery_error(e, "target")
             sys.exit(1)
         sys.exit(0)
 
@@ -10015,7 +10027,7 @@ def main():
         try:
             github_print_repos(args.username)
         except Exception as e:
-            print_recovery_advice(classify_recovery_error(e, "target"))
+            print_recovery_error(e, "target")
             sys.exit(1)
         sys.exit(0)
 
@@ -10023,7 +10035,7 @@ def main():
         try:
             github_print_starred_repos(args.username)
         except Exception as e:
-            print_recovery_advice(classify_recovery_error(e, "target"))
+            print_recovery_error(e, "target")
             sys.exit(1)
         sys.exit(0)
 
@@ -10049,7 +10061,7 @@ def main():
         try:
             github_list_events(args.username, events_n, CSV_FILE)
         except Exception as e:
-            print_recovery_advice(classify_recovery_error(e, "target"))
+            print_recovery_error(e, "target")
             sys.exit(1)
         sys.exit(0)
 

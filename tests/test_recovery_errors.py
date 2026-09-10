@@ -538,3 +538,59 @@ def test_the_guide_guard_still_inspects_the_source(gm_module):
 
     assert len(inspected) > 30
     assert all(any(marker in summary for _, summary in bare) for marker in GUIDELESS_ADVICE), "an allowlisted summary stopped matching a builder"
+
+
+# One concept carried three names across this family: a renderer taking a built advice, a renderer taking the
+# failure itself, and a third pair that classified and printed under a name of its own. Pinned here so a call
+# copied from a sibling cannot quietly mean something else
+def test_the_recovery_printers_share_one_contract(gm_module):
+    advice_first = ("advice", "debug", "retry_note", "with_fix", "label")
+    error_first = ("error", "context", "debug", "detail", "retry_note", "with_fix", "label")
+
+    assert tuple(inspect.signature(gm_module.render_recovery_advice).parameters) == advice_first
+    assert tuple(inspect.signature(gm_module.render_recovery_error).parameters) == error_first + ("install_context",)
+    # This tool's own parameters follow the shared ones, so a call written for a sibling still means the same thing
+    assert tuple(inspect.signature(gm_module.print_recovery_advice).parameters) == advice_first + ("tracker",)
+    assert tuple(inspect.signature(gm_module.print_recovery_error).parameters) == error_first + ("tracker", "install_context")
+
+
+# The advice pair prints what the caller built, so a summary the classifier would never produce survives the trip
+def test_the_advice_printer_does_not_reclassify(gm_module, capsys):
+    gm_module.DEBUG_MODE = False
+    advice = gm_module.make_recovery_advice("network.timeout", "a summary no rule produces", "a fix of its own", True)
+
+    returned = gm_module.print_recovery_advice(advice)
+
+    assert capsys.readouterr().out == "* Error: a summary no rule produces\nTo fix: a fix of its own\n"
+    assert returned is advice
+
+
+# The error pair classifies what the caller hands it, which is the difference between the two front doors
+def test_the_error_printer_classifies_what_it_was_given(gm_module, capsys):
+    gm_module.DEBUG_MODE = False
+
+    returned = gm_module.print_recovery_error(req.ConnectionError("connection refused"), context="runtime")
+
+    assert returned.code != "unknown"
+    assert capsys.readouterr().out.startswith(f"* Error: {returned.summary}\n")
+
+
+# Both front doors reach the same renderer, so the retry note, the label and a suppressed fix behave the same way
+def test_both_front_doors_render_the_same_line(gm_module):
+    gm_module.DEBUG_MODE = False
+    error = req.ConnectionError("connection refused")
+    advice = gm_module.classify_recovery_error(error, "runtime")
+
+    through_advice = gm_module.render_recovery_advice(advice, retry_note="retrying in 5 minutes", with_fix=False, label="Warning")
+    through_error = gm_module.render_recovery_error(error, "runtime", retry_note="retrying in 5 minutes", with_fix=False, label="Warning")
+
+    assert through_advice == through_error
+    assert through_advice == f"* Warning: {advice.summary} (retrying in 5 minutes)"
+
+
+# The caller's own detail replaces the exception repr, so a debug run names the step rather than only the type
+def test_the_callers_detail_wins_over_the_exception_text(gm_module):
+    advice = gm_module.classify_recovery_error(req.ConnectionError("connection refused"), "runtime", "Reading the event feed of 'octocat' failed")
+
+    assert advice.detail == "Reading the event feed of 'octocat' failed"
+    assert gm_module.classify_recovery_error(req.ConnectionError("connection refused"), "runtime").detail.startswith("ConnectionError: ")
