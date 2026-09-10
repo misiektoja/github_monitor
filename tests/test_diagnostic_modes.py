@@ -320,6 +320,92 @@ def test_startup_summary_routes_concise_full_and_log_views(gm_module):
     assert "More details:" not in complete.getvalue()
 
 
+# Records what a split destination was asked to put on the terminal and what it was asked to put in the log
+class RecordingSplitStream:
+    def __init__(self):
+        self.terminal = []
+        self.log = []
+        self.plain = []
+        self.flushes = 0
+
+    # Takes the rows meant for the screen
+    def terminal_only(self, line):
+        self.terminal.append(line)
+
+    # Takes the rows meant for the log file
+    def log_only(self, line):
+        self.log.append(line)
+
+    # Takes anything written without choosing a destination
+    def write(self, line):
+        self.plain.append(line)
+
+    # Counts the flushes so the plain and the split paths can be told apart
+    def flush(self):
+        self.flushes += 1
+
+
+# Verifies the log keeps the complete summary whatever the terminal was shown, which is what makes a log
+# attached to a bug report carry every effective setting
+def test_the_log_keeps_the_full_summary_whatever_the_terminal_showed(gm_module):
+    rows = [gm_module.StartupSummaryRow("Target", "octocat", concise=True), gm_module.StartupSummaryRow("Debug detail", "enabled", concise=False)]
+    destination = RecordingSplitStream()
+
+    gm_module.emit_startup_summary(rows, show_full=False, stream=destination)
+
+    assert "Target:" in "".join(destination.terminal)
+    assert "Debug detail:" not in "".join(destination.terminal)
+    assert "Debug detail:" in "".join(destination.log)
+    assert destination.plain == [], "a destination that splits its output was written to directly"
+    assert destination.flushes == 0, "a split destination flushes itself"
+
+
+# Records what a destination with no separate log was written to, which is what a redirected stdout looks like
+class RecordingPlainStream:
+    def __init__(self):
+        self.plain = []
+        self.flushes = 0
+
+    # Takes everything, since this destination has no second half to route to
+    def write(self, line):
+        self.plain.append(line)
+
+    # Counts the flushes so the plain and the split paths can be told apart
+    def flush(self):
+        self.flushes += 1
+
+
+# Verifies a destination that cannot split is written to and flushed, since nothing else closes the block
+def test_a_plain_destination_is_written_to_and_flushed(gm_module):
+    rows = [gm_module.StartupSummaryRow("Target", "octocat", concise=True), gm_module.StartupSummaryRow("Debug detail", "enabled", concise=False)]
+    destination = RecordingPlainStream()
+
+    gm_module.emit_startup_summary(rows, show_full=False, stream=destination)
+
+    assert "Target:" in "".join(destination.plain)
+    assert "Debug detail:" not in "".join(destination.plain)
+    assert destination.flushes == 1
+
+
+# Verifies a shorter progress line paints over the longer one before it, since the bar is redrawn in place and
+# whatever the previous line left behind would otherwise stay on screen
+def test_a_shorter_progress_line_is_padded_over_the_previous_one(gm_module, monkeypatch):
+    terminal = RecordingSplitStream()
+    monkeypatch.setattr(gm_module, "stdout_bck", terminal)
+    monkeypatch.setattr(gm_module.shutil, "get_terminal_size", lambda fallback=(80, 20): type("Size", (), {"columns": 200})())
+    monkeypatch.setattr(gm_module, "_progress_line_width", 0)
+
+    gm_module._display_progress(1, 2, "a-long-repository-name")
+    long_line = terminal.plain[-1]
+    gm_module._display_progress(2, 2, "short")
+    short_line = terminal.plain[-1]
+
+    assert "a-long-repository-name" in long_line
+    assert short_line.rstrip(" ").endswith("short")
+    # The shorter line is padded out to the width of the one it replaces, so none of the longer name survives
+    assert len(short_line) == len(long_line)
+
+
 # Verifies the concise output row does not repeat the path the full view already carries as Output logging
 def test_the_output_row_does_not_repeat_the_log_path(gm_module):
     rows = gm_module.build_startup_summary("octocat", "github_monitor.conf", ".env", "github_monitor_octocat.log")

@@ -3456,21 +3456,21 @@ def format_startup_summary_row(row):
 # Routes concise or complete startup rows independently to terminal and log destinations
 def emit_startup_summary(rows, show_full, stream=None):
     destination = sys.stdout if stream is None else stream
-    routed = hasattr(destination, "terminal_only") and hasattr(destination, "log_only")
+    log_only = getattr(destination, "log_only", None)
+    terminal_only = getattr(destination, "terminal_only", None)
+    # A stream that does not split its output has no log file to hold the full view, so those writes go nowhere
+    routed = log_only is not None and terminal_only is not None
+    write_log = log_only or (lambda line: None)
+    write_terminal = terminal_only or destination.write
     for row in rows:
         line = format_startup_summary_row(row)
-        if routed and row.full:
-            destination.log_only(line)
+        if row.full:
+            write_log(line)
         if row.full if show_full else row.concise:
-            if routed:
-                destination.terminal_only(line)
-            else:
-                destination.write(line)
-    if routed:
-        destination.log_only("\n")
-        destination.terminal_only("\n")
-    else:
-        destination.write("\n")
+            write_terminal(line)
+    write_log("\n")
+    write_terminal("\n")
+    if not routed:
         destination.flush()
 
 
@@ -4393,8 +4393,14 @@ def github_print_followers_and_followings(user):
     g.close()
 
 
+# The width of the progress line drawn last, so the next one pads over whatever the previous one left on screen
+_progress_line_width = 0
+
+
 # Displays a progress bar with percentage and current repo name
 def _display_progress(current, total, repo_name: str = "", bar_length: int = 40, is_final: bool = False) -> None:
+    global _progress_line_width
+
     if total == 0:
         return
 
@@ -4469,9 +4475,8 @@ def _display_progress(current, total, repo_name: str = "", bar_length: int = 40,
     while isinstance(terminal_out, (Logger, TerminalStream)):
         terminal_out = terminal_out.terminal
     progress_str = ANSI_ESCAPE_RE.sub("", sanitize_terminal_text(progress_str))
-    previous_width = getattr(_display_progress, "width", 0)
-    padded_progress = progress_str + (" " * max(0, previous_width - len(progress_str)))
-    _display_progress.width = len(progress_str)
+    padded_progress = progress_str + (" " * max(0, _progress_line_width - len(progress_str)))
+    _progress_line_width = len(progress_str)
 
     if is_final:
         terminal_out.write("\r" + padded_progress)

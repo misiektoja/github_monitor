@@ -635,7 +635,7 @@ def test_repository_progress_line_has_no_ansi_escapes(colored, monkeypatch):
     terminal = type("Stream", (), {"write": lambda self, text: self.values.append(text), "flush": lambda self: None, "values": []})()
     monkeypatch.setattr(monitor, "stdout_bck", terminal)
     monkeypatch.setattr(monitor.shutil, "get_terminal_size", lambda fallback=(80, 20): type("Size", (), {"columns": 80})())
-    monkeypatch.setattr(monitor._display_progress, "width", 0, raising=False)
+    monkeypatch.setattr(monitor, "_progress_line_width", 0)
     monitor._display_progress(1, 2, f"{colored['repository']}repo{monitor.ANSI_RESET}")
     assert "\x1b" not in "".join(terminal.values)
     assert terminal.values[-1].startswith("\rRepos [")
