@@ -27,7 +27,7 @@ def test_recovery_rendering_redacts_secrets_at_both_boundaries(gm_module, monkey
     webhook_url = "https://discord.com/api/webhooks/123/private-recovery-value"
     monkeypatch.setattr(gm_module, "GITHUB_TOKEN", github_token)
     monkeypatch.setattr(gm_module, "WEBHOOK_URL", webhook_url)
-    advice = gm_module.make_recovery_advice("network.unavailable", f"Request failed for {github_token}", gm_module.recovery_fix_with_guide("Check the connection", gm_module.DEBUG_GUIDE_URL), True, f"Authorization: Bearer {github_token} at {webhook_url}")
+    advice = gm_module.make_recovery_advice("network.unavailable", f"Request failed for {github_token}", gm_module.recovery_fix_with_guide("Check the connection", gm_module.DIAGNOSTICS_GUIDE_URL), True, f"Authorization: Bearer {github_token} at {webhook_url}")
 
     normal = gm_module.render_recovery_advice(advice, debug=False)
     debug = gm_module.render_recovery_advice(advice, debug=True)

@@ -264,7 +264,7 @@ def page_headings(path):
 
 # Resolves one published site URL to the documentation page that has to serve it
 def documentation_page_for(url):
-    suffix = url.removeprefix(gm.DOCUMENTATION_URL).lstrip("/")
+    suffix = url.removeprefix(gm.DOCS_BASE_URL).lstrip("/")
     relative_path, _separator, anchor = suffix.partition("#")
     slug = relative_path.strip("/")
     return (DOCS_DIRECTORY / "index.md" if not slug else DOCS_DIRECTORY / f"{slug}.md"), anchor
@@ -323,7 +323,7 @@ class TestDocumentationSite:
 
         for name in guide_names:
             url = getattr(gm, name)
-            assert url.startswith(gm.DOCUMENTATION_URL + "/"), f"{name} does not point at the documentation site: {url}"
+            assert url.startswith(gm.DOCS_BASE_URL + "/"), f"{name} does not point at the documentation site: {url}"
             page, anchor = documentation_page_for(url)
             assert page.is_file(), f"{name} points at a missing page: {page.name}"
             if anchor:
@@ -331,7 +331,7 @@ class TestDocumentationSite:
 
     # The runtime links and the published site have to name the same origin, or every Guide: line lands off-site
     def test_the_site_url_matches_the_runtime_documentation_url(self):
-        assert f"site_url: {gm.DOCUMENTATION_URL}/" in read_asset("mkdocs.yml")
+        assert f"site_url: {gm.DOCS_BASE_URL}/" in read_asset("mkdocs.yml")
 
     # Asserting the job name passes on a workflow whose build step was renamed or removed, so the run: lines are what count
     def test_the_documentation_build_is_a_ci_gate(self):
