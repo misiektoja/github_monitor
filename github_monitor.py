@@ -3348,7 +3348,6 @@ class StartupSummaryRow:
     value: str
     concise: bool = False
     full: bool = True
-    log: bool = True
 
 
 # Groups every resolved secret name into the four buckets the summary prints, one per source that can supply one
@@ -3419,7 +3418,7 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
         StartupSummaryRow("Notifications (email)", email_state, concise=True),
         StartupSummaryRow("Notifications (webhook)", webhook_state, concise=True),
-        StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only (logging disabled)", concise=True, full=False, log=False),
+        StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only (logging disabled)", concise=True, full=False),
         StartupSummaryRow("Output logging", str(output_path) if output_path else "Disabled"),
         StartupSummaryRow("Config", str(config_path) if config_path else "None", concise=True),
         StartupSummaryRow("Dotenv", str(env_path) if env_path else "None", concise=True),
@@ -3442,7 +3441,7 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Coloured output", f"{COLOR_ENABLED} (setting: {COLORED_OUTPUT})"),
         StartupSummaryRow("Verbose mode", str(VERBOSE_MODE), concise=bool(VERBOSE_MODE)),
         StartupSummaryRow("Debug mode", str(DEBUG_MODE), concise=bool(DEBUG_MODE)),
-        StartupSummaryRow("More details", "use --verbose or --debug", concise=True, full=False, log=False),
+        StartupSummaryRow("More details", "use --verbose or --debug", concise=True, full=False),
     ]
 
 
@@ -3460,7 +3459,7 @@ def emit_startup_summary(rows, show_full, stream=None):
     routed = hasattr(destination, "terminal_only") and hasattr(destination, "log_only")
     for row in rows:
         line = format_startup_summary_row(row)
-        if routed and row.full and row.log:
+        if routed and row.full:
             destination.log_only(line)
         if row.full if show_full else row.concise:
             if routed:

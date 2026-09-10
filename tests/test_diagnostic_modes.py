@@ -305,7 +305,7 @@ def test_config_and_secret_resolution_transcript(gm_module, monkeypatch, capsys,
 
 # Verifies verbose startup output expands concise rows while logs retain the complete summary
 def test_startup_summary_routes_concise_full_and_log_views(gm_module):
-    rows = [gm_module.StartupSummaryRow("Target", "octocat", concise=True), gm_module.StartupSummaryRow("Debug detail", "enabled", concise=False), gm_module.StartupSummaryRow("More details", "use --verbose", concise=True, full=False, log=False)]
+    rows = [gm_module.StartupSummaryRow("Target", "octocat", concise=True), gm_module.StartupSummaryRow("Debug detail", "enabled", concise=False), gm_module.StartupSummaryRow("More details", "use --verbose", concise=True, full=False)]
     concise = io.StringIO()
     complete = io.StringIO()
 
@@ -326,7 +326,7 @@ def test_the_output_row_does_not_repeat_the_log_path(gm_module):
     output = next(row for row in rows if row.label == "Output")
     output_logging = next(row for row in rows if row.label == "Output logging")
 
-    assert (output.concise, output.full, output.log) == (True, False, False)
+    assert (output.concise, output.full) == (True, False)
     assert output_logging.full is True
     assert "github_monitor_octocat.log" in output_logging.value
 
