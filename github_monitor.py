@@ -2984,41 +2984,59 @@ class RecoveryHintTracker:
 
 
 # Decides how a lasting failure is reported: in full when it is new, then on the liveness cadence while it lasts
+# How long a reported failure may go on before the run reminds about it, whatever the liveness banner is set to
+OUTAGE_REMINDER_SECONDS = 3600  # 1 hour
+
+
+# Returns the family a failure code belongs to, so the DNS and timeout failures of one internet outage count as one
+def outage_family(code):
+    return "network" if str(code or "").startswith("network.") else str(code or "")
+
+
 class OutageReporter:
-    # Starts with no failure recorded, so the first failure of any category is reported in full
-    def __init__(self):
+    # Starts with no failure recorded and reports a new retryable failure once confirm_checks checks in a row failed
+    def __init__(self, confirm_checks=1):
+        self.confirm_checks = max(1, confirm_checks)
         self.code = None
         self.since = 0
         self.reported_at = 0
+        self.failures = 0
+        self.reported = False
 
-    # Records one failed check and returns "full" for a new failure, "degraded" once the liveness interval has passed,
-    # "repeat" while the liveness banner is switched off or "" while the same failure is merely continuing
-    def failed(self, advice, liveness_interval):
+    # Records one failed check and returns "full" when the failure is to be reported in full, "changed" when a
+    # reported outage moved to another failure family, "reminder" once OUTAGE_REMINDER_SECONDS passed since the
+    # last report or "" while nothing new is to be said
+    def failed(self, advice):
         now = int(time.time())
-        if advice.code != self.code:
-            # A category change mid-outage is still the same outage, so its start and the alert delay it feeds are kept
-            if not self.code:
-                self.since = now
-            self.code = advice.code
+        if not self.code:
+            self.since = now
+        self.failures += 1
+        changed = self.code is not None and outage_family(advice.code) != outage_family(self.code)
+        self.code = advice.code
+        if not self.reported:
+            # A failure the tool cannot retry away is reported at once, one it can waits for the next check to confirm it
+            if advice.retryable and self.failures < self.confirm_checks:
+                return ""
+            self.reported = True
             self.reported_at = now
             return "full"
-        # With the liveness banner off there is nothing to carry the reminder, so the summary keeps its old cadence
-        if not liveness_interval:
-            return "repeat"
-        # Timed rather than counted, because a failing run usually retries on a different interval than a healthy one
-        if now - self.reported_at >= liveness_interval:
+        if changed:
             self.reported_at = now
-            return "degraded"
+            return "changed" if advice.retryable else "full"
+        # Timed rather than counted, because a failing run usually retries on a different interval than a healthy one
+        if now - self.reported_at >= OUTAGE_REMINDER_SECONDS:
+            self.reported_at = now
+            return "reminder"
         return ""
 
-    # Clears the failure after a successful check and returns how long it lasted, or None when none was active
+    # Clears the failure after a successful check and returns how long it lasted, or None when nothing was reported
     def recovered(self):
-        if not self.code:
-            return None
-        lasted = int(time.time()) - self.since
+        lasted = int(time.time()) - self.since if self.code and self.reported else None
         self.code = None
         self.since = 0
         self.reported_at = 0
+        self.failures = 0
+        self.reported = False
         return lasted
 
 
@@ -3028,10 +3046,16 @@ def print_liveness_banner(message):
     print_cur_ts("Liveness check, timestamp:\t")
 
 
-# Reports a lasting failure on the liveness cadence, so a broken run still says it is alive without repeating itself
-def print_outage_liveness(target, advice, since):
-    print(f"* Monitoring degraded for {target}. {advice.summary} since {get_date_from_ts(since)}")
+# Reminds about a lasting failure once an hour, so a broken run still says it is alive without repeating itself
+def print_outage_liveness(target, advice, since, failures=0):
+    count = f", {failures} failed {'check' if failures == 1 else 'checks'}" if failures else ""
+    print(f"* Monitoring degraded for {target}. {advice.summary} since {get_date_from_ts(since)}{count}")
     print_cur_ts("Liveness check, timestamp:\t")
+
+
+# Notes that a reported outage now fails differently, in one line rather than a second full report
+def print_outage_change(target, advice):
+    print(f"* Monitoring failure changed for {target}. {advice.summary}")
 
 
 # Reports that a failure cleared, since a throttled failure no longer stops printing when it is over
@@ -6915,19 +6939,22 @@ def github_monitor_user(user, csv_file_name):
         except (GithubException, Exception) as e:
             verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
             advice = classify_recovery_error(e, "target")
-            # A failure that changes category is a different failure, so each channel earns a new alert for it
-            if advice.code != error_delivery_code:
+            # A failure that changes family is a different failure, so each channel earns a new alert for it, while an
+            # internet outage that flaps between a timeout and an unreachable host stays one failure
+            if outage_family(advice.code) != outage_family(error_delivery_code):
                 error_email_sent = False
                 error_webhook_sent = False
                 error_delivery_code = advice.code
 
             # A failure that has not changed is left to the liveness cadence rather than repeated every check
-            outage_outcome = outage.failed(advice, LIVENESS_REMINDER_SECONDS)
+            outage_outcome = outage.failed(advice)
             delivery_reported = False
-            if outage_outcome in ("full", "repeat"):
+            if outage_outcome == "full":
                 print_recovery_advice(advice, tracker=monitor_recovery_tracker, retry_note=f"retrying in {display_time(GITHUB_CHECK_INTERVAL)}")
-            elif outage_outcome == "degraded":
-                print_outage_liveness(user, advice, outage.since)
+            elif outage_outcome == "changed":
+                print_outage_change(user, advice)
+            elif outage_outcome == "reminder":
+                print_outage_liveness(user, advice, outage.since, outage.failures)
 
             m_subject = f"github_monitor: {advice.summary} (user: {user})"
             m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
@@ -6943,7 +6970,7 @@ def github_monitor_user(user, csv_file_name):
 
             # A retry can reach the screen on a check the outage reporter keeps quiet, and a delivery line
             # with nothing under it reads as a run that stopped there
-            if outage_outcome in ("full", "repeat") or delivery_reported:
+            if outage_outcome in ("full", "changed") or delivery_reported:
                 print_cur_ts("Timestamp:\t\t\t")
             debug_print("Completed monitoring check", check=f"#{check_number}", user=user, outcome="failed", code=advice.code, error=f"{type(e).__name__}: {e}")
             debug_monitor_wait_timing("monitored user refresh failure", GITHUB_CHECK_INTERVAL)

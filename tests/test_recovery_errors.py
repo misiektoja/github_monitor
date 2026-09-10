@@ -222,20 +222,21 @@ def test_repeated_advice_keeps_the_summary_and_drops_the_fix(gm_module, capsys):
     assert third == first
 
 
-# Verifies a lasting failure is reported once and then only once the liveness interval has passed
+# Verifies a lasting failure is reported once and then only once the reminder interval has passed
 def test_the_outage_reporter_reports_once_then_on_the_cadence(gm_module, monkeypatch):
     clock = [1000000.0]
     monkeypatch.setattr(gm_module.time, "time", lambda: clock[0])
+    monkeypatch.setattr(gm_module, "OUTAGE_REMINDER_SECONDS", 180)
     reporter = gm_module.OutageReporter()
     advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
 
-    assert reporter.failed(advice, 180) == "full"
+    assert reporter.failed(advice) == "full"
     outcomes = []
     for _ in range(3):
         clock[0] += 60
-        outcomes.append(reporter.failed(advice, 180))
+        outcomes.append(reporter.failed(advice))
 
-    assert outcomes == ["", "", "degraded"]
+    assert outcomes == ["", "", "reminder"]
     assert reporter.recovered() is not None
     assert reporter.recovered() is None
 
@@ -249,10 +250,10 @@ def test_an_outage_that_changes_category_keeps_its_start(gm_module, monkeypatch)
     second = gm_module.classify_recovery_error(OSError(24, "Too many open files"), "runtime")
     assert first.code != second.code
 
-    assert reporter.failed(first, 900) == "full"
+    assert reporter.failed(first) == "full"
     for index in range(60):
         clock[0] += 15
-        reporter.failed(second if index % 2 else first, 900)
+        reporter.failed(second if index % 2 else first)
 
     assert reporter.since == 1000000
     assert reporter.recovered() == 900
@@ -265,22 +266,59 @@ def test_the_outage_reminder_follows_the_clock_not_the_check_count(gm_module, mo
     reporter = gm_module.OutageReporter()
     advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
 
-    assert reporter.failed(advice, 900) == "full"
+    monkeypatch.setattr(gm_module, "OUTAGE_REMINDER_SECONDS", 900)
+    assert reporter.failed(advice) == "full"
     outcomes = []
     for _ in range(60):
         clock[0] += 15
-        outcomes.append(reporter.failed(advice, 900))
+        outcomes.append(reporter.failed(advice))
 
-    assert outcomes.count("degraded") == 1
+    assert outcomes.count("reminder") == 1
 
 
-# Verifies the summary keeps its every-check cadence when the liveness banner is switched off
-def test_the_outage_reporter_keeps_repeating_without_a_liveness_banner(gm_module):
+# Verifies the reminder keeps its own clock when the liveness banner is switched off, so a lasting failure is
+# neither silenced nor repeated every check
+def test_the_outage_reporter_reminds_on_its_own_clock_without_a_liveness_banner(gm_module, monkeypatch):
+    clock = [1000000.0]
+    monkeypatch.setattr(gm_module.time, "time", lambda: clock[0])
+    monkeypatch.setattr(gm_module, "LIVENESS_REMINDER_SECONDS", 0)
+    monkeypatch.setattr(gm_module, "OUTAGE_REMINDER_SECONDS", 60)
     reporter = gm_module.OutageReporter()
     advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
 
-    assert reporter.failed(advice, 0) == "full"
-    assert [reporter.failed(advice, 0) for _ in range(2)] == ["repeat", "repeat"]
+    assert reporter.failed(advice) == "full"
+    clock[0] += 59
+    assert reporter.failed(advice) == ""
+    clock[0] += 1
+    assert reporter.failed(advice) == "reminder"
+    assert reporter.failed(advice) == ""
+
+
+# Verifies the reporter treats every network code as one outage and any other retryable change as a one-line note
+def test_the_outage_reporter_merges_network_codes_and_notes_other_changes(gm_module, monkeypatch, capsys):
+    clock = [1000000.0]
+    monkeypatch.setattr(gm_module.time, "time", lambda: clock[0])
+    monkeypatch.setattr(gm_module, "LOCAL_TIMEZONE", "UTC")
+    reporter = gm_module.OutageReporter()
+    timeout = gm_module.classify_recovery_error(gm_module.req.Timeout("timed out"), "target")
+    unreachable = gm_module.classify_recovery_error(gm_module.req.ConnectionError("refused"), "target")
+    api_error = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
+    assert (gm_module.outage_family(timeout.code), gm_module.outage_family(unreachable.code)) == ("network", "network")
+
+    assert reporter.failed(timeout) == "full"
+    assert reporter.failed(unreachable) == ""
+    assert reporter.failed(timeout) == ""
+    assert reporter.failed(api_error) == "changed"
+    assert reporter.failed(api_error) == ""
+    assert reporter.since == 1000000
+
+    gm_module.print_outage_change("misiektoja", api_error)
+    gm_module.print_outage_liveness("misiektoja", api_error, reporter.since, reporter.failures)
+
+    output = capsys.readouterr().out
+    assert "* Monitoring failure changed for misiektoja. GitHub returned an API error\n" in output
+    assert "* Monitoring degraded for misiektoja. GitHub returned an API error since " in output
+    assert ", 5 failed checks\n" in output
 
 
 # Verifies a failure category that changes is reported in full again rather than hidden by the previous one
@@ -290,9 +328,9 @@ def test_a_changed_failure_category_is_reported_in_full(gm_module, monkeypatch, 
     api_error = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
     forbidden = gm_module.make_recovery_advice("github.forbidden", "GitHub refused access to the requested resource", "Check token permissions", False)
 
-    assert reporter.failed(api_error, 5) == "full"
-    assert reporter.failed(api_error, 5) == ""
-    assert reporter.failed(forbidden, 5) == "full"
+    assert reporter.failed(api_error) == "full"
+    assert reporter.failed(api_error) == ""
+    assert reporter.failed(forbidden) == "full", "a failure nothing can retry away is a new report rather than a note"
 
     gm_module.print_outage_liveness("misiektoja", forbidden, int(time.time()) - 60)
     gm_module.print_outage_recovery("misiektoja", 60)
@@ -308,8 +346,8 @@ def test_the_monitoring_loop_classifies_its_failures(gm_module):
     source = inspect.getsource(gm_module.github_monitor_user)
 
     assert 'classify_recovery_error(e, "target")' in source
-    assert "outage.failed(advice, LIVENESS_REMINDER_SECONDS)" in source
-    assert "print_outage_liveness(user, advice, outage.since)" in source
+    assert "outage.failed(advice)" in source
+    assert "print_outage_liveness(user, advice, outage.since, outage.failures)" in source
     assert "print_outage_recovery(user, outage_lasted)" in source
     assert '"Forbidden"' not in source, "the loop must classify failures rather than match exception text"
     assert '"Bad Request"' not in source, "the loop must classify failures rather than match exception text"
@@ -445,6 +483,7 @@ CLASSIFIER_EXEMPTIONS = {
     "Couldn't find the PyGitHub library": "raised at import, while a dependency the classifier itself needs is missing",
     "Cannot clear the screen contents": "a cosmetic notice with nothing for the operator to recover from",
     "(retry": "a progress line for a retry still in flight, where the final attempt reports through the block",
+    "Monitoring failure changed for": "a one-line note on a classified outage that already had its full report",
 }
 
 # Words that mark a printed line as a report of something going wrong

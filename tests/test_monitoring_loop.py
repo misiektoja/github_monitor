@@ -178,3 +178,44 @@ def test_a_failure_that_cannot_clear_itself_is_alerted_at_once(gm_module, monkey
     errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [rejected], [(True, True)], 2)
 
     assert len(errors) == 1
+
+
+# Verifies an internet outage that classifies as a timeout on one check and as unreachable on the next is one
+# outage, so it is reported once on screen and alerted once
+def test_an_internet_outage_that_flaps_is_one_outage(gm_module, monkeypatch, tmp_path, capsys):
+    flapping = [gm_module.req.Timeout("timed out"), gm_module.req.ConnectionError("refused")] * 6
+    errors = error_alerts_for(gm_module, monkeypatch, tmp_path, flapping, [(True, True)], 12)
+
+    output = capsys.readouterr().out
+    assert output.count("* Error:") == 1
+    assert output.count("To fix: ") == 1
+    assert "Monitoring failure changed" not in output
+    assert len(errors) == 1
+
+
+# Verifies a reported outage that starts failing differently is still one outage, so the change is one line
+# rather than a second report
+def test_a_second_failure_category_is_noted_in_one_line(gm_module, monkeypatch, tmp_path, capsys):
+    error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE, OUTAGE, OUTAGE, gm_module.req.Timeout("timed out")], [(True, True)], 8)
+
+    lines = capsys.readouterr().out.splitlines()
+    reports = [line for line in lines if line.startswith("* Error:")]
+    changes = [number for number, line in enumerate(lines) if line.startswith("* Monitoring failure changed for watched. ")]
+    assert len(reports) == 1
+    assert len(changes) == 1 and lines[changes[0]].endswith("The network request timed out")
+    assert lines[changes[0] + 1].startswith("Timestamp:")
+    assert "\n".join(lines).count("To fix: ") == 1
+
+
+# Verifies a lasting outage is reported once and then carried by the hourly reminder with a count of its checks
+def test_a_lasting_outage_is_carried_by_the_hourly_reminder(gm_module, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(gm_module, "OUTAGE_REMINDER_SECONDS", 900)
+    error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE], [(True, True)], 10)
+
+    output = capsys.readouterr().out
+    assert output.count("* Error:") == 1
+    assert output.count("To fix: ") == 1
+    # One sleep precedes the loop, so nine five-minute checks follow and every third one is at the reminder interval
+    assert output.count("* Monitoring degraded for watched. ") == 2
+    assert ", 4 failed checks\n" in output and ", 7 failed checks\n" in output
+    assert output.count("Liveness check, timestamp:") == 2
