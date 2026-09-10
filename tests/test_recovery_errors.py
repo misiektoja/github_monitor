@@ -1,9 +1,11 @@
 """Offline tests for structured recovery advice and secret-safe rendering."""
 
+import ast
 import inspect
 import io
 import smtplib
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -276,3 +278,33 @@ def test_the_loop_reports_its_healthy_banner_unconditionally(gm_module):
     assert "print_liveness_banner(f\"Monitoring healthy for {user}." in source
     assert "verbose_print(f\"Monitoring healthy" not in source, "the healthy banner is no longer verbose-only"
     assert "int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS" in source, "the healthy banner is timed rather than counted"
+
+
+# Verifies a CSV row that cannot be written carries a fix and the page documenting the export
+def test_an_unwritable_csv_row_is_reported_with_a_fix(gm_module, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(gm_module, "github_account_exists", lambda login: None)
+    unreachable = tmp_path / "missing-directory" / "changes.csv"
+
+    gm_module.handle_profile_change("Followers", 1, 2, ["old"], [SimpleNamespace(login="new")], "owner", str(unreachable), field="login")
+
+    printed = capsys.readouterr().out
+    assert "* Error: Failed to write to CSV file" in printed
+    assert "To fix: Check CSV_FILE and its parent directory permissions" in printed
+    assert f"Guide: {gm_module.CSV_GUIDE_URL}" in printed
+
+
+# Verifies a failed CSV write reports through the recovery block, since the monitoring loop carries on past it
+def test_no_csv_write_failure_prints_its_own_line(gm_module):
+    csv_writers = {"init_csv_file", "write_csv_entry"}
+    offenders = []
+    guarded = 0
+    for node in ast.walk(ast.parse(inspect.getsource(gm_module))):
+        if not isinstance(node, ast.Try) or (node.body[-1].end_lineno or node.body[0].lineno) - node.body[0].lineno > 6:
+            continue
+        if not any(isinstance(inner, ast.Call) and getattr(inner.func, "id", "") in csv_writers for statement in node.body for inner in ast.walk(statement)):
+            continue
+        guarded += 1
+        offenders.extend(f"line {statement.lineno}" for handler in node.handlers for statement in handler.body if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call) and getattr(statement.value.func, "id", "") == "print")
+
+    assert guarded >= 23, f"only {guarded} CSV writes are guarded, so this no longer covers them"
+    assert not offenders, "CSV write failures reported outside the recovery block:\n" + "\n".join(offenders)

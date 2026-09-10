@@ -24,6 +24,7 @@ PROJECT_URL = "https://github.com/misiektoja/github_monitor"
 DOCUMENTATION_URL = "https://misiektoja.github.io/github_monitor"
 QUICK_START_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/"
 CONFIG_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#configuration-file"
+CSV_GUIDE_URL = f"{DOCUMENTATION_URL}/usage/#csv-export"
 INTERVALS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#check-intervals"
 AUTH_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#github-personal-access-token"
 GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
@@ -3600,6 +3601,10 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
     return email_attempted, webhook_attempted
 
 
+# Reports a CSV row or header that could not be written, which never stops a monitoring cycle
+def print_csv_write_error(error): print_recovery_advice(make_recovery_advice("file.unwritable", str(error), "Check CSV_FILE and its parent directory permissions", False, f"{type(error).__name__}: {error}", CSV_GUIDE_URL))
+
+
 # Initializes the CSV file
 def init_csv_file(csv_file_name):
     try:
@@ -5260,7 +5265,7 @@ def github_list_events(user, number, csv_file_name):
             init_csv_file(csv_file_name)
     except Exception as e:
         verbose_degraded_feature("Recent event CSV initialization", "event CSV records", e)
-        print(f"* Error: {sanitize_error_text(e)}")
+        print_csv_write_error(e)
 
     list_operation = "* Listing & saving" if csv_file_name else "* Listing"
 
@@ -5320,7 +5325,7 @@ def github_list_events(user, number, csv_file_name):
                         if csv_file_name:
                             write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                     except Exception as e:
-                        print(f"* Error: {sanitize_error_text(e)}")
+                        print_csv_write_error(e)
                     print_cur_ts("\nTimestamp:\t\t\t")
         except Exception as e:
             verbose_degraded_feature("Recent event iteration", "recent event output", e)
@@ -5361,7 +5366,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"{label} Count", user, old_count, new_count)
         except Exception as e:
-            print(f"* Error: {sanitize_error_text(e)}")
+            print_csv_write_error(e)
 
     added_list_str = ""
     removed_list_str = ""
@@ -5393,7 +5398,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Removed {label[:-1]}", user, item, "")
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
         print()
 
     if added_items:
@@ -5411,7 +5416,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", user, "", item)
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
         print()
 
     if diff == 0:
@@ -5462,7 +5467,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"Repo {label} Count", repo_name, count_old, count_new)
         except Exception as e:
-            print(f"* Error: {sanitize_error_text(e)}")
+            print_csv_write_error(e)
 
         m_subject = f"GitHub user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {count_old} -> {count_new})"
         m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {count_old} to {count_new} ({diff_str})\n"
@@ -5503,7 +5508,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"Repo {label} Count", repo_name, old_count, new_count)
         except Exception as e:
-            print(f"* Error: {sanitize_error_text(e)}")
+            print_csv_write_error(e)
 
     added_list_str = ""
     removed_list_str = ""
@@ -5555,7 +5560,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests", "Discussions"] else item
                         write_csv_entry(csv_file_name, now_local_naive(), f"{removal_text} {label[:-1]}", repo_name, value, "")
                 except Exception as e:
-                    print(f"* Error: {sanitize_error_text(e)}")
+                    print_csv_write_error(e)
             print()
 
         if added_items:
@@ -5585,7 +5590,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests", "Discussions"] else item
                         write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", repo_name, "", value)
                 except Exception as e:
-                    print(f"* Error: {sanitize_error_text(e)}")
+                    print_csv_write_error(e)
             print()
 
     if diff == 0:
@@ -6515,7 +6520,7 @@ def github_monitor_user(user, csv_file_name):
         if csv_file_name:
             init_csv_file(csv_file_name)
     except Exception as e:
-        print(f"* Error: {sanitize_error_text(e)}")
+        print_csv_write_error(e)
 
     followers_count = 0
     followings_count = 0
@@ -6905,7 +6910,7 @@ def github_monitor_user(user, csv_file_name):
                     if csv_file_name:
                         write_csv_entry(csv_file_name, now_local_naive(), "Daily Contribs", user, contrib_old, contrib_curr)
                 except Exception as e:
-                    print(f"* Error: {sanitize_error_text(e)}")
+                    print_csv_write_error(e)
 
                 m_subject = f"GitHub user {user} daily contributions changed from {contrib_old} to {contrib_curr}!"
                 m_body = (f"GitHub user {user} daily contributions changed on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
@@ -6933,7 +6938,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Bio", user, bio_old, bio)
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} bio has changed!"
             m_body = f"GitHub user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -6966,7 +6971,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Location", user, location_old, location)
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} location has changed!"
             m_body = f"GitHub user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -6997,7 +7002,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "User Name", user, user_name_old, user_name)
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} name has changed!"
             m_body = f"GitHub user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -7028,7 +7033,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Company", user, company_old, company)
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} company has changed!"
             m_body = f"GitHub user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -7059,7 +7064,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Email", user, email_old, email)
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} email has changed!"
             m_body = f"GitHub user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -7090,7 +7095,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Blog URL", user, blog_old, blog)
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} blog URL has changed!"
             m_body = f"GitHub user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -7112,7 +7117,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, convert_to_local_naive(account_updated_date), "Account Update Date", user, convert_to_local_naive(account_updated_date_old), convert_to_local_naive(account_updated_date))
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
             m_body = f"GitHub user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -7136,7 +7141,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Profile Visibility", user, _get_profile_status(public_old), _get_profile_status(public))
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !"
             m_body = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -7164,7 +7169,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Block Status", user, _get_blocked_status(blocked_old, public), _get_blocked_status(blocked, public))
             except Exception as e:
-                print(f"* Error: {sanitize_error_text(e)}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!"
             m_body = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -7264,7 +7269,7 @@ def github_monitor_user(user, csv_file_name):
                                         if csv_file_name:
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Update Date", r_name, convert_to_local_naive(r_update_old), convert_to_local_naive(r_update))
                                     except Exception as e:
-                                        print(f"* Error: {sanitize_error_text(e)}")
+                                        print_csv_write_error(e)
                                     m_subject = f"GitHub user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     timespan_str = calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)
@@ -7312,7 +7317,7 @@ def github_monitor_user(user, csv_file_name):
                                         if csv_file_name:
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Description", r_name, r_descr_old, r_descr)
                                     except Exception as e:
-                                        print(f"* Error: {sanitize_error_text(e)}")
+                                        print_csv_write_error(e)
                                     m_subject = f"GitHub user {user} repo '{r_name}' description has changed !"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     r_descr_old_html = markdown_to_html(r_descr_old, convert_line_breaks=True) if r_descr_old else ""
@@ -7389,7 +7394,7 @@ def github_monitor_user(user, csv_file_name):
                                     if csv_file_name:
                                         write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                                 except Exception as e:
-                                    print(f"* Error: {sanitize_error_text(e)}")
+                                    print_csv_write_error(e)
 
                                 m_subject = f"GitHub user {user} has new {event.type} (repo: {repo_name})"
                                 m_body = f"GitHub user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -9963,7 +9968,7 @@ def main():
             debug_print("CSV startup write check", path=CSV_FILE, outcome="failed", error=f"{type(e).__name__}: {e}")
             advice = classify_recovery_error(e, "file")
             if advice.code == "unknown":
-                advice = make_recovery_advice("file.unwritable", "The CSV file cannot be opened for writing", "Check CSV_FILE and its parent directory permissions", False, f"{type(e).__name__}: {e}", CONFIG_GUIDE_URL)
+                advice = make_recovery_advice("file.unwritable", "The CSV file cannot be opened for writing", "Check CSV_FILE and its parent directory permissions", False, f"{type(e).__name__}: {e}", CSV_GUIDE_URL)
             print_recovery_advice(advice)
             sys.exit(1)
 
