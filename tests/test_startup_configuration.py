@@ -140,7 +140,7 @@ def test_debug_flag_exposes_sanitized_config_loader_detail(request):
     result = subprocess.run([sys.executable, str(PROJECT_ROOT / "github_monitor.py"), "--debug", "--config-file", str(config)], cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
 
     assert result.returncode == 1
-    assert "Recovery code: config.invalid" in result.stdout
+    assert "* Error: " in result.stdout
     assert "Technical detail:" in result.stdout
     assert "NOT_A_REAL_SETTING" in result.stdout
 

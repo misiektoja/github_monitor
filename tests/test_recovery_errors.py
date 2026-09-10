@@ -29,24 +29,24 @@ def test_recovery_rendering_redacts_secrets_at_both_boundaries(gm_module, monkey
     monkeypatch.setattr(gm_module, "WEBHOOK_URL", webhook_url)
     advice = gm_module.make_recovery_advice("network.unavailable", f"Request failed for {github_token}", "Check the connection", True, f"Authorization: Bearer {github_token} at {webhook_url}", gm_module.DEBUG_GUIDE_URL)
 
-    normal = gm_module.render_recovery_advice(advice, verbose=False, debug=False)
-    debug = gm_module.render_recovery_advice(advice, verbose=False, debug=True)
+    normal = gm_module.render_recovery_advice(advice, debug=False)
+    debug = gm_module.render_recovery_advice(advice, debug=True)
 
     assert github_token not in normal + debug
     assert webhook_url not in normal + debug
     assert "Technical detail:" not in normal
-    assert "Recovery code: network.unavailable" in debug
-    assert "Retryable: Yes" in debug
     assert "Technical detail:" in debug
     assert "<redacted>" in debug
 
 
-# Verifies verbose mode adds stable triage fields without exposing technical detail
-def test_verbose_recovery_output_omits_technical_detail(gm_module):
+# Verifies the recovery block reads the same in every mode, so a report of it does not depend on the flags used
+def test_the_recovery_block_is_the_same_in_every_mode(gm_module, monkeypatch):
     advice = gm_module.make_recovery_advice("target.missing", "No target", "Add a target", False, "internal detail")
-    output = gm_module.render_recovery_advice(advice, verbose=True, debug=False)
-    assert "Recovery code: target.missing" in output
-    assert "Retryable: No" in output
+    monkeypatch.setattr(gm_module, "VERBOSE_MODE", True)
+
+    output = gm_module.render_recovery_advice(advice, debug=False)
+
+    assert output == "* Error: No target\nTo fix: Add a target"
     assert "Technical detail:" not in output
 
 
@@ -176,7 +176,7 @@ def test_config_advice_summary_names_the_rejected_setting(gm_module):
 
     assert advice.code == "config.invalid"
     assert "GITHUB_CHECK_INTERVAL" in advice.summary
-    assert "GITHUB_CHECK_INTERVAL" in gm_module.render_recovery_advice(advice, verbose=False, debug=False)
+    assert "GITHUB_CHECK_INTERVAL" in gm_module.render_recovery_advice(advice, debug=False)
 
 
 # Verifies an unconfigured mail server is reported as itself, not as a host that could not be reached
@@ -203,12 +203,12 @@ def test_repeated_advice_keeps_the_summary_and_drops_the_fix(gm_module, capsys):
     tracker = gm_module.RecoveryHintTracker()
     advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
 
-    gm_module.print_recovery_advice(advice, verbose=False, debug=False, tracker=tracker, retry_note="retrying in 1 hour")
+    gm_module.print_recovery_advice(advice, debug=False, tracker=tracker, retry_note="retrying in 1 hour")
     first = capsys.readouterr().out
-    gm_module.print_recovery_advice(advice, verbose=False, debug=False, tracker=tracker, retry_note="retrying in 1 hour")
+    gm_module.print_recovery_advice(advice, debug=False, tracker=tracker, retry_note="retrying in 1 hour")
     second = capsys.readouterr().out
     tracker.reset()
-    gm_module.print_recovery_advice(advice, verbose=False, debug=False, tracker=tracker, retry_note="retrying in 1 hour")
+    gm_module.print_recovery_advice(advice, debug=False, tracker=tracker, retry_note="retrying in 1 hour")
     third = capsys.readouterr().out
 
     assert first == "* Error: GitHub returned an API error (retrying in 1 hour)\nTo fix: Try again later\n"
@@ -295,7 +295,7 @@ def test_the_monitoring_loop_classifies_its_failures(gm_module):
 def test_a_labelled_failure_keeps_the_shared_shape(gm_module, capsys):
     advice = gm_module.make_recovery_advice("github.api_error", "GitHub returned an API error", "Try again later", True)
 
-    gm_module.print_recovery_advice(advice, verbose=False, debug=False, retry_note="retrying in 1 hour", label="Warning")
+    gm_module.print_recovery_advice(advice, debug=False, retry_note="retrying in 1 hour", label="Warning")
 
     assert capsys.readouterr().out.splitlines()[0] == "* Warning: GitHub returned an API error (retrying in 1 hour)"
 

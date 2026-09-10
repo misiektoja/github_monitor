@@ -448,7 +448,8 @@ def test_broken_target_transcript_exercises_real_cli_path(gm_module, monkeypatch
 
     assert exit_error.value.code == 1
     output = capsys.readouterr().out
-    assert "Recovery code: target.not_found" in output
+    assert "* Error: GitHub could not find the requested resource" in output
+    assert "To fix: Check the target name and token access then try again" in output
     assert "github_pat_broken_target_secret" not in output
     if mode == "--debug":
         assert "HTTP GET: url=https://api.example.test, operation=startup connectivity, timeout=4s" in output
@@ -568,7 +569,7 @@ def test_a_failed_delivery_is_reported_once_with_verbose_on(gm_module, monkeypat
         transcripts[verbose] = capsys.readouterr().out
 
     added = [line for line in transcripts[True].splitlines() if line not in transcripts[False].splitlines()]
-    assert all(line.startswith(("Recovery code: ", "Retryable: ")) for line in added), added
+    assert added == [], added
     for transcript in transcripts.values():
         assert transcript.count("* Error: ") == 2
         assert transcript.count("To fix: ") == 2
