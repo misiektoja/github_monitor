@@ -1239,6 +1239,11 @@ def colorize_links(text):
     return _sub_outside_color(_URL_RE, lambda mo: colorize("link", mo.group(0)), text)
 
 
+# Colours one line of a fix block the way the output stream colours it, keeping its guide line a link
+def colorize_fix_line(line):
+    return colorize_links(line) if line.lstrip().startswith("Guide: ") else colorize("info", line)
+
+
 # Writes the startup name line by line with a separately styled version line
 def _write_startup_banner(destination):
     destination.write("\n".join(colorize("header", line) if line else line for line in STARTUP_BANNER.splitlines()) + "\n")
@@ -8439,11 +8444,11 @@ def print_doctor_check(check, *, stream=None):
     destination.write(f"{marker} {sanitize_doctor_text(check.label)}\n")
     if check.detail:
         # The report is written to a sanitize-only surface, so the link colour every other line gets from the stream is applied here
-        destination.write(f"  {_sub_outside_color(_URL_RE, lambda match: colorize('link', match.group(0)), sanitize_doctor_text(check.detail))}\n")
+        destination.write(f"  {colorize_links(sanitize_doctor_text(check.detail))}\n")
     if check.status != "PASS" and check.advice is not None:
         # The fix carries its own guide line, so each line is indented and styled on its own
         for advice_line in f"To fix: {check.advice.fix}".splitlines():
-            destination.write(f"  {colorize('info', sanitize_doctor_text(advice_line))}\n")
+            destination.write(f"  {colorize_fix_line(sanitize_doctor_text(advice_line))}\n")
 
 
 # The fixed section order the report renders in, chosen so each section depends only on the ones above it
@@ -8552,7 +8557,7 @@ def render_doctor_summary(report, stream=None):
         destination.write(colorize("warning", f"  All critical checks passed with {report.warning_count} warning(s). Review the warnings above.") + "\n")
     else:
         destination.write(colorize("boolean_true", "  All checks passed. You are good to go!") + "\n")
-    destination.write("\n" + colorize("info", f"Guide: {DOCTOR_GUIDE_URL}") + "\n")
+    destination.write("\n" + colorize_links(f"Guide: {DOCTOR_GUIDE_URL}") + "\n")
 
 
 # Runs the complete read-only preflight and returns its healthcheck exit code
