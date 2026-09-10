@@ -46,6 +46,7 @@ and again before anything is published to PyPI.
 | `test_github_token_setup.py` | Hidden token entry, targeted dotenv updates and refusal to save an invalid token |
 | `test_help_screen.py` | The `--help` screen: the shared argument group names, the task-grouped examples and the startup banner |
 | `test_install_method_commands.py` | PyPI and downloaded-script detection with portable plus exact POSIX and Windows commands |
+| `test_monitoring_loop.py` | The primary monitoring loop driven through outages: the error alert on both channels, once per failure category, retried per channel and re-armed after a recovery |
 | `test_profile_fields.py` | Addition, removal and failure handling for nullable profile fields |
 | `test_recovery_errors.py` | Closed recovery codes, classification, retryability and layered secret redaction that leaves ordinary output intact |
 | `test_repository_contracts.py` | Governance documents, issue templates, action pinning, release gating, the CI contract and the documentation site: its pinned page set, one title per page, no section on two pages, resolving links and the runtime guide URLs |
