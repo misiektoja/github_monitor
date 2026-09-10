@@ -8,6 +8,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import requests as req
 
 
 # Verifies recovery advice accepts only the stable public code set
@@ -308,3 +309,25 @@ def test_no_csv_write_failure_prints_its_own_line(gm_module):
 
     assert guarded >= 23, f"only {guarded} CSV writes are guarded, so this no longer covers them"
     assert not offenders, "CSV write failures reported outside the recovery block:\n" + "\n".join(offenders)
+
+
+# Verifies a list refresh that fails names the list in front of the classified failure and keeps the fix
+def test_a_failed_refresh_names_the_list_and_carries_a_fix(gm_module, capsys):
+    gm_module.print_refresh_error("Followers", req.ConnectionError("no route to host"))
+
+    printed = capsys.readouterr().out
+    assert "* Error: Followers could not be refreshed: The configured service could not be reached" in printed
+    assert "To fix: Check the network and configured service URL then try again" in printed
+    assert "Guide: " in printed
+
+
+# Verifies an unreadable membership list reports through the block and leaves the previous snapshot in place
+def test_an_unreadable_membership_list_is_reported_with_a_fix(gm_module, capsys):
+    unreadable = [SimpleNamespace()]
+
+    result = gm_module.handle_profile_change("Followers", 1, 1, ["old"], unreadable, "owner", "", field="login")
+
+    printed = capsys.readouterr().out
+    assert result == (["old"], 1)
+    assert "* Error: The list of followers could not be refreshed: " in printed
+    assert "To fix: " in printed

@@ -3601,6 +3601,12 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
     return email_attempted, webhook_attempted
 
 
+# Reports a list refresh that failed and left its alerts degraded, naming the list in front of the classified failure
+def print_refresh_error(feature, error):
+    advice = classify_recovery_error(error)
+    print_recovery_advice(make_recovery_advice(advice.code, f"{feature} could not be refreshed: {advice.summary}", advice.fix, advice.retryable, advice.detail, advice.guide_url))
+
+
 # Reports a CSV row or header that could not be written, which never stops a monitoring cycle
 def print_csv_write_error(error): print_recovery_advice(make_recovery_advice("file.unwritable", str(error), "Check CSV_FILE and its parent directory permissions", False, f"{type(error).__name__}: {error}", CSV_GUIDE_URL))
 
@@ -5342,7 +5348,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
             return list_old, count_old
     except Exception as e:
         verbose_degraded_feature(f"{label} list", f"{label.lower()} change alerts", e)
-        print(f"* Error while trying to get the list of {label.lower()}: {sanitize_error_text(e)}")
+        print_refresh_error(f"The list of {label.lower()}", e)
         print_cur_ts("Timestamp:\t\t\t")
         return list_old, count_old
 
@@ -6597,7 +6603,8 @@ def github_monitor_user(user, csv_file_name):
             available_events = len(events)
 
     except Exception as e:
-        print(f"\n* Error: {sanitize_error_text(e)}")
+        print()
+        print_recovery_advice(classify_recovery_error(e))
         sys.exit(1)
 
     last_event_id = 0
@@ -6741,7 +6748,7 @@ def github_monitor_user(user, csv_file_name):
         repos_old = [repo.name for repo in repos_list]
         starred_old = [star.full_name for star in starred_list]
     except Exception as e:
-        print(f"* Error: {sanitize_error_text(e)}")
+        print_recovery_advice(classify_recovery_error(e))
         sys.exit(1)
 
     verbose_notice(f"Initial snapshot completed for {user}")
@@ -6823,7 +6830,7 @@ def github_monitor_user(user, csv_file_name):
             followings_count = gh_call(lambda: g_user.following)()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followings", "following change alerts", e)
-            print(f"* Error while fetching followings: {sanitize_error_text(e)}")
+            print_refresh_error("Followings", e)
             print_cur_ts("Timestamp:\t\t\t")
             followings_raw = None
             followings_count = None
@@ -6838,7 +6845,7 @@ def github_monitor_user(user, csv_file_name):
             followers_count = gh_call(lambda: g_user.followers)()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followers", "follower change alerts", e)
-            print(f"* Error while fetching followers: {sanitize_error_text(e)}")
+            print_refresh_error("Followers", e)
             print_cur_ts("Timestamp:\t\t\t")
             followers_raw = None
             followers_count = None
@@ -6858,7 +6865,7 @@ def github_monitor_user(user, csv_file_name):
                 repos_count = len(repos_raw)
         except NET_ERRORS as e:
             verbose_degraded_feature("Repositories", "repository change alerts", e)
-            print(f"* Error while fetching repositories: {sanitize_error_text(e)}")
+            print_refresh_error("Repositories", e)
             print_cur_ts("Timestamp:\t\t\t")
             repos_raw = None
             repos_count = None
@@ -6878,7 +6885,7 @@ def github_monitor_user(user, csv_file_name):
                 starred_count = None
         except NET_ERRORS as e:
             verbose_degraded_feature("Starred repositories", "starred repository change alerts", e)
-            print(f"* Error while fetching starred repositories: {sanitize_error_text(e)}")
+            print_refresh_error("Starred repositories", e)
             print_cur_ts("Timestamp:\t\t\t")
             starred_list = None
             starred_count = None
