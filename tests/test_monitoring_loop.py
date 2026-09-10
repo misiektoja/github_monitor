@@ -77,7 +77,7 @@ def recording_channels(gm_module, monkeypatch, outcomes):
     calls = []
 
     def record(notification_type, subject, body, body_html="", email_enabled=False, webhook_enabled=None, **kwargs):
-        calls.append({"type": notification_type, "subject": subject, "body": body, "email": bool(email_enabled), "webhook": bool(webhook_enabled)})
+        calls.append({"type": notification_type, "subject": subject, "body": body, "body_html": body_html, "email": bool(email_enabled), "webhook": bool(webhook_enabled)})
         return outcomes[min(len(calls), len(outcomes)) - 1]
 
     monkeypatch.setattr(gm_module, "ERROR_NOTIFICATION", True)
@@ -127,6 +127,16 @@ def test_any_failure_alerts_both_channels_once(gm_module, monkeypatch, tmp_path)
     assert errors[0]["subject"].startswith("github_monitor: ") and errors[0]["subject"].endswith(" (user: watched)")
     assert "To fix:" in errors[0]["body"]
     assert f"retry in {gm_module.display_time(300)}" in errors[0]["body"]
+
+
+# The guide link sits under the fix in the HTML body too, since HTML renders the newline the fix carries as a space
+def test_the_guide_link_keeps_its_own_line_in_the_html_body(gm_module, monkeypatch, tmp_path):
+    errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE], [(True, True)], 6)
+
+    parts = errors[0]["body_html"].split("<br>")
+    fix_index = next(index for index, part in enumerate(parts) if part.startswith("To fix: "))
+    assert parts[fix_index + 1].startswith("Guide: https://")
+    assert "\n" not in parts[fix_index]
 
 
 # A failure that changes category is a different failure, so it earns each channel a new alert
