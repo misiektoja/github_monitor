@@ -2628,7 +2628,8 @@ def secret_is_set(value):
 
 
 # Returns the diagnostic fields describing one secret, reporting presence alone since GitHub issues no secret at a fixed length
-def secret_fields(value): return {"value": "set" if secret_is_set(value) else "not set"}
+def secret_fields(value):
+    return {"value": "set" if secret_is_set(value) else "not set"}
 
 
 # Renders one diagnostic line as an operation followed by comma-separated key=value fields, dropping unset ones
@@ -3043,9 +3044,10 @@ def is_too_many_open_files(error):
             return True
     return False
 
-# Returns the next step for a failure no rule recognized, since a run already printing the technical cause cannot be told to re-run for it
-def unknown_failure_fix(debug_command): return "Open an issue with this output if the failure continues" if DEBUG_MODE else f"Run the command again with {debug_command} to see the technical cause"
 
+# Returns the next step for a failure no rule recognized, since a run already printing the technical cause cannot be told to re-run for it
+def unknown_failure_fix(debug_command):
+    return "Open an issue with this output if the failure continues" if DEBUG_MODE else f"Run the command again with {debug_command} to see the technical cause"
 
 
 # Maps one exception and operation context to stable recovery advice
@@ -3677,11 +3679,13 @@ def print_degraded_error(subject, error, label="Error"):
 
 
 # Returns the advice an optional library that is missing carries, naming what the run loses and how to install it
-def missing_dependency_advice(package, effect, alternative=""): return make_recovery_advice("dependency.missing", f"{effect} because the optional '{package}' library is missing", recovery_fix_with_guide(f"Install it with: {shlex.join([sys.executable, '-m', 'pip', 'install', package])}" + (f". {alternative}" if alternative else ""), INSTALL_GUIDE_URL), False)
+def missing_dependency_advice(package, effect, alternative=""):
+    return make_recovery_advice("dependency.missing", f"{effect} because the optional '{package}' library is missing", recovery_fix_with_guide(f"Install it with: {shlex.join([sys.executable, '-m', 'pip', 'install', package])}" + (f". {alternative}" if alternative else ""), INSTALL_GUIDE_URL), False)
 
 
 # Reports a CSV row or header that could not be written, which never stops a monitoring cycle
-def print_csv_write_error(error): print_recovery_advice(make_recovery_advice("file.unwritable", str(error), recovery_fix_with_guide("Check CSV_FILE and its parent directory permissions", CSV_GUIDE_URL), False, f"{type(error).__name__}: {error}"))
+def print_csv_write_error(error):
+    print_recovery_advice(make_recovery_advice("file.unwritable", str(error), recovery_fix_with_guide("Check CSV_FILE and its parent directory permissions", CSV_GUIDE_URL), False, f"{type(error).__name__}: {error}"))
 
 
 # Initializes the CSV file
@@ -7535,7 +7539,6 @@ def github_monitor_user(user, csv_file_name):
         report_recovered_features()
         close_pending_notice_block()
 
-
         if LIVENESS_REMINDER_SECONDS and int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS:
             print_liveness_banner(f"Monitoring healthy for {user}. No tracked change since the last check")
             alive_since = int(time.time())
@@ -8347,7 +8350,6 @@ def print_doctor_next_steps(destination, target=None, saved_target=None, doctor_
     monitor_target = command_targets(target, saved_target)[1]
     _wizard_print_command(destination, label, render_command([monitor_target] if monitor_target else []))
     destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
-
 
 
 # Walks up to the first directory that exists, so a destination under a missing folder can still be judged
