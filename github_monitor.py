@@ -6405,7 +6405,7 @@ def render_private_settings(existing, updates):
     return content
 
 
-# Writes the given secrets into one dotenv file with 0600 permissions, replacing each assignment in place and preserving unrelated lines
+# Atomically replaces dotenv assignments with owner-only permissions while preserving unrelated lines
 def update_dotenv_file(destination, updates):
     if not hasattr(updates, "items"):
         raise TypeError("Dotenv updates must be a mapping")
@@ -6424,13 +6424,18 @@ def update_dotenv_file(destination, updates):
         debug_print("Private settings file read", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
     content = render_private_settings(existing, updates)
+    temporary_path = None
     try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as dotenv_file:
-            dotenv_file.write(content)
+        # Follow an existing symlink as the original writer did, then replace only its target after the write succeeds
+        target = path.resolve()
+        temporary_path = prepare_wizard_atomic_file(target, content)
+        os.replace(temporary_path, target)
     except Exception as exc:
         debug_print("Private settings file update", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
     debug_print("Private settings file update succeeded", path=path, mode="0600")
     for key, value in updates.items():
         verbose_print(f"{'Saved' if value else 'Removed'} {key} in the private settings file")
