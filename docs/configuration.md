@@ -33,7 +33,11 @@ Startup resolves values in this order:
 4. Exported secret environment variables
 5. Explicit command-line options
 
-An exported secret overrides the same key from a dotenv file. An explicit command-line option overrides every saved source. Startup checks use these effective values instead of the defaults that existed when the module was imported.
+An exported secret overrides the same key from a dotenv file. An explicit command-line option overrides every saved source. This includes `--no-color` in Doctor. Startup checks use these effective values instead of the defaults that existed when the module was imported.
+
+## Liveness output
+
+`LIVENESS_CHECK_INTERVAL` accepts a finite, nonnegative number of seconds. Set it to `0` to disable liveness output. The default is now 86400 seconds (24 hours), up from 43200 seconds (12 hours) in 2.6.3. Startup reports invalid values before making network requests.
 
 ## GitHub API URL
 
@@ -64,6 +68,8 @@ REPOS_TO_MONITOR = ['user1/repo1', 'user2/repo2', 'user1/repo3']
 ```
 
 This allows you to have different repository lists for different users. When the tool runs for a specific user, it will only monitor repositories where the user matches the user in the list.
+
+A failed repository-detail request keeps that repository's last successful snapshot. Other repositories still update and changes made during the outage are compared when access recovers. A repository absent from a successfully fetched list is no longer retained for detail comparisons. Expected counts-only stargazer and watcher monitoring does not count as an outage.
 
 Note: When using a specific list (not `'ALL'`), newly created repositories will NOT be automatically monitored - only repositories explicitly listed will be monitored.
 

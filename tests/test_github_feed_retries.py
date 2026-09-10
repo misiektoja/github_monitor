@@ -28,6 +28,62 @@ def github_response(request, payload, status=200):
     return response
 
 
+@pytest.mark.parametrize("fail_detail", [False, True])
+# Preserves one unavailable repository while monitoring other repositories and recovering its changes
+def test_repository_details_recover_without_losing_the_comparison(gm_module, monkeypatch, capsys, restored_globals, fail_detail):
+    gm = gm_module
+    settings = {"GITHUB_TOKEN": "synthetic-token", "GITHUB_CHECK_INTERVAL": 0, "NET_MAX_RETRIES": 1, "NET_BASE_BACKOFF_SEC": 0, "TRACK_REPOS_CHANGES": True, "TRACK_CONTRIB_CHANGES": False, "DO_NOT_MONITOR_GITHUB_EVENTS": True, "WEBHOOK_ENABLED": False, "ERROR_NOTIFICATION": False, "LIVENESS_REMINDER_SECONDS": 0}
+    for key, value in settings.items():
+        monkeypatch.setattr(gm, key, value)
+    lookups = 0
+    failures = []
+
+    # Returns complete metadata with a change made during the failed detail check
+    def repository(name):
+        return {"id": 1 if name == "alpha" else 2, "name": name, "full_name": f"watched/{name}", "owner": profile_payload("watched"), "url": f"https://api.github.com/repos/watched/{name}", "html_url": f"https://github.com/watched/{name}", "description": "changed description" if lookups >= 2 else "original description", "fork": False, "forks_count": 0, "stargazers_count": 0, "subscribers_count": 0, "language": "Python", "has_discussions": False, "created_at": "2020-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+
+    # Substitutes HTTP responses while retaining real clients, lazy objects and iterators
+    def send(session, request, **kwargs):
+        nonlocal lookups
+        path = urlsplit(request.url).path
+        if path == "/users/watched":
+            lookups += 1
+            if lookups == 5:
+                raise MonitorComplete
+            payload = profile_payload("watched")
+            payload.update(followers=0, following=0, public_repos=2)
+            return github_response(request, payload)
+        if path == "/user":
+            return github_response(request, profile_payload("viewer"))
+        if path == "/users/watched/repos":
+            return github_response(request, [repository("alpha"), repository("beta")])
+        if path == "/repos/watched/alpha/forks" and lookups == 2 and fail_detail:
+            failures.append(path)
+            return github_response(request, {"message": "API rate limit exceeded"}, 403)
+        if path.startswith("/repos/watched/") and path.endswith(("/forks", "/issues", "/pulls")):
+            return github_response(request, [])
+        if path == "/graphql":
+            return github_response(request, {"data": {"user": {"viewerCanFollow": True}}})
+        if request.url.startswith("https://github.com/"):
+            response = github_response(request, {})
+            response._content = b"<html><body>Activity is private</body></html>"
+            return response
+        if path.startswith("/users/watched/"):
+            return github_response(request, [])
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    monkeypatch.setattr(requests.Session, "send", send)
+    with pytest.raises(MonitorComplete):
+        gm.github_monitor_user("watched", "")
+    output = capsys.readouterr().out
+    assert len(failures) == int(fail_detail)
+    assert output.count("Repo 'alpha' description changed from:") == 1
+    assert output.count("Repo 'beta' description changed from:") == 1
+    assert "Stargazers identities" not in output
+    assert "Watchers identities" not in output
+    assert "The monitoring check did not return usable data" not in output
+
+
 @pytest.mark.parametrize("feed,all_repos,detail_only", [("following", False, False), ("followers", False, False), ("repos", False, False), ("repos", True, False), ("starred", False, False), ("events", False, False), ("repos", False, True), ("repos", True, True)])
 # Retries lazy feed failures and resumes monitoring without reporting unchanged items as removed
 def test_failed_feed_keeps_its_snapshot_and_monitoring_continues(gm_module, monkeypatch, capsys, restored_globals, feed, all_repos, detail_only):

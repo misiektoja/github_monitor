@@ -708,6 +708,7 @@ from datetime import datetime, timezone, date
 from dateutil import relativedelta
 from dateutil.parser import isoparse
 import calendar
+import math
 import requests as req
 import signal
 import smtplib
@@ -4748,7 +4749,7 @@ def github_get_repo_discussions(repo):
 
 
 # Processes items from all passed repositories and returns a list of dictionaries
-def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=True):
+def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=True, previous_repos=None):
     import logging
     import warnings
 
@@ -4757,6 +4758,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
     warnings.filterwarnings('ignore')
 
     list_of_repos = []
+    failed_names = set()
     identity_lists_fetched = 0
     if repos_list:
         # Convert to list if it's a generator/iterator to get total count
@@ -4798,6 +4800,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                         _display_progress(idx, total_repos, repo.name)  # Refresh after forks
                 except GithubException as e:
                     if e.status in [403, 451]:
+                        failed_names.add(repo.name)
                         verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
                         if BLOCKED_REPOS:
                             print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {sanitize_error_text(e)}")
@@ -4838,6 +4841,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                     _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))  # Final refresh after successful processing
 
             except GithubException as e:
+                failed_names.add(repo.name)
                 # Skip TOS-blocked (403) and legally blocked (451) repositories
                 if e.status in [403, 451]:
                     verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
@@ -4856,6 +4860,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                         _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
             except Exception as e:
+                failed_names.add(repo.name)
                 verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
                 print()
                 print_degraded_error(f"Repo '{repo.name}' was skipped", e)
@@ -4882,6 +4887,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
             else:
                 print("- Stargazer/watcher user lists:\tSkipped (counts only)")
 
+    list_of_repos.extend(repo for repo in (previous_repos or ()) if repo.get("name") in failed_names)
     return list_of_repos
 
 
@@ -5899,7 +5905,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
 def check_repo_list_changes(count_old, count_new, list_old, list_new, label, repo_name, repo_url, user, csv_file_name):
     if list_old is None or list_new is None:
         if count_old == count_new:
-            verbose_degraded_feature(f"{label} identities for {repo_name}", f"{label.lower()} membership alerts")
+            debug_print(f"{label} for {repo_name}", outcome="OK", mode="counts only")
             return
 
         diff = count_new - count_old
@@ -6360,7 +6366,9 @@ def trace_unresolved_secrets():
 
 # Applies startup CLI overrides before any check consumes effective configuration
 def apply_startup_cli_overrides(args, configured_settings=None):
-    global GITHUB_TOKEN, GITHUB_API_URL, CHECK_INTERNET_URL, SECRET_SOURCES
+    global GITHUB_TOKEN, GITHUB_API_URL, CHECK_INTERNET_URL, SECRET_SOURCES, COLORED_OUTPUT
+    if getattr(args, "no_color", None) is True:
+        COLORED_OUTPUT = False
     configured_names = set(configured_settings or ())
     previous_api_url = GITHUB_API_URL
     connectivity_follows_api = "CHECK_INTERNET_URL" not in configured_names or CHECK_INTERNET_URL == previous_api_url
@@ -7744,7 +7752,7 @@ def github_monitor_user(user, csv_file_name):
 
             if repos_list_filtered is not None:
                 try:
-                    list_of_repos = github_process_repos(repos_list_filtered, show_progress=False, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()))
+                    list_of_repos = github_process_repos(repos_list_filtered, show_progress=False, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()), previous_repos=list_of_repos_old)
                     list_of_repos_ok = True
                 except Exception as e:
                     list_of_repos = list_of_repos_old
@@ -8077,7 +8085,7 @@ def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.Ar
     if DO_NOT_MONITOR_GITHUB_EVENTS:
         EVENT_NOTIFICATION = False
         WEBHOOK_EVENT_NOTIFICATION = False
-    intervals_valid = type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0 and isinstance(LIVENESS_CHECK_INTERVAL, (int, float)) and not isinstance(LIVENESS_CHECK_INTERVAL, bool) and LIVENESS_CHECK_INTERVAL >= 0
+    intervals_valid = type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0 and runtime_liveness_error() is None
     LIVENESS_REMINDER_SECONDS = int(LIVENESS_CHECK_INTERVAL) if intervals_valid and LIVENESS_CHECK_INTERVAL else 0
 
 
@@ -8249,11 +8257,20 @@ def runtime_boolean_errors():
     return errors
 
 
+# Returns a recovery message for an unusable liveness interval
+def runtime_liveness_error():
+    value = LIVENESS_CHECK_INTERVAL
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0 or (isinstance(value, float) and not math.isfinite(value)):
+        return f"LIVENESS_CHECK_INTERVAL must be a finite number zero or greater, not {value!r}"
+    return None
+
+
 # Returns all type and range errors in settings that control runtime timing or counts
 def runtime_configuration_errors():
-    errors = []
+    liveness_error = runtime_liveness_error()
+    errors = [liveness_error] if liveness_error else []
     positive_numbers = (("CHECK_INTERNET_TIMEOUT", CHECK_INTERNET_TIMEOUT),)
-    nonnegative_numbers = (("LIVENESS_CHECK_INTERVAL", LIVENESS_CHECK_INTERVAL), ("NET_BASE_BACKOFF_SEC", NET_BASE_BACKOFF_SEC))
+    nonnegative_numbers = (("NET_BASE_BACKOFF_SEC", NET_BASE_BACKOFF_SEC),)
     positive_integers = (("GITHUB_CHECK_INTERVAL", GITHUB_CHECK_INTERVAL), ("EVENTS_NUMBER", EVENTS_NUMBER), ("NET_MAX_RETRIES", NET_MAX_RETRIES))
     for name, value in positive_numbers:
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
@@ -9865,7 +9882,12 @@ def write_generated_config(output_file, content, force=False, interactive=None, 
     return backup_path, True
 
 
-# Saves both wizard files only after validation, the configuration backup and temporary writes succeed
+# Reports an interrupted setup save with the exact files already replaced
+class WizardSaveError(OSError):
+    pass
+
+
+# Stages setup files and reports partial replacements without discarding their recovery information
 def save_wizard_files(state):
     for path in (state.config_path, state.dotenv_path):
         if not path.parent.is_dir():
@@ -9879,16 +9901,32 @@ def save_wizard_files(state):
     if dotenv_content.strip() or state.dotenv_path.exists():
         destinations.append((state.dotenv_path, dotenv_content))
     prepared = []
+    saved = []
+    cleanup_failures = []
+    failure = None
     try:
         # Appended one at a time so a failure on the second file still exposes the first for cleanup
         for path, content in destinations:
             prepared.append(prepare_wizard_atomic_file(path, content))
         for (path, _), temporary_path in zip(destinations, prepared, strict=True):
             os.replace(temporary_path, path)
-            os.chmod(path, 0o600)
+            saved.append(path)
+    except (Exception, KeyboardInterrupt) as exc:
+        failure = exc
     finally:
         for temporary_path in prepared:
-            temporary_path.unlink(missing_ok=True)
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError as exc:
+                cleanup_failures.append(temporary_path)
+                debug_swallowed_exception("Setup temporary file cleanup", exc)
+    if failure is not None or cleanup_failures:
+        if not saved and not cleanup_failures and failure is not None:
+            raise failure
+        saved_text = ", ".join(str(path) for path in saved) or "none"
+        pending_text = ", ".join(str(path) for path, _ in destinations if path not in saved) or "none"
+        cleanup_text = " Remove these private temporary files after restoring directory access: " + ", ".join(str(path) for path in cleanup_failures) + "." if cleanup_failures else ""
+        raise WizardSaveError(f"Setup is incomplete. Saved files: {saved_text}. Files not saved: {pending_text}. Correct destination permissions or paths then run --setup again with the same --config-file and --env-file. Review both files and run --doctor before monitoring.{cleanup_text}") from failure
     for path, _ in destinations:
         debug_print("Setup file write succeeded", path=path)
     return config_backup
@@ -9949,6 +9987,9 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
             destination.write("\n" + colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
             return 1
         config_backup = save_wizard_files(state)
+    except WizardSaveError as exc:
+        destination.write("\n" + colorize("error", sanitize_error_text(exc)) + "\n")
+        return 1
     except WizardCancelled:
         destination.write(colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
         return 1
@@ -10576,6 +10617,12 @@ def main():
     apply_webhook_cli_overrides(args, parser)
     trace_unresolved_secrets()
     apply_monitoring_cli_overrides(args, parser)
+
+    liveness_error = runtime_liveness_error()
+    if liveness_error:
+        advice = make_recovery_advice("config.value_invalid", liveness_error, recovery_fix_with_guide("Set LIVENESS_CHECK_INTERVAL to seconds, or 0 to disable liveness output", CONFIG_GUIDE_URL), False)
+        print_recovery_advice(advice)
+        sys.exit(1)
 
     try:
         TRUNCATE_CHARS = resolve_truncate_chars(args.truncate, TRUNCATE_CHARS, DISABLE_LOGGING)

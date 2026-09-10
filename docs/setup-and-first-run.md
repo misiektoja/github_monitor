@@ -24,6 +24,8 @@ The wizard links to GitHub's token settings then validates a newly entered token
 
 `--setup --config-file PATH --env-file PATH` selects custom wizard destinations. Both destinations are checked before the first question, so an unwritable path or a directory given by mistake is reported straight away rather than after you have answered everything. When the configuration file already exists it asks whether to replace it and offers to write somewhere else instead. Setup parses an existing config as data and preserves its supported settings. It moves usable secrets found there into the dotenv output. Nothing is written during questioning or section edits. The summary's **File destinations** section changes where the configuration and dotenv files are written. Moving the dotenv file asks the authentication and notification questions again, since a secret you chose to keep was never going to reach the new file. **Save settings** validates the complete generated config then prepares every file it writes before replacing any destination.
 
+Setup replaces each file separately. If saving secrets fails after the configuration was saved, setup stops and identifies the saved configuration. Correct the destination then rerun `--setup` with the same `--config-file` and `--env-file`, review the settings and run `--doctor` before monitoring. A crash between replacements can also leave a new configuration beside the previous dotenv file. If temporary-file cleanup also fails, the error names the private temporary files to remove after restoring directory access. The configuration backup can recover non-secret settings. Replaced secrets are not backed up.
+
 ## Quick Start
 
 The commands printed below use the active installation and quote paths containing spaces.

@@ -60,6 +60,7 @@ and again before anything is published to PyPI.
 | `test_repository_metadata.py` | Governance files, citation, funding, line endings, the declared editor style, the pinned linter and release integrity |
 | `test_repository_monitoring.py` | Discussion collection, repository snapshots, open and closed notifications, event formatting |
 | `test_setup_wizard.py` | Buffered setup, section editing, target and duration normalization, config and dotenv separation, backups, doctor and monitoring handoffs, non-interactive fallback and pseudo-terminal transcripts |
+| `test_release_recovery.py` | Offline startup validation, real terminal color precedence and partial setup saves |
 | `test_startup_configuration.py` | Config, dotenv, exported environment and two-phase CLI precedence at startup consumer boundaries |
 | `test_removed_identity_notes.py` | The notes printed when a followed account or repository disappears |
 | `test_startup_summary_channels.py` | Summary rows naming the webhook provider, the mail server, the masked recipient, the delivery confirmations and the runtime |
