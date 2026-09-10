@@ -1234,6 +1234,11 @@ def apply_color_to_text(text):
     return "".join(parts)
 
 
+# Colours every link in a line, for the screens printed before the output stream colouriser is installed
+def colorize_links(text):
+    return _sub_outside_color(_URL_RE, lambda mo: colorize("link", mo.group(0)), text)
+
+
 # Writes the startup name line by line with a separately styled version line
 def _write_startup_banner(destination):
     destination.write("\n".join(colorize("header", line) if line else line for line in STARTUP_BANNER.splitlines()) + "\n")
@@ -6416,7 +6421,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
             raise RecoveryError(secret_entry_cancelled_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL)) from None
         if not confirmed:
             raise RecoveryError(secret_replacement_declined_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL))
-    print("* Create or review GitHub tokens at: https://github.com/settings/tokens")
+    print(colorize_links("* Create or review GitHub tokens at: https://github.com/settings/tokens"))
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
     previous_debug_mode = DEBUG_MODE
     DEBUG_MODE = False
