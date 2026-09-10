@@ -354,6 +354,10 @@ VERBOSE_MODE = False
 # Can also be enabled via --debug, which turns it on regardless of this setting
 DEBUG_MODE = False
 
+# Whether verbose output confirms each delivered email and webhook alert
+# Applies only when VERBOSE_MODE is enabled
+DELIVERY_CONFIRMATIONS = True
+
 # Whether to use coloured output in the terminal (auto-disabled if the terminal
 # does not appear to support colours or when output is redirected to a file)
 # Can also be disabled via the --no-color flag
@@ -487,6 +491,7 @@ HORIZONTAL_LINE2 = 0
 CLEAR_SCREEN = False
 VERBOSE_MODE = False
 DEBUG_MODE = False
+DELIVERY_CONFIRMATIONS = True
 
 # True once monitoring has printed its header, so a verbose notice after that closes its own block
 MONITORING_ACTIVE = False
@@ -2550,7 +2555,7 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
         smtpObj.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, email_msg.as_string())
         smtpObj.quit()
         debug_print("SMTP delivery", outcome="OK", host=SMTP_HOST, attempt="1/1")
-        verbose_print(f"Email delivered to {RECEIVER_EMAIL}: {subject}")
+        verbose_delivery_print(f"Email delivered to {RECEIVER_EMAIL}: '{subject}'")
     except Exception as e:
         debug_print("SMTP delivery", outcome="failed", host=SMTP_HOST, attempt="1/1", error=f"{type(e).__name__}: {e}")
         print_recovery_error(e, "email")
@@ -2606,6 +2611,12 @@ def sanitize_webhook_text(value):
 def verbose_print(message):
     if VERBOSE_MODE:
         print(f"* {sanitize_error_text(message)}")
+
+
+# Prints one delivery confirmation in verbose mode unless DELIVERY_CONFIRMATIONS turns them off
+def verbose_delivery_print(message):
+    if DELIVERY_CONFIRMATIONS:
+        verbose_print(message)
 
 
 # Prints verbose-only notices as one block, so a standalone line is not left without the timestamp trailer
@@ -3673,7 +3684,7 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
             retryable = response.status_code == 429 or 500 <= response.status_code <= 599
             debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", status=response.status_code, retryable=retryable)
             if 200 <= response.status_code <= 299:
-                verbose_print(f"Webhook delivered through {webhook_provider_display_name(provider)}: {webhook_values['title']}")
+                verbose_delivery_print(f"Webhook delivered through {webhook_provider_display_name(provider)}: '{webhook_values['title']}'")
                 debug_print("Webhook delivery", channel=provider, outcome="OK", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 return 0
             last_error = response
