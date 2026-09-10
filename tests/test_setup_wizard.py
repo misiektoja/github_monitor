@@ -1270,9 +1270,22 @@ def test_setup_refuses_a_config_destination_switched_off(tmp_path):
     result = subprocess.run([sys.executable, str(PROJECT_ROOT / "github_monitor.py"), "--setup", "--config-file", "none"], cwd=tmp_path, capture_output=True, text=True, check=False)
 
     assert result.returncode == 1
-    assert "Setup cannot start: --setup requires a config destination. Replace '--config-file none' with a writable path." in result.stdout
+    assert "* Error: --setup has nowhere to write the configuration" in result.stdout
+    assert "To fix: Replace '--config-file none' with a writable path, or drop the flag to write github_monitor.conf in the current directory" in result.stdout
+    assert "Guide: https://misiektoja.github.io/github_monitor/configuration/#configuration-file" in result.stdout
     assert "usage:" not in result.stderr
     assert not (tmp_path / "none").exists()
+
+
+# Verifies a dotenv destination switched off is refused with the flag to replace and the secrets guide
+def test_setup_refuses_a_dotenv_destination_switched_off(tmp_path):
+    result = subprocess.run([sys.executable, str(PROJECT_ROOT / "github_monitor.py"), "--setup", "--env-file", "none"], cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "* Error: --setup has nowhere to write the private settings" in result.stdout
+    assert "To fix: Replace '--env-file none' with a writable path, or drop the flag to write .env in the current directory" in result.stdout
+    assert "Guide: https://misiektoja.github.io/github_monitor/configuration/#storing-secrets" in result.stdout
+    assert "usage:" not in result.stderr
 
 
 # Verifies the token outcome lines carry the same two-space indent the sibling monitors give them

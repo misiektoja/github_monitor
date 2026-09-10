@@ -27,6 +27,7 @@ CONFIG_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#configuration-file"
 INTERVALS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#check-intervals"
 AUTH_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#github-personal-access-token"
 GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
+SECRETS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#storing-secrets"
 SMTP_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#smtp-settings"
 WEBHOOK_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#webhook-settings"
 DEBUG_GUIDE_URL = f"{DOCUMENTATION_URL}/troubleshooting/#verbose-and-debug-output"
@@ -9985,10 +9986,10 @@ def main():
         if incompatible:
             parser.error("--setup can only be combined with --config-file, --env-file, --verbose or --debug")
         if isinstance(args.config_file, str) and args.config_file.casefold() == "none":
-            print("Setup cannot start: --setup requires a config destination. Replace '--config-file none' with a writable path.")
+            print_recovery_advice(make_recovery_advice("file.unwritable", "--setup has nowhere to write the configuration", f"Replace '--config-file none' with a writable path, or drop the flag to write {DEFAULT_CONFIG_FILENAME} in the current directory", False, "", CONFIG_GUIDE_URL))
             sys.exit(1)
         if isinstance(args.env_file, str) and args.env_file.casefold() == "none":
-            print("Setup cannot start: --setup requires a dotenv destination. Replace '--env-file none' with a writable path.")
+            print_recovery_advice(make_recovery_advice("file.unwritable", "--setup has nowhere to write the private settings", "Replace '--env-file none' with a writable path, or drop the flag to write .env in the current directory", False, "", SECRETS_GUIDE_URL))
             sys.exit(1)
         sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, show_banner=False))
 
