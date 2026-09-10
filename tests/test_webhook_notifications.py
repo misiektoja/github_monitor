@@ -294,6 +294,26 @@ def test_webhook_delivery_refuses_a_destination_that_stopped_validating(gm_modul
     webhook_post.assert_not_called()
 
 
+@pytest.mark.parametrize("flag, announcement", [("--send-test-email", "Sending test email notification"), ("--send-test-webhook", "Sending test webhook notification")])
+# Verifies a delivery test checks the settings before it announces an attempt it cannot make
+def test_a_delivery_test_checks_the_settings_before_it_announces(gm_module, monkeypatch, capsys, flag, announcement):
+    monkeypatch.setattr(gm_module, "check_internet", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gm_module, "clear_screen", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "not a host")
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "")
+    monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", flag, "--config-file", "none", "--env-file", "none"])
+
+    with pytest.raises(SystemExit) as exit_error:
+        gm_module.main()
+
+    output = capsys.readouterr().out
+    assert exit_error.value.code == 1
+    assert announcement not in output
+    assert "* Error: " in output
+    assert "To fix: " in output
+
+
 # Verifies both test commands carry the subject, title and body shared with the sibling monitors
 def test_the_test_messages_use_the_shared_wording(gm_module, monkeypatch):
     email = Mock(return_value=0)
@@ -302,6 +322,8 @@ def test_the_test_messages_use_the_shared_wording(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "clear_screen", lambda *args, **kwargs: None)
     monkeypatch.setattr(gm_module, "send_email", email)
     monkeypatch.setattr(gm_module, "send_webhook", delivery)
+    monkeypatch.setattr(gm_module, "validate_email_settings", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gm_module, "validate_webhook_url", lambda *args, **kwargs: True)
     monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
 
     for flag in ("--send-test-email", "--send-test-webhook"):

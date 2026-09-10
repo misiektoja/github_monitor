@@ -9889,6 +9889,11 @@ def main():
         sys.exit(1)
 
     if args.send_test_email:
+        # Checked before the attempt is announced, so a mail server that was never usable is not reported as a failed send
+        validation_error = validate_email_settings()
+        if validation_error is not None:
+            print_recovery_advice(email_settings_advice(validation_error))
+            sys.exit(1)
         print("* Sending test email notification ...\n")
         if send_email("github_monitor: test email", "This test email was sent by --send-test-email. Your SMTP settings work.", "", SMTP_SSL, smtp_timeout=5) == 0:
             print("* Email sent successfully !")
@@ -9897,6 +9902,9 @@ def main():
         sys.exit(0)
 
     if args.send_test_webhook:
+        if not validate_webhook_url():
+            print_webhook_error("WEBHOOK_URL must contain a complete HTTPS link")
+            sys.exit(1)
         print("* Sending test webhook notification ...\n")
         if send_webhook("github_monitor: test webhook", "This test notification was sent by --send-test-webhook. Your webhook settings work.", "event", force=True) == 0:
             print("* Webhook sent successfully !")
