@@ -398,6 +398,19 @@ def test_doctor_reports_invalid_runtime_configuration(gm_module, monkeypatch):
     assert all(name in failed["One or more numeric settings are invalid"] for name in ("GITHUB_CHECK_INTERVAL", "CHECK_INTERNET_TIMEOUT", "EVENTS_NUMBER", "NET_MAX_RETRIES"))
 
 
+# Verifies a quoted interval is reported as an unusable setting, since comparing it against the safe floor used to raise
+def test_an_interval_that_is_not_a_number_is_reported_rather_than_raised(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "GITHUB_CHECK_INTERVAL", "3600")
+    report = gm_module.DoctorReport(target_name="octocat")
+
+    gm_module.doctor_check_configuration(report, doctor_args(), Mock())
+    labels = [check.label for check in report.checks]
+
+    assert "One or more numeric settings are invalid" in labels
+    assert "Check intervals are short" not in labels
+
+
 # Verifies an invalid config becomes one row while later checks still run
 def test_doctor_keeps_checking_after_invalid_configuration_file(gm_module, monkeypatch, request):
     configure_healthy_doctor(gm_module, monkeypatch)

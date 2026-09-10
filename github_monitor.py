@@ -8185,7 +8185,7 @@ def doctor_check_configuration(report, args, parser):
         LOCAL_TIMEZONE = "UTC"
     else:
         report.add("Configuration", "PASS", timezone_label, f"Time zone: {LOCAL_TIMEZONE}")
-    if GITHUB_CHECK_INTERVAL < DOCTOR_MIN_SAFE_CHECK_INTERVAL:
+    if isinstance(GITHUB_CHECK_INTERVAL, (int, float)) and not isinstance(GITHUB_CHECK_INTERVAL, bool) and 0 < GITHUB_CHECK_INTERVAL < DOCTOR_MIN_SAFE_CHECK_INTERVAL:
         advice = make_recovery_advice("github.rate_limited", "Check intervals are short", recovery_fix_with_guide(f"Raise GITHUB_CHECK_INTERVAL to at least {DOCTOR_MIN_SAFE_CHECK_INTERVAL} seconds", INTERVALS_GUIDE_URL), True)
         report.add("Configuration", "WARN", advice.summary, f"{display_time(GITHUB_CHECK_INTERVAL)} between checks", advice)
     numeric_errors = runtime_configuration_errors()
