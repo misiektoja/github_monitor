@@ -189,6 +189,8 @@ github_monitor github_username -e
 
 An error alert goes out once the same failure has lasted **5 minutes**, so a short outage or one lost request reaches nobody, while a failure that cannot clear on its own, such as a rejected token, is alerted at once. Each kind of failure alerts once per channel. A channel that could not deliver is tried again on a later failing check, after **5 minutes** at first and then after twice the previous wait, up to an hour. A run that recovered alerts again when it fails later. The same rule governs the webhook error alert.
 
+Only data a check needs to detect changes counts as a failure. Optional lookups that add detail to an alert that still goes out, such as a push event's file list or the parent of a comment, are reported on screen and in `--verbose` without starting an outage or sending an error alert. When several checks fail together, the alert carries the one with the fix to apply and the number of other checks that also failed.
+
 You can combine all email notifications flags together if needed.
 
 Make sure you defined your SMTP settings first, as described in [SMTP Settings](configuration.md#smtp-settings).

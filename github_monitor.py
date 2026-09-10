@@ -2963,14 +2963,16 @@ def debug_swallowed_exception(operation, error):
 
 
 # Reports a tracked feature that cannot produce its alert, once per outage rather than on every check
-def verbose_degraded_feature(feature, alert, error=None):
+def verbose_degraded_feature(feature, alert, error=None, enrichment=False):
     global PENDING_NOTICE_BLOCK
     if error is not None:
         debug_swallowed_exception(feature, error)
     else:
         debug_print(feature, outcome="degraded", alert=alert)
     if MONITORING_ACTIVE:
-        if error is not None or feature not in MONITOR_CHECK_FAILURES:
+        # Enrichment adds detail to an alert that still goes out, so it is reported without opening an
+        # outage. Only data a check needs to detect changes decides whether that check failed
+        if not enrichment and (error is not None or feature not in MONITOR_CHECK_FAILURES):
             MONITOR_CHECK_FAILURES[feature] = error
         DEGRADED_FEATURES_SEEN.add(feature)
         # An outage that lasts is news once, so the repeats are left to debug until the feature works again
@@ -4044,7 +4046,7 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
     for attempt in range(WEBHOOK_MAX_ATTEMPTS):
         try:
             attempt_number = attempt + 1
-            debug_print("Webhook delivery", channel=provider, host=diagnostic_endpoint(WEBHOOK_URL, host_only=True), attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", timeout=f"{WEBHOOK_TIMEOUT_SECONDS}s")
+            debug_print("Webhook delivery", channel=provider, host=diagnostic_endpoint(destination, host_only=True), attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", timeout=f"{WEBHOOK_TIMEOUT_SECONDS}s")
             if provider == "ntfy":
                 response = post_webhook_request(destination=destination, data=ntfy_message.encode("utf-8"), params={"title": ntfy_title}, headers=request_headers)
             else:
@@ -5094,7 +5096,7 @@ def github_print_repos(user):
                     pr_count = repo.get_pulls(state='open').totalCount
                     issue_count = repo.open_issues_count - pr_count
                 except Exception as exc:
-                    verbose_degraded_feature(f"Repository counts for {repo.name}", "repository count details", exc)
+                    verbose_degraded_feature(f"Repository counts for {repo.name}", "repository count details", exc, enrichment=True)
                     pr_count = "?"
                     issue_count = "?"
 
@@ -5122,7 +5124,7 @@ def github_print_repos(user):
                 except GithubException as e:
                     # Inform about TOS-blocked (403) and legally blocked (451) repositories
                     if e.status in [403, 451]:
-                        verbose_degraded_feature(f"Repository details for {repo.name}", "complete repository output", e)
+                        verbose_degraded_feature(f"Repository details for {repo.name}", "complete repository output", e, enrichment=True)
                         print(f"\n* Repo '{repo.name}' is blocked: {sanitize_error_text(e)}")
                         print("─" * HORIZONTAL_LINE2)
                         continue
@@ -5301,7 +5303,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     if parent:
                         repo = parent
                 except Exception as exc:
-                    verbose_degraded_feature("Fork source repository metadata", "complete fork event details", exc)
+                    verbose_degraded_feature("Fork source repository metadata", "complete fork event details", exc, enrichment=True)
 
             repo_name = getattr(repo, "full_name", event.repo.name)
 
@@ -5392,7 +5394,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                 try:
                     file_count = sum(1 for _ in commit_details.files)
                 except Exception as exc:
-                    verbose_degraded_feature("Commit file list", "complete push event details", exc)
+                    verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
                     file_count = "N/A"
                 st += print_v(f" - Files changed:\t\t{file_count}")
                 if file_count:
@@ -5423,7 +5425,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             try:
                 compare = gh_call(lambda: repo.compare(before_sha, head_sha))()
             except Exception as e:
-                verbose_degraded_feature("Push comparison", "complete push event details", e)
+                verbose_degraded_feature("Push comparison", "complete push event details", e, enrichment=True)
                 compare = None
                 st += print_v(f"* Error using compare({before_sha[:12]}...{head_sha[:12]}): {sanitize_error_text(e)}")
 
@@ -5481,7 +5483,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                         try:
                             file_count = sum(1 for _ in commit_details.files)
                         except Exception as exc:
-                            verbose_degraded_feature("Commit file list", "complete push event details", exc)
+                            verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
                             file_count = "N/A"
                         st += print_v(f" - Files changed:\t\t{file_count}")
                         if file_count and file_count != "N/A":
@@ -5608,7 +5610,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                 count = sum(1 for _ in pr_obj.get_single_review_comments(event.payload["review"].get("id")))
                 st += print_v(f"Comments in this review:\t{count}")
             except Exception as exc:
-                verbose_degraded_feature("Pull request review comment count", "complete review event details", exc)
+                verbose_degraded_feature("Pull request review comment count", "complete review event details", exc, enrichment=True)
 
     if event.payload.get("issue"):
         st += print_v(f"\nIssue title:\t\t\t{event.payload['issue'].get('title')}")
@@ -5718,7 +5720,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
                     st += print_v(f"\nPrevious comment URL:\t\t{parent.html_url}")
                 except Exception as e:
-                    verbose_degraded_feature("Parent pull request comment", "complete comment event details", e)
+                    verbose_degraded_feature("Parent pull request comment", "complete comment event details", e, enrichment=True)
                     st += print_v(f"\n* Could not fetch parent comment (ID {parent_id}): {sanitize_error_text(e)}")
             else:
                 st += print_v("\n(This is the first comment in its thread)")
@@ -7151,19 +7153,15 @@ def get_daily_contributions_count(username: str, day: dt.date, token: str) -> in
 
 
 # Checks count for today and decides whether to notify based on stored state.
-def check_daily_contribs(username: str, token: str, state: dict, min_delta: int = 1, fail_threshold: int = 3) -> tuple[bool, int, bool]:
+def check_daily_contribs(username: str, token: str, state: dict, min_delta: int = 1) -> tuple[bool, int]:
     day = today_local()
 
     try:
         curr = get_daily_contributions_count(username, day, token=token)
-        state["consecutive_failures"] = 0
-        state["last_error"] = None
+    # The check itself carries the failure to the error alerts, so the previous count is kept untouched
     except Exception as e:
-        state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-        state["last_error"] = sanitize_error_text(f"{type(e).__name__}: {e}")
         verbose_degraded_feature("Daily contribution count", "daily contribution change alerts", e)
-        error_notify = state["consecutive_failures"] >= fail_threshold
-        return False, state.get("count", 0), error_notify
+        return False, state.get("count", 0)
 
     prev_day = state.get("day")
     prev_cnt = state.get("count")
@@ -7173,17 +7171,17 @@ def check_daily_contribs(username: str, token: str, state: dict, min_delta: int 
         state["day"] = day
         state["count"] = curr
         state["prev_count"] = curr
-        return False, curr, False  # no notify on rollover
+        return False, curr  # no notify on rollover
 
     # Same day -> notify if change >= threshold
     if prev_cnt is not None and abs(curr - prev_cnt) >= min_delta:
         state["prev_count"] = prev_cnt
         state["count"] = curr
-        return True, curr, False
+        return True, curr
 
     # No change
     state["count"] = curr
-    return False, curr, False
+    return False, curr
 
 
 # Returns whether a nullable profile field was fetched successfully and changed
@@ -7447,7 +7445,7 @@ def github_monitor_user(user, csv_file_name):
             try:
                 github_print_event(events[0], g, True)
             except Exception as e:
-                verbose_degraded_feature("Initial event details", "complete event alerts", e)
+                verbose_degraded_feature("Initial event details", "complete event alerts", e, enrichment=True)
                 print()
                 print_degraded_error("The last event details could not be read", e, label="Warning")
 
@@ -7578,7 +7576,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed contributions in a day
         if TRACK_CONTRIB_CHANGES:
-            contrib_notify, contrib_curr, _ = check_daily_contribs(user, GITHUB_TOKEN, contrib_state, min_delta=1, fail_threshold=3)
+            contrib_notify, contrib_curr = check_daily_contribs(user, GITHUB_TOKEN, contrib_state, min_delta=1)
             if contrib_notify:
                 contrib_old = contrib_state.get("prev_count")
                 print(f"* Daily contributions changed for user {user} on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}!\n")
@@ -8093,7 +8091,7 @@ def github_monitor_user(user, csv_file_name):
                                     if hasattr(event, 'payload'):
                                         event_payload = event.payload
                                 except Exception as exc:
-                                    verbose_degraded_feature("Event payload", "complete event notification details", exc)
+                                    verbose_degraded_feature("Event payload", "complete event notification details", exc, enrichment=True)
                                 event_text_html = event_text_to_html(event_text, event.type, event_payload)
                                 m_body_html = (
                                     f"<html><head></head><body>"
@@ -8117,7 +8115,11 @@ def github_monitor_user(user, csv_file_name):
         if MONITOR_CHECK_FAILURES:
             failures = [(feature, classify_recovery_error(error) if error is not None else make_recovery_advice("github.api_error", "The monitoring check did not return usable data", recovery_fix_with_guide("Check connectivity and resource access, then let the next check retry", DEBUG_GUIDE_URL), True)) for feature, error in MONITOR_CHECK_FAILURES.items()]
             feature, advice = next(((feature, advice) for feature, advice in failures if not advice.retryable), failures[0])
-            advice = make_recovery_advice(advice.code, f"{feature}: {advice.summary}", advice.fix, advice.retryable, advice.detail)
+            # One failure carries the fix, but an alert that hides the rest understates the outage. The
+            # count rather than the names keeps the text stable while a per-repository failure set changes
+            others = len(failures) - 1
+            summary = f"{feature}: {advice.summary}" + (f" ({others} other check also failed)" if others == 1 else f" ({others} other checks also failed)" if others else "")
+            advice = make_recovery_advice(advice.code, summary, advice.fix, advice.retryable, advice.detail)
             report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage)
         else:
             error_alert.reset()
@@ -8408,7 +8410,7 @@ def runtime_boolean_errors():
 # Returns a recovery message for an unusable liveness interval
 def runtime_liveness_error():
     value = LIVENESS_CHECK_INTERVAL
-    if not finite_number(value) or value < 0 or (isinstance(value, float) and not math.isfinite(value)):
+    if not finite_number(value) or value < 0:
         return f"LIVENESS_CHECK_INTERVAL must be a finite number zero or greater, not {value!r}"
     return None
 
@@ -8444,8 +8446,9 @@ DISCARDED_SETTING_ERRORS = []
 
 # True when the selected command exists to correct the configuration, so a malformed setting is reported
 # there instead of stopping the one run that could repair it
-def command_reports_configuration(arguments=()):
-    return any(str(argument) in ("--doctor", "--setup") or str(argument).startswith("--set-") for argument in arguments)
+def command_reports_configuration(args=None):
+    # Read from the parsed namespace rather than the raw words, since argparse also accepts abbreviations
+    return any(getattr(args, name, False) for name in ("doctor", "setup", "set_github_token", "set_smtp_password", "set_webhook_url"))
 
 
 # Validates effective path settings before startup expands or opens them
@@ -8464,7 +8467,7 @@ def prepare_configured_paths(args):
     advice = make_recovery_advice("config.invalid", "Invalid settings: " + ". ".join(errors), recovery_fix_with_guide("Correct the named settings in the configuration file or command line", CONFIG_GUIDE_URL), False)
     # A monitoring run cannot continue on a value this broken, but doctor, the setup wizard and the secret
     # commands are how it gets corrected, so they fall back to the built-in values and report the setting
-    if not command_reports_configuration(sys.argv[1:]):
+    if not command_reports_configuration(args):
         print_recovery_advice(advice)
         raise SystemExit(1)
     DISCARDED_SETTING_ERRORS[:] = errors
@@ -8472,7 +8475,8 @@ def prepare_configured_paths(args):
     for name, built_in in BUILT_IN_SHAPE_SETTINGS.items():
         if name in settings and configuration_shape_errors({name: settings[name]}):
             globals()[name] = built_in
-    if "--doctor" not in sys.argv:
+    # Doctor lists the same settings as report rows, so a warning above it would only say them twice
+    if not getattr(args, "doctor", False):
         print_recovery_advice(advice, label="Warning")
         print()
 
@@ -9969,7 +9973,6 @@ def render_wizard_dotenv(state):
 
 # Accepts finite numeric values without overflowing on unusually large integers
 def finite_number(value):
-    import math
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
     try:

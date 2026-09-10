@@ -4,10 +4,12 @@ import argparse
 import copy
 import errno
 import os
+from pathlib import Path
 import sys
 
 import pytest
 import requests
+from github import GithubException
 from requests.adapters import HTTPAdapter
 
 import github_monitor as monitor
@@ -188,3 +190,48 @@ def test_other_values_can_reference_a_literal_secret(tmp_path, monkeypatch):
     monitor.update_dotenv_file(path, {"SMTP_PASSWORD": secret})
     content = path.read_text(encoding="utf-8") + "BOUNDARY_COPY=\"${SMTP_PASSWORD}\"\n"
     assert monitor.resolve_dotenv_values(content, override=True)["BOUNDARY_COPY"] == secret
+
+
+# Doctor is also reachable by an argparse abbreviation, so the gate reads the parsed namespace rather than
+# the words that were typed. Matching the literal flag sent an abbreviated run to the stop it exists to avoid
+def test_an_abbreviated_doctor_flag_still_reports_an_invalid_path(tmp_path, monkeypatch, capsys):
+    run_with_invalid_path(tmp_path, monkeypatch, "CSV_FILE", "--doct")
+    output = capsys.readouterr().out
+    assert "CSV_FILE must be a path string" in output
+    assert "Error: Invalid settings" not in output
+    assert output.count("[PASS]") > 1
+
+
+# Pins the namespace contract the gate depends on, including a namespace carrying none of those flags
+def test_configuration_commands_are_read_from_the_parsed_namespace():
+    assert monitor.command_reports_configuration(argparse.Namespace(doctor=True))
+    assert monitor.command_reports_configuration(argparse.Namespace(setup=True))
+    assert not monitor.command_reports_configuration(argparse.Namespace(doctor=False, setup=False))
+    assert not monitor.command_reports_configuration(argparse.Namespace())
+
+
+# Enrichment adds detail to an alert that still goes out. Treating it as a failed check opened an outage,
+# silenced the healthy banner and mailed an error for a push event that reported everything but its file list
+def test_enrichment_failures_do_not_open_a_monitoring_outage(monkeypatch):
+    monkeypatch.setattr(monitor, "MONITORING_ACTIVE", True)
+    monitor.reset_degraded_features()
+    refused = GithubException(403, {"message": "Resource not accessible by personal access token"}, {})
+
+    monitor.verbose_degraded_feature("Commit file list", "complete push event details", refused, enrichment=True)
+    assert monitor.MONITOR_CHECK_FAILURES == {}
+    # Still reported as degraded, so the recovery notice and the verbose line are unchanged
+    assert "Commit file list" in monitor.DEGRADED_FEATURES
+
+    monitor.verbose_degraded_feature("Followings", "following change alerts", refused)
+    assert set(monitor.MONITOR_CHECK_FAILURES) == {"Followings"}
+    monitor.reset_degraded_features()
+
+
+# Every enrichment call site the monitoring loop reaches has to carry the marker, or it decides a check failed
+def test_event_detail_lookups_are_marked_as_enrichment():
+    source = Path(monitor.__file__).read_text(encoding="utf-8")
+    for alert in ("complete push event details", "complete fork event details", "complete review event details",
+                  "complete comment event details", "complete event notification details"):
+        for line in source.splitlines():
+            if alert in line and "verbose_degraded_feature" in line:
+                assert "enrichment=True" in line, line.strip()
