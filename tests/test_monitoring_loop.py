@@ -69,7 +69,8 @@ class FakeGithub:
         outcome = self.outcomes.pop(0) if len(self.outcomes) > 1 else self.outcomes[0]
         if isinstance(outcome, Exception):
             raise outcome
-        return FakeUser(login)
+        # A scripted user lets a test change what one check sees, which is how a reported change is staged
+        return outcome if isinstance(outcome, FakeUser) else FakeUser(login)
 
 
 # Records every alert the loop hands to the delivery helper and answers with the outcome each call is given
@@ -256,3 +257,23 @@ def test_the_healthy_banner_reaches_a_plain_run_on_its_own_clock(gm_module, monk
     banners = [number for number, line in enumerate(lines) if line == "* Monitoring healthy for watched. No tracked change since the last check"]
     assert len(banners) == expected
     assert all(lines[number + 1].startswith("Liveness check, timestamp:") for number in banners)
+
+
+# Stands in for one account the watched user follows
+class FakeFollow:
+    def __init__(self, login):
+        self.login = login
+
+
+# The banner used to be timed from the last banner, so a check that reported a change was followed by a line
+# saying nothing had changed since the last check
+def test_a_check_that_reported_a_change_does_not_claim_it_was_quiet(gm_module, monkeypatch, tmp_path, capsys):
+    followed = FakeUser("watched")
+    followed.following = 1
+    followed.get_following = lambda: FakePage([FakeFollow("someone")])
+
+    error_alerts_for(gm_module, monkeypatch, tmp_path, [None, followed], [(True, True)], 3, check_interval=900, liveness_seconds=900)
+
+    output = capsys.readouterr().out
+    assert "Followings" in output, "the check under test reported no change"
+    assert "No tracked change since the last check" not in output

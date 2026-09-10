@@ -848,8 +848,18 @@ def test_the_csv_answer_gains_a_csv_extension_when_it_has_none(gm_module, reques
     state = fresh_wizard_state(gm_module, request)
 
     for typed, expected in (("activity", "activity.csv"), ("activity.csv", "activity.csv"), ("activity.txt", "activity.txt")):
-        gm_module.wizard_collect_destinations(state, scripted_reader(["y", typed]), io.StringIO())
+        gm_module.wizard_collect_destinations(state, scripted_reader(["y", "y", typed]), io.StringIO())
         assert state.values["CSV_FILE"] == expected
+
+
+# Verifies declining CSV output clears a saved path, which the path prompt alone could never do
+def test_declining_csv_output_clears_a_saved_path(gm_module, request):
+    state = fresh_wizard_state(gm_module, request)
+    state.values["CSV_FILE"] = "saved.csv"
+
+    gm_module.wizard_collect_destinations(state, scripted_reader(["y", "n"]), io.StringIO())
+
+    assert state.values["CSV_FILE"] == ""
 
 
 # Verifies a declined email section clears the mail server, so the written config cannot contradict the summary
@@ -1518,3 +1528,20 @@ def test_a_second_backup_in_the_same_second_keeps_the_first(tmp_path, gm_module)
 # Verifies a destination that is not there yet earns no backup, since there is nothing to copy
 def test_a_missing_destination_earns_no_backup(tmp_path, gm_module):
     assert gm_module.create_timestamped_backup(tmp_path / "absent.conf") is None
+
+
+# Verifies an explicit colour theme survives a config rebuild, since the template ships the setting commented out
+def test_a_rebuilt_config_keeps_an_explicit_color_theme(gm_module):
+    values = dict(gm_module._config_template_defaults())
+    values["COLOR_THEME"] = {"header": "bright_red"}
+
+    rendered = gm_module.generate_config_with_current_values(values)
+
+    assert gm_module.parse_config_content(rendered, "<generated>")["COLOR_THEME"] == {"header": "bright_red"}
+
+
+# Verifies the shipped default stays commented out, so a rebuild does not pin a theme the user never chose
+def test_a_rebuilt_config_leaves_the_default_theme_commented(gm_module):
+    rendered = gm_module.generate_config_with_current_values(dict(gm_module._config_template_defaults()))
+
+    assert "\nCOLOR_THEME = {" not in rendered

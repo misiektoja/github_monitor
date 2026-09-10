@@ -498,6 +498,8 @@ ASCII_LOG_SEPARATORS = "Auto"
 TRUNCATE_CHARS = 0
 HORIZONTAL_LINE1 = 0
 HORIZONTAL_LINE2 = 0
+# Counts the reports printed so far, so a check can tell whether it said anything before the banner claims it was quiet
+REPORTS_PRINTED = 0
 CLEAR_SCREEN = False
 COLORED_OUTPUT = False
 COLOR_THEME: dict = {}
@@ -3025,6 +3027,15 @@ def config_file_target(config_path):
     return str(namespace.get("TARGET_GITHUB_USERNAME") or "")
 
 
+# Returns the config a printed command should name, so a run started with discovery off cannot point the reader
+# at a file it deliberately ignored
+def resolved_command_config(config_path=None):
+    # A path the caller was given is what the command names, so a stale discovery flag cannot override it
+    if config_path is not None:
+        return "none" if str(config_path).casefold() == "none" else config_path
+    return "none" if CONFIG_DISCOVERY_DISABLED else find_config_file()
+
+
 # Returns the targets for the printed doctor and monitoring commands, dropping one the effective config already supplies
 def command_targets(explicit_target=None, saved_target=None, placeholder="<github_target>"):
     saved = str(saved_target or "")
@@ -3939,13 +3950,16 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
 def send_notification_channels(notification_type: str, subject: str, body: str, body_html: str = "", email_enabled: bool = False, webhook_enabled: Optional[bool] = None) -> tuple[bool, bool]:
     email_attempted = bool(email_enabled)
     webhook_attempted = webhook_event_enabled(notification_type) if webhook_enabled is None else bool(webhook_enabled)
+    email_delivered = False
+    webhook_delivered = False
     if email_attempted:
         print(f"Sending email notification to {RECEIVER_EMAIL}")
-        send_email(subject, body, body_html, SMTP_SSL)
+        email_delivered = send_email(subject, body, body_html, SMTP_SSL) == 0
     if webhook_attempted:
         print(f"Sending webhook notification via {webhook_provider_display_name()}")
-        send_webhook(subject, body, notification_type, force=True)
-    return email_attempted, webhook_attempted
+        webhook_delivered = send_webhook(subject, body, notification_type, force=True) == 0
+    # Delivery, not the attempt, so a channel that failed is retried while one that succeeded is not resent
+    return email_delivered, webhook_delivered
 
 
 # Reports a step that failed and left its output or alerts degraded, naming the step in front of the classified failure
@@ -4024,8 +4038,9 @@ def get_cur_ts(ts_str=""):
 
 # Prints the current date/time in human readable format with separator; eg. Sun 21 Apr 2024, 15:08:45
 def print_cur_ts(ts_str=""):
-    global PENDING_NOTICE_BLOCK
+    global PENDING_NOTICE_BLOCK, REPORTS_PRINTED
     PENDING_NOTICE_BLOCK = False
+    REPORTS_PRINTED += 1
     print(get_cur_ts(str(ts_str)))
     print(f"{'─' * HORIZONTAL_LINE1}\n{'─' * HORIZONTAL_LINE1}")
 
@@ -6040,7 +6055,7 @@ def early_config_file_argument(arguments=None):
 
 # Applies terminal settings needed before argument parsing and leaves failures for normal config loading
 def apply_early_output_config():
-    global CLEAR_SCREEN, COLORED_OUTPUT
+    global CLEAR_SCREEN, COLORED_OUTPUT, COLOR_THEME
     try:
         cli_path = early_config_file_argument()
         if cli_path is not None and cli_path.casefold() == "none":
@@ -6056,6 +6071,10 @@ def apply_early_output_config():
         CLEAR_SCREEN = values["CLEAR_SCREEN"]
     if isinstance(values.get("COLORED_OUTPUT"), bool):
         COLORED_OUTPUT = values["COLORED_OUTPUT"]
+    # --help is printed and exited from inside argparse, long before the config load, so the help_* overrides
+    # have to be here or they could never colour the one screen they name. Unusable styles are dropped downstream
+    if isinstance(values.get("COLOR_THEME"), dict):
+        COLOR_THEME = values["COLOR_THEME"]
 
 
 # Settings an older version wrote that this version no longer defines, ignored instead of rejected
@@ -6476,15 +6495,15 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
         debug_print("Private settings file update", path=destination, key="GITHUB_TOKEN", outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError(f"Could not save GITHUB_TOKEN in '{destination}'. Check the path and file permissions") from None
     paths = []
-    if config_path:
-        paths.extend(("--config-file", str(config_path)))
+    if config_path or CONFIG_DISCOVERY_DISABLED:
+        paths.extend(("--config-file", str(resolved_command_config(config_path))))
     paths.extend(("--env-file", str(destination)))
     if api_url is not None:
         paths.extend(("--github-url", str(api_url)))
     print(f"* GitHub token validation succeeded for user: {login}")
     print(f"* Updated private settings file: {destination}")
     print()
-    doctor_target, monitor_target = command_targets(None, config_file_target(config_path or find_config_file()))
+    doctor_target, monitor_target = command_targets(None, config_file_target(resolved_command_config(config_path)))
     _wizard_print_command(sys.stdout, "Check setup again:", render_command(["--doctor"] + ([doctor_target] if doctor_target else []) + paths, install_context=install_context))
     _wizard_print_command(sys.stdout, "After Doctor passes, start monitoring:", render_command(([monitor_target] if monitor_target else []) + paths, install_context=install_context))
     return str(destination)
@@ -6520,8 +6539,8 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
         raise ValueError("That does not look like a complete HTTPS webhook URL and the dotenv file was not changed")
     update_dotenv_file(destination, {"WEBHOOK_URL": webhook_url})
     paths = []
-    if config_path:
-        paths.extend(("--config-file", str(config_path)))
+    if config_path or CONFIG_DISCOVERY_DISABLED:
+        paths.extend(("--config-file", str(resolved_command_config(config_path))))
     paths.extend(("--env-file", str(destination)))
     print("* Webhook URL looks valid")
     print(f"* Updated private settings file: {destination}")
@@ -6615,8 +6634,8 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
         raise RecoveryError(classify_recovery_error(exc, context="email", detail=sanitize_error_text(exc, (smtp_password,)), install_context=install_context), exc) from None
     update_dotenv_file(destination, {"SMTP_PASSWORD": smtp_password})
     paths = []
-    if config_path:
-        paths.extend(("--config-file", str(config_path)))
+    if config_path or CONFIG_DISCOVERY_DISABLED:
+        paths.extend(("--config-file", str(resolved_command_config(config_path))))
     paths.extend(("--env-file", str(destination)))
     print(f"* The mail server accepted the password for {signed_in_user}")
     print(f"* Updated private settings file: {destination}")
@@ -7178,6 +7197,7 @@ def github_monitor_user(user, csv_file_name):
     # Primary loop
     while True:
         check_number += 1
+        reports_before_check = REPORTS_PRINTED
         check_started_at = debug_monitor_check_start(check_number, user)
 
         try:
@@ -7197,7 +7217,6 @@ def github_monitor_user(user, csv_file_name):
             outage_lasted = outage.recovered()
             if outage_lasted is not None:
                 print_outage_recovery(user, outage_lasted)
-                alive_since = int(time.time())
 
         except (GithubException, Exception) as e:
             verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
@@ -7849,7 +7868,10 @@ def github_monitor_user(user, csv_file_name):
         report_recovered_features()
         close_pending_notice_block()
 
-        if LIVENESS_REMINDER_SECONDS and int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS:
+        # The banner speaks for a quiet check, so anything this one reported restarts the clock instead of being contradicted by it
+        if REPORTS_PRINTED != reports_before_check:
+            alive_since = int(time.time())
+        elif LIVENESS_REMINDER_SECONDS and int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS:
             print_liveness_banner(f"Monitoring healthy for {user}. No tracked change since the last check")
             alive_since = int(time.time())
 
@@ -9363,7 +9385,11 @@ def wizard_collect_destinations(state, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
     state.values["DISABLE_LOGGING"] = not wizard_ask_yes_no("Write the normal per-target log file?", not bool(state.values["DISABLE_LOGGING"]), input_func, destination)
     csv_default = str(state.values["CSV_FILE"] or "")
-    state.values["CSV_FILE"] = wizard_normalize_csv_path(wizard_ask_text("Optional CSV output path (blank disables it)", csv_default, input_func=input_func, stream=destination))
+    # Asked as its own question, since Enter on the path prompt takes the shown default and so could never clear a saved one
+    if wizard_ask_yes_no("Write a CSV file of the changes?", bool(csv_default), input_func, destination):
+        state.values["CSV_FILE"] = wizard_normalize_csv_path(wizard_ask_text("CSV output path", csv_default, input_func=input_func, stream=destination, required=True))
+    else:
+        state.values["CSV_FILE"] = ""
     state.values["DOTENV_FILE"] = str(state.dotenv_path)
 
 
@@ -9512,6 +9538,18 @@ def wizard_review_setup(state, input_func=input, getpass_func=None, stream=None,
         destination.write(colorize("info", "  Setup answers retained.") + "\n")
 
 
+# Renders an explicit assignment for a setting the template ships commented out, so overrides the user wrote
+# survive a rewrite instead of being replaced by the commented default
+def _rendered_commented_setting(variable, values):
+    value = values.get(variable)
+    if not isinstance(value, dict) or not value:
+        return []
+    lines = ["", f"{variable} = {{"]
+    lines.extend(f"    {repr(str(name))}: {repr(str(setting))}," for name, setting in value.items())
+    lines.append("}")
+    return lines
+
+
 # Renders one configuration file from the built-in template with the chosen values substituted in
 def generate_config_with_current_values(config_values):
     tree = ast.parse(CONFIG_BLOCK, "<built-in-config>", "exec")
@@ -9532,6 +9570,8 @@ def generate_config_with_current_values(config_values):
     lines = CONFIG_BLOCK.strip("\n").split("\n")
     # The template keeps its own leading blank line, so template line numbers are one ahead of this list
     offset = 1 if CONFIG_BLOCK.startswith("\n") else 0
+    commented_pattern = re.compile(r"^#\s*([A-Z][A-Z0-9_]*)\s*=\s*\{$")
+    commented_block = ""
     skip_until = 0
     output = []
     for number, line in enumerate(lines, 1):
@@ -9541,6 +9581,13 @@ def generate_config_with_current_values(config_values):
         replaced = next((name for name, (start, _end, _value) in replacements.items() if start == template_line), None)
         if replaced is None:
             output.append(line)
+            stripped = line.strip()
+            commented_match = commented_pattern.match(stripped)
+            if commented_match and commented_match.group(1) in COMMENTED_CONFIG_SETTINGS:
+                commented_block = commented_match.group(1)
+            elif commented_block and stripped == "# }":
+                output.extend(_rendered_commented_setting(commented_block, config_values))
+                commented_block = ""
             continue
         start, end, rendered = replacements[replaced]
         output.append(f"{replaced} = {rendered}")

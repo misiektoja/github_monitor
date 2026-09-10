@@ -270,3 +270,27 @@ def test_a_missing_username_is_reported_before_the_token():
     assert result.returncode == 1
     assert "* Error: No GitHub username was provided" in output
     assert "No usable GitHub token is configured" not in output
+
+
+# Verifies a run started with discovery off names the sentinel rather than a config file it deliberately ignored
+def test_a_printed_command_keeps_discovery_off(gm_module, monkeypatch, tmp_path):
+    (tmp_path / "github_monitor.conf").write_text("DISABLE_LOGGING = True\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gm_module, "CONFIG_DISCOVERY_DISABLED", True)
+    monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", None)
+
+    assert gm_module.find_config_file() is not None
+    assert gm_module.resolved_command_config(None) == "none"
+    assert gm_module.resolved_command_config("none") == "none"
+
+
+# Verifies discovery left on still names the file a printed command should carry
+def test_a_printed_command_names_the_discovered_config(gm_module, monkeypatch, tmp_path):
+    config_path = tmp_path / "github_monitor.conf"
+    config_path.write_text("DISABLE_LOGGING = True\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gm_module, "CONFIG_DISCOVERY_DISABLED", False)
+    monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", None)
+
+    assert str(gm_module.resolved_command_config(None)) == str(config_path)
+    assert gm_module.resolved_command_config("/given/path.conf") == "/given/path.conf"
