@@ -205,7 +205,8 @@ def test_an_unrenderable_discord_template_is_reported_not_raised(delivery, monke
     monkeypatch.setattr(monitor, "WEBHOOK_URL", "https://discord.com/api/webhooks/123456789012345678/private")
     monkeypatch.setattr(monitor, "WEBHOOK_TEMPLATE", template)
     error = monitor.validate_webhook_customization("discord")
-    assert error is None or error == "WEBHOOK_TEMPLATE must be a dictionary or a JSON object string"
+    # The advice has to name the placeholder that failed, since a dictionary template is already a dictionary
+    assert error is None or "WEBHOOK_TEMPLATE cannot render" in error or error == "WEBHOOK_TEMPLATE must be a dictionary or a JSON object string"
     assert monitor.send_webhook("Activity", "Something happened", force=True) in (0, 1)
     assert "Traceback" not in capsys.readouterr().out
 
