@@ -240,6 +240,15 @@ The final fallback is storing secrets in the configuration file or source code.
 
 Sending a `SIGHUP` signal reloads `GITHUB_TOKEN`, `SMTP_PASSWORD`, `WEBHOOK_URL` and `NTFY_ACCESS_TOKEN` from the active dotenv file without restarting the tool.
 
+A forgotten `export` can shadow the dotenv file invisibly, so `--debug` names every secret and the source it resolved from, never the value:
+
+```text
+[DEBUG 12:00:00] Secret resolution: name=GITHUB_TOKEN, source=environment, value=set
+[DEBUG 12:00:00] Secret resolution: name=SMTP_PASSWORD, source=dotenv file, value=set
+```
+
+A secret still holding its `your_...` placeholder counts as unset and is left out, and a run with no secret anywhere says so on one line.
+
 ## TLS Verification
 
 The tool verifies the TLS certificate of every server it contacts: the GitHub API, the GitHub web pages it reads, the connectivity check endpoint, the mail server that delivers email alerts and, when enabled, the webhook service.
