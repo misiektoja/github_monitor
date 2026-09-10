@@ -2511,7 +2511,7 @@ def smtp_connect_and_login(use_ssl, smtp_timeout=15):
 
 # Returns the advice for an SMTP setting or message field that makes a delivery impossible
 def email_settings_advice(validation_error, install_context=None):
-    return make_recovery_advice("smtp.invalid", f"The SMTP settings are incorrect: {validation_error}", f"Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL then run: {render_install_command(['--send-test-email'], install_context)}", False, "", SMTP_GUIDE_URL)
+    return make_recovery_advice("smtp.invalid", f"The SMTP settings are incorrect: {validation_error}", f"Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL then run: {render_command(['--send-test-email'], install_context=install_context)}", False, "", SMTP_GUIDE_URL)
 
 
 # Sends email notification
@@ -2827,16 +2827,17 @@ def command_targets(explicit_target=None, saved_target=None, placeholder="<githu
 
 
 # Renders one install-aware command with platform quoting, carrying the paths this run was given
-def render_install_command(arguments, install_context=None, exact=False, include_paths=True):
+def render_command(arguments=None, include_paths=True, *, install_context=None, exact=False):
     context = detect_install_context() if install_context is None else install_context
     prefix = context.command_prefix
     if not exact:
         executable = "python" if context.operating_system.casefold() == "windows" else "python3"
         path_class = PureWindowsPath if context.operating_system.casefold() == "windows" else Path
         prefix = (executable, path_class(context.command_prefix[-1]).name) if context.install_method == "manual" else ("github_monitor",)
-    parts = [*prefix, *(str(argument) for argument in arguments)]
+    selected = [str(argument) for argument in (arguments or ())]
+    parts = [*prefix, *selected]
     if include_paths:
-        parts.extend(active_path_arguments(arguments))
+        parts.extend(active_path_arguments(selected))
     windows = context.operating_system.casefold() == "windows"
     return " ".join(quote_command_argument(part, windows) for part in parts)
 
@@ -3051,10 +3052,10 @@ def classify_recovery_error(error, context="runtime", detail="", install_context
     selected_context = str(context or "unknown").casefold()
     # The caller knows which step failed, the exception only knows how, so its own text wins when it has one
     detail = str(detail) if detail else f"{type(error).__name__}: {error}"
-    token_command = render_install_command(["--set-github-token"], install_context)
-    webhook_command = render_install_command(["--set-webhook-url"], install_context)
-    config_command = render_install_command(["--generate-config", "github_monitor.conf"], install_context, include_paths=False)
-    debug_command = render_install_command(["--debug"], install_context)
+    token_command = render_command(["--set-github-token"], install_context=install_context)
+    webhook_command = render_command(["--set-webhook-url"], install_context=install_context)
+    config_command = render_command(["--generate-config", "github_monitor.conf"], install_context=install_context, include_paths=False)
+    debug_command = render_command(["--debug"], install_context=install_context)
     # Checked ahead of every context, since a local descriptor limit is not a failure of whatever call hit it
     if error is not None and is_too_many_open_files(error):
         return make_recovery_advice("resource.exhausted", "This process ran out of file descriptors, which is a local limit and not a GitHub problem", "Raise the file descriptor limit, for example with 'ulimit -n 4096', or set LimitNOFILE= if you run under systemd, then restart the tool", False, detail, DEBUG_GUIDE_URL)
@@ -3227,7 +3228,7 @@ def render_help_examples(groups, guide_url):
 
 # Returns the --help epilog, listing the commands worth knowing rather than every command there is
 def help_examples():
-    prefix = render_install_command([], include_paths=False)
+    prefix = render_command([], include_paths=False)
     groups = (
         ("Getting started", (
             ("Guided setup, recommended for the first run", f"{prefix} --setup"),
@@ -3557,7 +3558,7 @@ def webhook_failure_advice(message: Any, source: Any = None) -> RecoveryAdvice:
     origin = message if source is None else source
     summary = sanitize_webhook_text(message)
     lowered = summary.casefold()
-    webhook_command = render_install_command(["--send-test-webhook"])
+    webhook_command = render_command(["--send-test-webhook"])
     detail = webhook_failure_detail(origin) or summary
     status = webhook_failure_status(origin)
     if status == 429 or "rate limit" in lowered:
@@ -5887,7 +5888,7 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
     if error_out is not None:
         error_out.append(detail)
     if report_errors:
-        config_command = render_install_command(["--generate-config", "github_monitor.conf"], include_paths=False)
+        config_command = render_command(["--generate-config", "github_monitor.conf"], include_paths=False)
         advice = make_recovery_advice("config.invalid", detail, f"Keep only documented SETTING = value lines with plain literal values or regenerate with: {config_command}", False, detail, CONFIG_GUIDE_URL)
         print_recovery_advice(advice)
     return False
@@ -6158,8 +6159,8 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     print(f"* Updated private settings file: {destination}")
     print()
     doctor_target, monitor_target = command_targets(None, config_file_target(config_path or find_config_file()))
-    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor"] + ([doctor_target] if doctor_target else []) + paths, install_context))
-    _wizard_print_command(sys.stdout, "After Doctor passes, start monitoring:", render_install_command(([monitor_target] if monitor_target else []) + paths, install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_command(["--doctor"] + ([doctor_target] if doctor_target else []) + paths, install_context=install_context))
+    _wizard_print_command(sys.stdout, "After Doctor passes, start monitoring:", render_command(([monitor_target] if monitor_target else []) + paths, install_context=install_context))
     return str(destination)
 
 
@@ -6199,8 +6200,8 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
     print("* Webhook URL looks valid")
     print(f"* Updated private settings file: {destination}")
     print()
-    _wizard_print_command(sys.stdout, "Send a test webhook:", render_install_command(["--send-test-webhook"] + paths, install_context))
-    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor"] + paths, install_context))
+    _wizard_print_command(sys.stdout, "Send a test webhook:", render_command(["--send-test-webhook"] + paths, install_context=install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_command(["--doctor"] + paths, install_context=install_context))
     return str(destination)
 
 
@@ -6287,8 +6288,8 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
     print(f"* The mail server accepted the password for {signed_in_user}")
     print(f"* Updated private settings file: {destination}")
     print()
-    _wizard_print_command(sys.stdout, "Send a test email:", render_install_command(["--send-test-email"] + paths, install_context))
-    _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor"] + paths, install_context))
+    _wizard_print_command(sys.stdout, "Send a test email:", render_command(["--send-test-email"] + paths, install_context=install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_command(["--doctor"] + paths, install_context=install_context))
     return str(destination)
 
 
@@ -7880,7 +7881,7 @@ def doctor_check_configuration(report, args, parser):
 def doctor_check_authentication(report, request_get=None):
     report.github_token = str(GITHUB_TOKEN or "")
     if not report.github_token or report.github_token == "your_github_classic_personal_access_token":
-        token_command = render_install_command(["--set-github-token"])
+        token_command = render_command(["--set-github-token"])
         report.add("Authentication", "FAIL", "GitHub token is missing", "No usable GITHUB_TOKEN was resolved", f"Create a token then run: {token_command}", AUTH_GUIDE_URL)
         return
     try:
@@ -7908,7 +7909,7 @@ def doctor_check_connectivity(report, request_get=None):
 # Adds a target lookup and retains the fetched profile for feed checks
 def doctor_check_target(report, github_factory=None):
     if not report.target_name:
-        command = render_install_command(["<github_target>", "--doctor"])
+        command = render_command(["<github_target>", "--doctor"])
         report.add("Target", "WARN", "No GitHub target was provided", "Nothing will be monitored until one is given", f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL)
         return
     if not report.authenticated_login:
@@ -8289,7 +8290,7 @@ def print_doctor_next_steps(destination, target=None, saved_target=None, doctor_
     _wizard_heading(destination, "Next steps", "header")
     label = "After Doctor passes, start monitoring:" if doctor_exit else "Start monitoring:"
     monitor_target = command_targets(target, saved_target)[1]
-    _wizard_print_command(destination, label, render_install_command([monitor_target] if monitor_target else []))
+    _wizard_print_command(destination, label, render_command([monitor_target] if monitor_target else []))
     destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
 
 
@@ -9369,9 +9370,9 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     except WizardCancelled:
         destination.write(colorize("warning", "Setup is saved. Use the commands below when ready.") + "\n")
     _wizard_heading(destination, "Next steps", "header")
-    _wizard_print_command(destination, "Check setup again:", render_install_command(doctor_arguments, context, include_paths=False))
+    _wizard_print_command(destination, "Check setup again:", render_command(doctor_arguments, install_context=context, include_paths=False))
     start_label = "After Doctor passes, start monitoring:" if doctor_exit not in (None, 0) else "Start monitoring:"
-    _wizard_print_command(destination, start_label, render_install_command(monitor_arguments, context, include_paths=False))
+    _wizard_print_command(destination, start_label, render_command(monitor_arguments, install_context=context, include_paths=False))
     destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
     if doctor_exit == 0:
         try:
@@ -9397,7 +9398,7 @@ def run_zero_argument_welcome(parser, input_func=input, input_stream=None, strea
     except Exception as exc:
         debug_swallowed_exception("Welcome input terminal detection", exc)
         interactive = False
-    prefix = render_install_command([], context, include_paths=False)
+    prefix = render_command([], install_context=context, include_paths=False)
     destination.write("For <github_target>, use a GitHub username or complete profile URL.\n\n")
     _wizard_print_command(destination, "Quickest start (already configured):", f"{prefix} <github_target>")
     setup_suffix = "   (or just answer Y below)" if interactive else ""
@@ -9908,7 +9909,7 @@ def main():
     configured_settings = set()
 
     if not cfg_path and CLI_CONFIG_PATH:
-        config_command = render_install_command(["--generate-config", "github_monitor.conf"], include_paths=False)
+        config_command = render_command(["--generate-config", "github_monitor.conf"], include_paths=False)
         advice = make_recovery_advice("config.missing", f"Config file '{CLI_CONFIG_PATH}' does not exist", f"Correct --config-file or generate a new configuration with: {config_command}", False, f"FileNotFoundError: {CLI_CONFIG_PATH}", CONFIG_GUIDE_URL)
         print_recovery_advice(advice)
         sys.exit(1)
@@ -10015,7 +10016,7 @@ def main():
         sys.exit(1)
 
     if not GITHUB_TOKEN or GITHUB_TOKEN == "your_github_classic_personal_access_token":
-        token_command = render_install_command(["--set-github-token"])
+        token_command = render_command(["--set-github-token"])
         advice = make_recovery_advice("auth.github_token_missing", "No usable GitHub token is configured", f"Create a token then run: {token_command}", False, "GITHUB_TOKEN is empty or still uses the generated placeholder", AUTH_GUIDE_URL)
         print_recovery_advice(advice)
         sys.exit(1)

@@ -1,5 +1,6 @@
 """Offline tests for install detection and copy-pasteable command rendering."""
 
+import inspect
 import subprocess
 import sys
 from pathlib import Path
@@ -9,7 +10,7 @@ from unittest.mock import Mock
 # Verifies the packaged entry point renders the public command name
 def test_pypi_command_uses_console_entry_point(gm_module):
     context = gm_module.InstallContext("pip", "Linux", ("github_monitor",))
-    assert gm_module.render_install_command(["--set-github-token"], context) == "github_monitor --set-github-token"
+    assert gm_module.render_command(["--set-github-token"], install_context=context) == "github_monitor --set-github-token"
 
 
 # Verifies manual detection keeps the active interpreter and absolute script path
@@ -18,14 +19,14 @@ def test_manual_detection_uses_active_interpreter(gm_module):
     context = gm_module.detect_install_context(argv0=script_path, module_path=script_path, operating_system="Linux")
     assert context.install_method == "manual"
     assert context.command_prefix == (sys.executable, str(Path(script_path).resolve()))
-    assert gm_module.render_install_command(["octocat", "--env-file", "/tmp/private settings.env"], context, exact=True) == f"{sys.executable} '/opt/GitHub Monitor/github_monitor.py' octocat --env-file '/tmp/private settings.env'"
+    assert gm_module.render_command(["octocat", "--env-file", "/tmp/private settings.env"], install_context=context, exact=True) == f"{sys.executable} '/opt/GitHub Monitor/github_monitor.py' octocat --env-file '/tmp/private settings.env'"
 
 
 # Verifies Windows command rendering follows the platform quoting contract
 def test_windows_command_uses_windows_quoting(gm_module):
     context = gm_module.InstallContext("manual", "Windows", (r"C:\Python\python.exe", r"C:\GitHub Monitor\github_monitor.py"))
     parts = [*context.command_prefix, "--config-file", r"C:\Users\Example User\github_monitor.conf"]
-    assert gm_module.render_install_command(parts[2:], context, exact=True) == subprocess.list2cmdline(parts)
+    assert gm_module.render_command(parts[2:], install_context=context, exact=True) == subprocess.list2cmdline(parts)
 
 
 # Verifies non-script invocations are recognized as the PyPI install
@@ -37,14 +38,14 @@ def test_console_invocation_is_detected_as_pip(gm_module):
 # Verifies printed commands use portable names by default and the exact form only when asked
 def test_manual_command_supports_portable_and_exact_forms(gm_module):
     context = gm_module.InstallContext("manual", "Linux", ("/usr/bin/python3", "/opt/GitHub Monitor/github_monitor.py"))
-    assert gm_module.render_install_command(["--setup"], context) == "python3 github_monitor.py --setup"
-    assert gm_module.render_install_command(["octocat"], context, exact=True) == "/usr/bin/python3 '/opt/GitHub Monitor/github_monitor.py' octocat"
+    assert gm_module.render_command(["--setup"], install_context=context) == "python3 github_monitor.py --setup"
+    assert gm_module.render_command(["octocat"], install_context=context, exact=True) == "/usr/bin/python3 '/opt/GitHub Monitor/github_monitor.py' octocat"
 
 
 # Verifies Windows welcome commands use the sibling tool's portable command names
 def test_windows_manual_command_uses_portable_names(gm_module):
     context = gm_module.InstallContext("manual", "Windows", (r"C:\Python\python.exe", r"C:\GitHub Monitor\github_monitor.py"))
-    assert gm_module.render_install_command(["<github_target>"], context, exact=False) == 'python github_monitor.py <github_target>'
+    assert gm_module.render_command(["<github_target>"], install_context=context, exact=False) == 'python github_monitor.py <github_target>'
 
 
 # Verifies secret setup prints a command for the detected install instead of a hard-coded entry point
@@ -89,9 +90,9 @@ def test_a_disabled_dotenv_search_is_carried_only_where_it_is_accepted(gm_module
     monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", None)
     monkeypatch.setattr(gm_module, "DOTENV_FILE", "none")
 
-    assert gm_module.render_install_command(["--doctor"], context) == "github_monitor --doctor --env-file none"
-    assert gm_module.render_install_command(["--set-github-token"], context) == "github_monitor --set-github-token"
-    assert gm_module.render_install_command(["--setup"], context) == "github_monitor --setup"
+    assert gm_module.render_command(["--doctor"], install_context=context) == "github_monitor --doctor --env-file none"
+    assert gm_module.render_command(["--set-github-token"], install_context=context) == "github_monitor --set-github-token"
+    assert gm_module.render_command(["--setup"], install_context=context) == "github_monitor --setup"
 
 
 # Verifies the disabled config search reaches the commands that accept it and stays out of the ones that refuse it
@@ -101,10 +102,10 @@ def test_a_disabled_config_search_is_carried_only_where_it_is_accepted(gm_module
     monkeypatch.setattr(gm_module, "CONFIG_DISCOVERY_DISABLED", True)
     monkeypatch.setattr(gm_module, "DOTENV_FILE", "")
 
-    assert gm_module.render_install_command(["--doctor"], context) == "github_monitor --doctor --config-file none"
-    assert gm_module.render_install_command(["--set-github-token"], context) == "github_monitor --set-github-token --config-file none"
-    assert gm_module.render_install_command(["--setup"], context) == "github_monitor --setup"
-    assert gm_module.render_install_command(["--doctor"], context, include_paths=False) == "github_monitor --doctor"
+    assert gm_module.render_command(["--doctor"], install_context=context) == "github_monitor --doctor --config-file none"
+    assert gm_module.render_command(["--set-github-token"], install_context=context) == "github_monitor --set-github-token --config-file none"
+    assert gm_module.render_command(["--setup"], install_context=context) == "github_monitor --setup"
+    assert gm_module.render_command(["--doctor"], install_context=context, include_paths=False) == "github_monitor --doctor"
 
 
 # Verifies a printed command carries the files this run was given, so the retest reads the settings that failed
@@ -113,6 +114,22 @@ def test_printed_commands_carry_the_files_this_run_was_given(gm_module, monkeypa
     monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", "/etc/github.conf")
     monkeypatch.setattr(gm_module, "DOTENV_FILE", "/etc/github.env")
 
-    assert gm_module.render_install_command(["--set-github-token"], context) == "python3 github_monitor.py --set-github-token --config-file /etc/github.conf --env-file /etc/github.env"
-    assert gm_module.render_install_command(["--generate-config", "github_monitor.conf"], context, include_paths=False) == "python3 github_monitor.py --generate-config github_monitor.conf"
-    assert gm_module.render_install_command(["--doctor", "--config-file", "/tmp/other.conf"], context) == "python3 github_monitor.py --doctor --config-file /tmp/other.conf --env-file /etc/github.env"
+    assert gm_module.render_command(["--set-github-token"], install_context=context) == "python3 github_monitor.py --set-github-token --config-file /etc/github.conf --env-file /etc/github.env"
+    assert gm_module.render_command(["--generate-config", "github_monitor.conf"], install_context=context, include_paths=False) == "python3 github_monitor.py --generate-config github_monitor.conf"
+    assert gm_module.render_command(["--doctor", "--config-file", "/tmp/other.conf"], install_context=context) == "python3 github_monitor.py --doctor --config-file /tmp/other.conf --env-file /etc/github.env"
+
+
+# Verifies the printed-command renderer takes the family's two shared parameters before any tool-specific one
+def test_the_command_renderer_shares_one_contract(gm_module):
+    parameters = list(inspect.signature(gm_module.render_command).parameters.values())
+    assert [parameter.name for parameter in parameters[:2]] == ["arguments", "include_paths"]
+    assert [parameter.default for parameter in parameters[:2]] == [None, True]
+    # A tool-specific extra is keyword-only, so a positional call copied from a sibling cannot bind to it
+    assert all(parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in parameters[2:])
+
+
+# Verifies the renderer with no arguments prints the bare command, which is what the help screen puts before each example
+def test_the_renderer_with_no_arguments_prints_the_bare_command(gm_module):
+    prefix = gm_module.render_command(include_paths=False)
+    assert prefix and not prefix.endswith(" ")
+    assert gm_module.render_command(["--doctor"], include_paths=False) == f"{prefix} --doctor"
