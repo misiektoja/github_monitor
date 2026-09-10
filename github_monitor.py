@@ -581,6 +581,7 @@ class ErrorAlertState:
         setattr(self, f"{channel}_retry_at", now + delay)
         print(f"* The {channel} alert is on hold for {display_time(delay)} after {failures} {'attempt' if failures == 1 else 'attempts'}, then tried again")
 
+
 stdout_bck = None
 csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
 
@@ -3498,7 +3499,6 @@ def startup_webhook_provider():
     if not normalized_webhook_provider() or not str(WEBHOOK_URL or "").strip():
         return "Not configured"
     return f"{webhook_provider_display_name()} ({'enabled' if WEBHOOK_ENABLED else 'disabled'})"
-
 
 
 # Builds concise and complete startup rows without exposing private values
