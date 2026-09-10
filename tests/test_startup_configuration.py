@@ -130,7 +130,8 @@ def test_the_summary_rows_skip_placeholder_secrets(gm_module, monkeypatch):
     assert gm_module.startup_secret_buckets() == (["GITHUB_TOKEN"], [], [], [])
 
 
-# Verifies explicit debug mode is active while an invalid config is being loaded
+# Verifies explicit debug mode is active while an invalid config is being loaded, and that the offending setting is
+# named once rather than repeated by a technical detail that only echoes the summary
 def test_debug_flag_exposes_sanitized_config_loader_detail(request):
     directory = make_test_directory()
     request.addfinalizer(directory.cleanup)
@@ -141,8 +142,9 @@ def test_debug_flag_exposes_sanitized_config_loader_detail(request):
 
     assert result.returncode == 1
     assert "* Error: " in result.stdout
-    assert "Technical detail:" in result.stdout
     assert "NOT_A_REAL_SETTING" in result.stdout
+    assert "Configuration load: " in result.stdout, "the debug diagnostic line reports the failed load"
+    assert "Technical detail:" not in result.stdout, "the detail here only repeats the summary"
 
 
 # Verifies an explicitly configured connectivity endpoint stays independent from the GitHub API override

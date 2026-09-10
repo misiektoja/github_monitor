@@ -2924,7 +2924,8 @@ def render_recovery_advice(advice, debug=None, retry_note="", with_fix=True, lab
     lines.append(f"To fix: {sanitize_error_text(advice.fix)}")
     if advice.guide_url:
         lines.append(f"Guide: {sanitize_error_text(advice.guide_url)}")
-    if debug_enabled and advice.detail:
+    # A detail that only repeats the summary spends a line saying nothing
+    if debug_enabled and advice.detail and advice.detail != advice.summary:
         lines.append(f"Technical detail: {sanitize_error_text(advice.detail)}")
     return "\n".join(lines)
 
@@ -3038,6 +3039,10 @@ def is_too_many_open_files(error):
             return True
     return False
 
+# Returns the next step for a failure no rule recognized, since a run already printing the technical cause cannot be told to re-run for it
+def unknown_failure_fix(debug_command): return "Open an issue with this output if the failure continues" if DEBUG_MODE else f"Run the command again with {debug_command} to see the technical cause"
+
+
 
 # Maps one exception and operation context to stable recovery advice
 def classify_recovery_error(error, context="runtime", detail="", install_context=None):
@@ -3105,7 +3110,7 @@ def classify_recovery_error(error, context="runtime", detail="", install_context
         return make_recovery_advice("config.invalid", summary, f"Correct the reported setting, or generate a fresh configuration with: {config_command}", False, detail, CONFIG_GUIDE_URL)
     if selected_context == "timezone":
         return make_recovery_advice("timezone.invalid", "The configured timezone is invalid", "Install tzlocal for automatic detection or set a valid pytz timezone", False, detail, CONFIG_GUIDE_URL)
-    return make_recovery_advice("unknown", "An unexpected error stopped the requested action", f"Run the command again with {debug_command} and include the recovery code when asking for help", False, detail, SUPPORT_GUIDE_URL)
+    return make_recovery_advice("unknown", "An unexpected error stopped the requested action", unknown_failure_fix(debug_command), False, detail, SUPPORT_GUIDE_URL)
 
 
 # Returns whether a webhook URL is a complete private HTTPS link

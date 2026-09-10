@@ -594,3 +594,32 @@ def test_the_callers_detail_wins_over_the_exception_text(gm_module):
 
     assert advice.detail == "Reading the event feed of 'octocat' failed"
     assert gm_module.classify_recovery_error(req.ConnectionError("connection refused"), "runtime").detail.startswith("ConnectionError: ")
+
+
+# A detail that only repeats the summary spends a line saying nothing, so the block drops it and keeps a real one
+def test_a_detail_repeating_the_summary_is_dropped(gm_module):
+    repeated = gm_module.make_recovery_advice("unknown", "the same sentence twice", "a fix", False, "the same sentence twice")
+    differing = gm_module.make_recovery_advice("unknown", "the summary", "a fix", False, "the raw cause")
+
+    assert "Technical detail:" not in gm_module.render_recovery_advice(repeated, debug=True)
+    assert "Technical detail: the raw cause" in gm_module.render_recovery_advice(differing, debug=True)
+
+
+# A run that already prints the technical cause cannot be told to re-run for it
+def test_the_unrecognized_failure_fix_follows_the_diagnostic_mode(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "DEBUG_MODE", False)
+    plain = gm_module.classify_recovery_error(Exception("a wholly unfamiliar failure"), "runtime").fix
+    monkeypatch.setattr(gm_module, "DEBUG_MODE", True)
+    debugging = gm_module.classify_recovery_error(Exception("a wholly unfamiliar failure"), "runtime").fix
+
+    assert "--debug" in plain
+    assert "--debug" not in debugging
+
+
+# The recovery code is an internal taxonomy the user never sees, so no fix may ask for one
+def test_no_user_facing_line_asks_for_the_recovery_code(gm_module):
+    source = inspect.getsource(gm_module)
+    mentions = [line.strip() for line in source.splitlines() if "recovery code" in line.casefold()]
+
+    assert mentions == ['raise ValueError(f"Unsupported recovery code: {code}")'], mentions
+    assert "recovery code" not in gm_module.classify_recovery_error(RuntimeError("a wholly unfamiliar failure")).fix.casefold()
