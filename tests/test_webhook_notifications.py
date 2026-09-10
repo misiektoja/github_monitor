@@ -55,11 +55,9 @@ def test_startup_notification_summaries_use_compact_rollups(gm_module, monkeypat
     webhook_settings = {"WEBHOOK_ENABLED": True, "WEBHOOK_PROFILE_NOTIFICATION": True, "WEBHOOK_EVENT_NOTIFICATION": True, "WEBHOOK_REPO_NOTIFICATION": True, "WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION": True, "WEBHOOK_CONTRIB_NOTIFICATION": True, "WEBHOOK_ERROR_NOTIFICATION": True}
     for setting, value in {**email_settings, **webhook_settings}.items():
         monkeypatch.setattr(gm_module, setting, value)
-    expected_email = "* Notifications (email):        On (profile, events, repositories, repository updates,\n                                contributions, errors)"
-    expected_webhook = "* Notifications (webhook):      On (profile, events, repositories, repository updates,\n                                contributions, errors)"
-    assert gm_module._startup_notification_summary_lines() == [expected_email, expected_webhook]
-    assert all(len(line) <= 100 for summary in (expected_email, expected_webhook) for line in summary.splitlines())
-    assert "\n*" not in expected_email + expected_webhook
+    rows = {row.label: row.value for row in gm_module.build_startup_summary("octocat", None, None, None)}
+    assert rows["Notifications (email)"] == "On (profile, events, repositories, repository updates, contributions, errors)"
+    assert rows["Notifications (webhook)"] == "On (profile, events, repositories, repository updates, contributions, errors)"
 
 
 # Verifies webhook categories remain off while the master switch is disabled
@@ -67,7 +65,15 @@ def test_startup_webhook_summary_respects_master_switch(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "WEBHOOK_ENABLED", False)
     monkeypatch.setattr(gm_module, "WEBHOOK_PROFILE_NOTIFICATION", True)
     monkeypatch.setattr(gm_module, "WEBHOOK_ERROR_NOTIFICATION", True)
-    assert gm_module._startup_notification_summary_lines()[1] == "* Notifications (webhook):      Off"
+    monkeypatch.setattr(gm_module, "PROFILE_NOTIFICATION", True)
+    for setting in ("EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"):
+        monkeypatch.setattr(gm_module, setting, False)
+
+    rows = {row.label: row.value for row in gm_module.build_startup_summary("octocat", None, None, None)}
+
+    assert rows["Notifications (webhook)"] == "Off"
+    # The two rows are read side by side, so the email row has to keep reporting its own channel
+    assert rows["Notifications (email)"] == "On (profile)"
 
 
 # Verifies SIGHUP schedules API client recreation and redetects an ntfy destination

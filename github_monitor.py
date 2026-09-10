@@ -1456,146 +1456,6 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
         return '0 seconds'
 
 
-# Sanitizes HTML content, preserving safe tags while removing dangerous ones
-def sanitize_and_preserve_html(text, convert_line_breaks=True, repo_url=None):
-    if not text:
-        return ""
-
-    safe_tags = {
-        'details': ['open'],
-        'summary': [],
-        'ul': [],
-        'ol': [],
-        'li': [],
-        'a': ['href', 'title'],
-        'code': [],
-        'pre': [],
-        'p': [],
-        'br': [],
-        'strong': [],
-        'b': [],
-        'em': [],
-        'i': [],
-        's': [],
-        'strike': [],
-        'del': [],
-        'img': ['src', 'alt', 'title'],
-        'blockquote': [],
-        'hr': [],
-    }
-
-    code_blocks = []
-    code_block_pattern = r'```([\s\S]*?)```'
-    code_block_counter = 0
-
-    def replace_code_block(match):
-        nonlocal code_block_counter
-        code_content = match.group(1)
-        placeholder = f"__CODE_BLOCK_{code_block_counter}__"
-        code_blocks.append(('<pre><code>' + html.escape(code_content) + '</code></pre>', placeholder))
-        code_block_counter += 1
-        return placeholder
-
-    text = re.sub(code_block_pattern, replace_code_block, text)
-
-    # Pattern to match HTML tags including multiline (use [\s\S]*? to match any char including newlines)
-    tag_pattern = r'<(/)?([a-z][a-z0-9]*)([\s\S]*?)>'
-
-    def sanitize_tag(match):
-        closing = match.group(1) == '/'
-        tag_name = match.group(2).lower()
-        attrs_str = match.group(3) if match.group(3) else ''
-
-        if closing:
-            return f'</{tag_name}>' if tag_name in safe_tags else ''
-
-        if tag_name not in safe_tags:
-            return ''
-
-        allowed_attrs = safe_tags[tag_name]
-        if not allowed_attrs and attrs_str:
-            return f'<{tag_name}>'
-
-        attr_pattern = r'(\w+)=["\']([^"\']*)["\']'
-        safe_attrs = []
-        for attr_match in re.finditer(attr_pattern, attrs_str):
-            attr_name = attr_match.group(1).lower()
-            attr_value = attr_match.group(2)
-
-            if attr_name in allowed_attrs:
-                if attr_name == 'href' or attr_name == 'src':
-                    if attr_value.startswith(('http://', 'https://', 'mailto:', '#')):
-                        safe_attrs.append(f'{attr_name}="{html.escape(attr_value)}"')
-                else:
-                    safe_attrs.append(f'{attr_name}="{html.escape(attr_value)}"')
-
-        if safe_attrs:
-            return f'<{tag_name} {" ".join(safe_attrs)}>'
-        else:
-            return f'<{tag_name}>'
-
-    sanitized = re.sub(tag_pattern, sanitize_tag, text, flags=re.IGNORECASE)
-
-    temp_markers = []
-    for idx, (code_html, placeholder) in enumerate(code_blocks):
-        temp_marker = f"__TEMP_CODE_{idx}__"
-        temp_markers.append((temp_marker, code_html))
-        sanitized = sanitized.replace(placeholder, temp_marker)
-
-    protected_tags = []
-    tag_counter = 0
-
-    valid_tag_pattern = r'</?[a-z][a-z0-9]*(?:\s+[^>]*)?>'
-
-    def protect_tag(match):
-        nonlocal tag_counter
-        protected_tags.append(match.group(0))
-        result = f"__PROTECTED_TAG_{tag_counter}__"
-        tag_counter += 1
-        return result
-
-    sanitized = re.sub(valid_tag_pattern, protect_tag, sanitized, flags=re.IGNORECASE)
-
-    sanitized = sanitized.replace('<', '&lt;').replace('>', '&gt;')
-
-    for idx, tag in enumerate(protected_tags):
-        sanitized = sanitized.replace(f"__PROTECTED_TAG_{idx}__", tag)
-
-    for temp_marker, code_html in temp_markers:
-        sanitized = sanitized.replace(temp_marker, code_html)
-
-    if convert_line_breaks:
-        lines = sanitized.split('\n')
-        result_lines = []
-        prev_was_block = False
-        prev_was_empty = False
-
-        for line in lines:
-            stripped = line.strip()
-            is_block = bool(re.search(r'<(details|summary|ul|ol|li|pre|blockquote|hr|p)[\s>]', stripped, re.IGNORECASE))
-
-            if not stripped:
-                if not prev_was_empty and not prev_was_block:
-                    result_lines.append('<br>')
-                prev_was_empty = True
-                prev_was_block = False
-            else:
-                if is_block:
-                    result_lines.append(line)
-                    prev_was_block = True
-                    prev_was_empty = False
-                else:
-                    if not prev_was_block and result_lines and not prev_was_empty:
-                        result_lines.append('<br>')
-                    result_lines.append(line)
-                    prev_was_block = False
-                    prev_was_empty = False
-
-        sanitized = ''.join(result_lines)
-
-    return sanitized
-
-
 # Sanitizes a single HTML tag
 def sanitize_single_html_tag(html_tag):
     safe_tags = {
@@ -2192,79 +2052,6 @@ def convert_commit_hashes_to_links(text, repo_url=None):
                 parts[i] = re.sub(commit_pattern, replace_hash, part)
 
     return ''.join(parts)
-
-
-# Converts issue/PR list items to HTML with clickable titles
-def convert_issue_pr_items_to_html(text, already_escaped=False):
-    if not text:
-        return text
-
-    pattern = r'(- )?#(\d+)\s+([^(]+?)\s+\(([^)]+)\)\s+(?:\[\s*)?(https?://[^\s\]]+)(?:\s*\])?'
-
-    def replace_item(match):
-        prefix = match.group(1) or ""
-        number = match.group(2)
-        title = match.group(3).strip()
-        user = match.group(4)
-        url = match.group(5)
-
-        if already_escaped:
-            escaped_title = title
-            escaped_user = user
-            escaped_url = url
-        else:
-            escaped_title = html.escape(title)
-            escaped_user = html.escape(user)
-            escaped_url = html.escape(url)
-
-        return f'{prefix}<a href="{escaped_url}"><b>#{number} {escaped_title}</b></a> ({escaped_user})'
-
-    return re.sub(pattern, replace_item, text)
-
-
-# Converts plain text to HTML, preserving line breaks and formatting
-def text_to_html(text, preserve_newlines=True, convert_urls=True, convert_issue_pr=True, repo_url=None):
-    if not text:
-        return ""
-
-    html_text = html.escape(text)
-
-    if convert_issue_pr:
-        html_text = convert_issue_pr_items_to_html(html_text, already_escaped=True)
-
-    if convert_urls:
-        html_text = convert_urls_to_links(html_text)
-
-    if repo_url:
-        html_text = convert_commit_hashes_to_links(html_text, repo_url)
-
-    html_text = convert_github_mentions_to_links(html_text)
-
-    if preserve_newlines:
-        html_text = html_text.replace('\n', '<br>')
-
-    return html_text
-
-
-# Formats email body text to HTML
-def format_email_body_html(body_text, bold_keys=None, repo_url=None):
-    if not body_text:
-        return ""
-
-    html_text = text_to_html(body_text, preserve_newlines=True, repo_url=repo_url)
-
-    if bold_keys:
-        for key in bold_keys:
-            if key:
-                escaped_key = html.escape(key)
-                html_text = re.sub(
-                    re.escape(escaped_key),
-                    lambda m: f'<b>{m.group(0)}</b>',
-                    html_text,
-                    flags=re.IGNORECASE
-                )
-
-    return html_text
 
 
 # Converts event text to HTML, handling markdown in specific fields
@@ -3329,20 +3116,6 @@ def _startup_webhook_notification_categories():
     return [label for enabled, label in settings if WEBHOOK_ENABLED and enabled]
 
 
-# Formats one notification row with unstarred continuation lines when needed
-def _format_startup_notification_line(label, categories):
-    prefix = f"* {label:<30}"
-    state = "On (" + ", ".join(categories) + ")" if categories else "Off"
-    return textwrap.fill(state, width=100, initial_indent=prefix, subsequent_indent=" " * len(prefix), break_long_words=False, break_on_hyphens=False)
-
-
-# Builds compact startup notification lines for both delivery channels
-def _startup_notification_summary_lines():
-    enabled_email = _startup_email_notification_categories()
-    enabled_webhook = _startup_webhook_notification_categories()
-    return [_format_startup_notification_line("Notifications (email):", enabled_email), _format_startup_notification_line("Notifications (webhook):", enabled_webhook)]
-
-
 @dataclass(frozen=True)
 class StartupSummaryRow:
     label: str
@@ -3502,12 +3275,6 @@ def webhook_event_enabled(notification_type: str) -> bool:
         "error": WEBHOOK_ERROR_NOTIFICATION,
     }
     return bool(WEBHOOK_ENABLED and settings.get(notification_type, False))
-
-
-# Returns whether at least one webhook alert category is enabled
-def webhook_notifications_enabled() -> bool:
-    categories = (WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_ERROR_NOTIFICATION)
-    return bool(WEBHOOK_ENABLED and any(categories))
 
 
 # Parses a webhook rate-limit delay and caps untrusted server values to a short wait
@@ -6404,18 +6171,6 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
     _wizard_print_command(sys.stdout, "Send a test email:", render_install_command(["--send-test-email"] + paths, install_context))
     _wizard_print_command(sys.stdout, "Check setup again:", render_install_command(["--doctor"] + paths, install_context))
     return str(destination)
-
-
-# Resolves an executable path by checking if it's a valid file or searching in $PATH
-def resolve_executable(path):
-    if os.path.isfile(path) and os.access(path, os.X_OK):
-        return path
-
-    found = shutil.which(path)
-    if found:
-        return found
-
-    raise FileNotFoundError(f"Could not find executable '{path}'")
 
 
 # Checks if the authenticated user (token's owner) is blocked by user
