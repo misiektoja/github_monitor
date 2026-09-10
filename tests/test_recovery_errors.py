@@ -3,6 +3,7 @@
 import ast
 import inspect
 import io
+import re
 import smtplib
 import time
 from types import SimpleNamespace
@@ -313,7 +314,7 @@ def test_no_csv_write_failure_prints_its_own_line(gm_module):
 
 # Verifies a list refresh that fails names the list in front of the classified failure and keeps the fix
 def test_a_failed_refresh_names_the_list_and_carries_a_fix(gm_module, capsys):
-    gm_module.print_refresh_error("Followers", req.ConnectionError("no route to host"))
+    gm_module.print_degraded_error("Followers could not be refreshed", req.ConnectionError("no route to host"))
 
     printed = capsys.readouterr().out
     assert "* Error: Followers could not be refreshed: The configured service could not be reached" in printed
@@ -372,3 +373,56 @@ def test_no_code_outside_the_declared_set_is_produced(gm_module):
     undeclared = builder_codes(inspect.getsource(gm_module)) - set(gm_module.RECOVERY_CODES)
 
     assert undeclared == set(), f"codes produced but not declared: {sorted(undeclared)}"
+
+
+# Every place that reports a problem without the classifier and the reason it cannot use one
+CLASSIFIER_EXEMPTIONS = {
+    "or higher required": "runs at import on an interpreter too old to load the rest of the file",
+    "Couldn't find the pytz library": "raised at import, while a dependency the classifier itself needs is missing",
+    "Couldn't find the PyGitHub library": "raised at import, while a dependency the classifier itself needs is missing",
+    "Cannot clear the screen contents": "a cosmetic notice with nothing for the operator to recover from",
+    "(retry": "a progress line for a retry still in flight, where the final attempt reports through the block",
+}
+
+# Words that mark a printed line as a report of something going wrong
+TROUBLE_WORDS = re.compile(r"error|cannot|can't|failed|failure|invalid|not valid|missing|not installed|no such|refused|unsupported|needs to be|could not|couldn't|unable to", re.IGNORECASE)
+
+
+# Returns the literal text one print argument shows, leaving out the parts an f-string fills at runtime
+def printed_text(node):
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else ""
+    if isinstance(node, ast.JoinedStr):
+        return "".join(printed_text(part) for part in node.values)
+    if isinstance(node, ast.BinOp):
+        return printed_text(node.left) + printed_text(node.right)
+    return ""
+
+
+# Returns every printed line that reads as a problem, paired with the line it sits on
+def reported_problems(source):
+    found = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") in {"print", "SystemExit"}):
+            continue
+        text = " ".join(printed_text(argument) for argument in node.args)
+        if TROUBLE_WORDS.search(text):
+            found.append((node.lineno, " ".join(text.split())))
+    return found
+
+
+# A problem reported without a category leaves the reader with a message and no next step
+def test_every_reported_problem_goes_through_the_classifier(gm_module):
+    unexplained = [f"line {line}: {text[:120]}" for line, text in reported_problems(inspect.getsource(gm_module)) if not any(marker in text for marker in CLASSIFIER_EXEMPTIONS)]
+
+    assert unexplained == []
+
+
+# An exemption list that stopped matching anything would quietly cover the whole file
+def test_the_classifier_guard_still_inspects_the_source(gm_module):
+    source = inspect.getsource(gm_module)
+    inspected = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call) and getattr(node.func, "id", "") in {"print", "SystemExit"}]
+    problems = reported_problems(source)
+
+    assert len(inspected) > 150
+    assert all(any(marker in text for _, text in problems) for marker in CLASSIFIER_EXEMPTIONS), "an exemption stopped matching a printed line"

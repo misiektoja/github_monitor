@@ -24,6 +24,7 @@ PROJECT_URL = "https://github.com/misiektoja/github_monitor"
 DOCUMENTATION_URL = "https://misiektoja.github.io/github_monitor"
 QUICK_START_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/"
 CONFIG_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#configuration-file"
+INSTALL_GUIDE_URL = f"{DOCUMENTATION_URL}/installation/"
 CSV_GUIDE_URL = f"{DOCUMENTATION_URL}/usage/#csv-export"
 INTERVALS_GUIDE_URL = f"{DOCUMENTATION_URL}/configuration/#check-intervals"
 AUTH_GUIDE_URL = f"{DOCUMENTATION_URL}/setup-and-first-run/#github-personal-access-token"
@@ -2843,6 +2844,7 @@ RECOVERY_CODES = frozenset({
     "config.invalid",
     "config.missing",
     "config.value_invalid",
+    "dependency.missing",
     "dotenv.missing",
     "file.exists",
     "file.unreadable",
@@ -3601,10 +3603,14 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
     return email_attempted, webhook_attempted
 
 
-# Reports a list refresh that failed and left its alerts degraded, naming the list in front of the classified failure
-def print_refresh_error(feature, error):
+# Reports a step that failed and left its output or alerts degraded, naming the step in front of the classified failure
+def print_degraded_error(subject, error, label="Error"):
     advice = classify_recovery_error(error)
-    print_recovery_advice(make_recovery_advice(advice.code, f"{feature} could not be refreshed: {advice.summary}", advice.fix, advice.retryable, advice.detail, advice.guide_url))
+    print_recovery_advice(make_recovery_advice(advice.code, f"{subject}: {advice.summary}", advice.fix, advice.retryable, advice.detail, advice.guide_url), label=label)
+
+
+# Returns the advice an optional library that is missing carries, naming what the run loses and how to install it
+def missing_dependency_advice(package, effect, alternative=""): return make_recovery_advice("dependency.missing", f"{effect} because the optional '{package}' library is missing", f"Install it with: {shlex.join([sys.executable, '-m', 'pip', 'install', package])}" + (f". {alternative}" if alternative else ""), False, "", INSTALL_GUIDE_URL)
 
 
 # Reports a CSV row or header that could not be written, which never stops a monitoring cycle
@@ -3967,11 +3973,11 @@ def reload_secrets_signal_handler(sig, frame):
         except ImportError as exc:
             debug_swallowed_exception("Dotenv signal reload dependency import", exc)
             env_path = None
-            print("* python-dotenv not installed, skipping env-var reload")
+            print_recovery_advice(missing_dependency_advice("python-dotenv", "The env-var reload was skipped"), label="Warning")
         except Exception as exc:
             env_path = None
             verbose_degraded_feature("Private setting reload", "credential refresh", exc)
-            print(f"* Dotenv reload failed: {sanitize_error_text(exc)}")
+            print_degraded_error("The dotenv reload failed", exc)
 
     github_token_changed = False
     webhook_url_changed = False
@@ -4185,7 +4191,7 @@ def github_print_followers_and_followings(user):
                 print(follower_str)
     except Exception as e:
         verbose_degraded_feature("Follower listing", "complete follower output", e)
-        print(f"* Cannot fetch user's followers list: {sanitize_error_text(e)}")
+        print_degraded_error("The follower list could not be read", e)
 
     print(f"\nFollowings:\t\t{followings_count}")
 
@@ -4201,7 +4207,7 @@ def github_print_followers_and_followings(user):
                 print(following_str)
     except Exception as e:
         verbose_degraded_feature("Following listing", "complete following output", e)
-        print(f"* Cannot fetch user's followings list: {sanitize_error_text(e)}")
+        print_degraded_error("The following list could not be read", e)
 
     g.close()
 
@@ -4389,7 +4395,8 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                     discussion_count, discussions_list = github_get_repo_discussions(repo)
                 except Exception as e:
                     verbose_degraded_feature(f"Discussions for {repo.name}", "discussion change alerts", e)
-                    print(f"\n* Cannot fetch discussions for repo '{repo.name}', skipping discussions for now: {sanitize_error_text(e)}")
+                    print()
+                    print_degraded_error(f"Discussions for repo '{repo.name}' were skipped", e)
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name)  # Refresh after discussions
 
@@ -4416,14 +4423,16 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                     continue
                 else:
                     verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
-                    print(f"\n* Cannot process repo '{repo.name}', skipping for now: {sanitize_error_text(e)}")
+                    print()
+                    print_degraded_error(f"Repo '{repo.name}' was skipped", e)
                     print_cur_ts("Timestamp:\t\t\t")
                     if show_progress:
                         _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
             except Exception as e:
                 verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
-                print(f"\n* Cannot process repo '{repo.name}', skipping for now: {sanitize_error_text(e)}")
+                print()
+                print_degraded_error(f"Repo '{repo.name}' was skipped", e)
                 print_cur_ts("Timestamp:\t\t\t")
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
@@ -5297,7 +5306,7 @@ def github_list_events(user, number, csv_file_name):
             user_name_str += f" ({user_name})"
     except Exception as e:
         verbose_degraded_feature("Recent event listing", "recent event output", e)
-        print(f"* Cannot fetch user details: {sanitize_error_text(e)}")
+        print_degraded_error("The user details could not be read", e)
         return
 
     print(f"Username:\t\t\t{user_name_str}")
@@ -5324,7 +5333,8 @@ def github_list_events(user, number, csv_file_name):
                         event_date, repo_name, repo_url, event_text = github_print_event(event, g)
                     except Exception as e:
                         verbose_degraded_feature("Event detail rendering", "complete event output", e)
-                        print(f"\n* Warning, cannot fetch all event details, skipping: {sanitize_error_text(e)}")
+                        print()
+                        print_degraded_error("Some event details are missing", e, label="Warning")
                         print_cur_ts("\nTimestamp:\t\t\t")
                         continue
                     try:
@@ -5335,7 +5345,7 @@ def github_list_events(user, number, csv_file_name):
                     print_cur_ts("\nTimestamp:\t\t\t")
         except Exception as e:
             verbose_degraded_feature("Recent event iteration", "recent event output", e)
-            print(f"* Cannot fetch events: {sanitize_error_text(e)}")
+            print_degraded_error("The event list could not be read", e)
 
 
 # Detects and reports changes in a user's profile-level entities (followers, followings, public repos, starred repos)
@@ -5348,7 +5358,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
             return list_old, count_old
     except Exception as e:
         verbose_degraded_feature(f"{label} list", f"{label.lower()} change alerts", e)
-        print_refresh_error(f"The list of {label.lower()}", e)
+        print_degraded_error(f"The list of {label.lower()} could not be refreshed", e)
         print_cur_ts("Timestamp:\t\t\t")
         return list_old, count_old
 
@@ -5864,12 +5874,11 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
             debug_swallowed_exception("Dotenv dependency import", exc)
             env_path = DOTENV_FILE if DOTENV_FILE else None
             if env_path:
-                install_command = shlex.join([sys.executable, "-m", "pip", "install", "python-dotenv"])
-                detail = f"Cannot load dotenv file '{env_path}' because python-dotenv is not installed"
+                advice = missing_dependency_advice("python-dotenv", f"The dotenv file '{env_path}' was not loaded", "Or export the secrets as environment variables")
                 if errors_out is not None:
-                    errors_out.append(detail)
+                    errors_out.append(advice.summary)
                 if report_errors:
-                    print(f"* Warning: {detail}\n\nTo install it, run:\n    {install_command}\n\nOnce installed, re-run this tool\n")
+                    print_recovery_advice(advice, label="Warning")
         except Exception as exc:
             env_path = DOTENV_FILE if DOTENV_FILE else None
             verbose_degraded_feature("Dotenv loading", "dotenv-based private settings", exc)
@@ -6623,7 +6632,9 @@ def github_monitor_user(user, csv_file_name):
                     last_event_ts = newest.created_at
             except Exception as e:
                 verbose_degraded_feature("Initial event identifiers", "new event alerts", e)
-                print(f"\n* Cannot get event IDs / timestamps: {sanitize_error_text(e)}\n")
+                print()
+                print_degraded_error("The event identifiers could not be read", e)
+                print()
 
     followers_old_count = followers_count
     followings_old_count = followings_count
@@ -6718,7 +6729,7 @@ def github_monitor_user(user, csv_file_name):
             list_of_repos = github_process_repos(repos_list_filtered, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()))
         except Exception as e:
             verbose_degraded_feature("Initial repository details", "repository detail alerts", e)
-            print(f"* Cannot process list of public repositories: {sanitize_error_text(e)}")
+            print_degraded_error("The public repository list could not be processed", e)
         print_cur_ts("\nTimestamp:\t\t\t")
 
     list_of_repos_old = list_of_repos
@@ -6733,7 +6744,8 @@ def github_monitor_user(user, csv_file_name):
                 github_print_event(events[0], g, True)
             except Exception as e:
                 verbose_degraded_feature("Initial event details", "complete event alerts", e)
-                print(f"\n* Warning: cannot fetch last event details: {sanitize_error_text(e)}")
+                print()
+                print_degraded_error("The last event details could not be read", e, label="Warning")
 
         print_cur_ts("\nTimestamp:\t\t\t")
 
@@ -6830,7 +6842,7 @@ def github_monitor_user(user, csv_file_name):
             followings_count = gh_call(lambda: g_user.following)()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followings", "following change alerts", e)
-            print_refresh_error("Followings", e)
+            print_degraded_error("Followings could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             followings_raw = None
             followings_count = None
@@ -6845,7 +6857,7 @@ def github_monitor_user(user, csv_file_name):
             followers_count = gh_call(lambda: g_user.followers)()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followers", "follower change alerts", e)
-            print_refresh_error("Followers", e)
+            print_degraded_error("Followers could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             followers_raw = None
             followers_count = None
@@ -6865,7 +6877,7 @@ def github_monitor_user(user, csv_file_name):
                 repos_count = len(repos_raw)
         except NET_ERRORS as e:
             verbose_degraded_feature("Repositories", "repository change alerts", e)
-            print_refresh_error("Repositories", e)
+            print_degraded_error("Repositories could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             repos_raw = None
             repos_count = None
@@ -6885,7 +6897,7 @@ def github_monitor_user(user, csv_file_name):
                 starred_count = None
         except NET_ERRORS as e:
             verbose_degraded_feature("Starred repositories", "starred repository change alerts", e)
-            print_refresh_error("Starred repositories", e)
+            print_degraded_error("Starred repositories could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             starred_list = None
             starred_count = None
@@ -7227,7 +7239,7 @@ def github_monitor_user(user, csv_file_name):
                 except Exception as e:
                     list_of_repos = list_of_repos_old
                     verbose_degraded_feature("Repository detail refresh", "repository detail alerts", e)
-                    print(f"* Cannot process list of public repositories, keeping old list: {sanitize_error_text(e)}")
+                    print_degraded_error("The public repository list could not be refreshed, so the previous one is kept", e)
                     list_of_repos_ok = False
 
                 if list_of_repos_ok:
@@ -7364,7 +7376,7 @@ def github_monitor_user(user, csv_file_name):
                         last_event_id = 0
                         last_event_ts = None
                         verbose_degraded_feature("Newest event identifiers", "new event alerts", e)
-                        print(f"* Cannot get last event ID / timestamp: {sanitize_error_text(e)}")
+                        print_degraded_error("The last event identifier could not be read", e)
                         print_cur_ts("Timestamp:\t\t\t")
 
                 events_list_of_ids = set()
@@ -7391,7 +7403,8 @@ def github_monitor_user(user, csv_file_name):
                                 event_date, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
                             except Exception as e:
                                 verbose_degraded_feature("New event details", "complete event alerts", e)
-                                print(f"\n* Warning, cannot fetch all event details: {sanitize_error_text(e)}")
+                                print()
+                                print_degraded_error("Some event details are missing", e, label="Warning")
 
                             first_new = False
 
