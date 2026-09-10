@@ -95,6 +95,7 @@ print("UNRELATED_RETAINED:", "KEEP=retained" in env.read_text())
     assert "OLD_SECRET_RETAINED: True" in result.stdout
     assert "UNRELATED_RETAINED: True" in result.stdout
 
+
 @pytest.mark.skipif(os.name != "posix", reason="This check uses a real POSIX terminal")
 @pytest.mark.parametrize("configured,disable,expected", [(True, True, False), (True, False, True), (False, False, False)])
 # Applies color precedence to the actual Doctor report on an interactive terminal

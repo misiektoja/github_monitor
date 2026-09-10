@@ -1467,7 +1467,6 @@ class Logger(object):
         self.logfile.write(normalize_log_separators(ANSI_ESCAPE_RE.sub("", safe_message).expandtabs(8)))
         self.logfile.flush()
 
-
     # Limits the terminal line across separate writes while leaving the log complete
     def _truncate_terminal(self, message):
         try:
@@ -4575,6 +4574,7 @@ def github_object_name(value):
 def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = None, *, raise_on_failure=False) -> Callable[..., Any]:
     retries = NET_MAX_RETRIES if retries is None else retries
     backoff = NET_BASE_BACKOFF_SEC if backoff is None else backoff
+
     # Keeps the original exception available to callers that must distinguish an unavailable feed from an empty one
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         last_error = None

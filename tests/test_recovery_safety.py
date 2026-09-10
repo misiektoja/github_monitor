@@ -226,6 +226,7 @@ def test_setup_backup_keeps_settings_with_short_secret(monitor, tmp_path):
     assert 'SMTP_PASSWORD = "" # previous: <redacted>' in content
     assert "UNRELATED = 1800" in content
 
+
 @pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="SIGHUP is POSIX-only")
 # Preserves exported interpolation at startup and file interpolation on explicit reload
 def test_interpolated_secret_follows_startup_and_reload_precedence(monitor, monkeypatch, tmp_path):

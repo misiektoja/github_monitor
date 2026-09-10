@@ -60,7 +60,6 @@ def test_recovery_prefix_uses_short_names(monkeypatch, tmp_path):
     assert monitor.render_command(["--setup"], include_paths=False, install_context=context) == "python3 github_monitor.py --setup"
 
 
-
 @pytest.mark.parametrize("override", [False, True])
 # Setup resolves the selected file before offering saved answers or looking for credentials
 def test_setup_keeps_saved_dotenv_destination(monkeypatch, tmp_path, override):
@@ -72,8 +71,10 @@ def test_setup_keeps_saved_dotenv_destination(monkeypatch, tmp_path, override):
     explicit.write_text('SMTP_PASSWORD="synthetic-explicit"\n', encoding="utf-8")
     config.write_text(f"DOTENV_FILE={str(saved)!r}\nDISABLE_LOGGING=True\n", encoding="utf-8")
     recorded = []
+
     class Captured(BaseException):
         pass
+
     # Stops at the first section after destination and baseline resolution
     def collect(state, *args, **kwargs):
         recorded.append((state.dotenv_path, state.values["DISABLE_LOGGING"]))

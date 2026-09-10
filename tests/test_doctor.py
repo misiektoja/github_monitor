@@ -813,6 +813,7 @@ def test_a_link_in_a_detail_line_is_coloured_as_a_link(gm_module, monkeypatch):
     assert f"  Endpoint: {gm_module.colorize('link', 'https://api.github.com')}" in rendered
     assert fix_line == f"  {gm_module.colorize('info', 'To fix: Create a token at https://github.com/settings/tokens')}"
 
+
 # Verifies only the four shared markers can reach a report
 def test_only_the_four_shared_markers_are_accepted(gm_module):
     report = gm_module.DoctorReport()

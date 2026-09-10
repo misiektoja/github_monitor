@@ -107,6 +107,7 @@ def error_alerts_for(gm_module, monkeypatch, tmp_path, lookups, delivery_outcome
     monkeypatch.setattr(gm_module.time, "time", lambda: now[0])
     monkeypatch.setattr(gm_module, "GITHUB_CHECK_INTERVAL", check_interval)
     monkeypatch.setattr(gm_module, "LIVENESS_REMINDER_SECONDS", liveness_seconds if liveness_seconds is not None else 100 * check_interval)
+
     # Supplies the real HTTP responses used by the independent block-status check
     def transport(session, request, **kwargs):
         response = requests.Response()
