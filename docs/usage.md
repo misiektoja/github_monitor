@@ -13,7 +13,7 @@ Examples use the PyPI command. For a downloaded script, run commands from the di
 
 For example, `github_monitor --setup` becomes `python3 github_monitor.py --setup` on macOS or Linux. Use `python` on Windows. Replace placeholders such as `<github_target>` with a GitHub username or complete profile URL.
 
-The manual-script examples assume the current directory contains `github_monitor.py`. Commands printed by setup, Doctor and recovery messages use the running interpreter and the full script path. Packaged installations use the running interpreter with `-m github_monitor`.
+Activate the tool's virtual environment before running these commands. For a downloaded script, run them from the directory containing `github_monitor.py`.
 
 For first-time configuration, follow [Setup & First Run](setup-and-first-run.md). Use [Doctor Preflight](troubleshooting.md#doctor-preflight) to check a setup before monitoring.
 
@@ -191,9 +191,9 @@ To disable sending an email on errors (enabled by default):
 github_monitor github_username -e
 ```
 
-An error alert goes out once the same failure has lasted **5 minutes**, so a short outage or one lost request reaches nobody, while a failure that cannot clear on its own, such as a rejected token, is alerted at once. Each kind of failure alerts once per channel. A channel that could not deliver is tried again on a later failing check, after **5 minutes** at first and then after twice the previous wait, up to an hour. A run that recovered alerts again when it fails later. The same rule governs the webhook error alert.
+Email and webhook error alerts are sent after **5 minutes** of a continuing failure. Problems that need your action, such as a rejected token, alert immediately. Each kind of failure alerts once per channel. Failed deliveries are retried after 5 minutes, with increasing waits up to an hour. Alerts can fire again after monitoring recovers.
 
-Only data a check needs to detect changes counts as a failure. Optional lookups that add detail to an alert that still goes out, such as a push event's file list or the parent of a comment, are reported on screen and in `--verbose` without starting an outage or sending an error alert. When several checks fail together, the alert carries the one with the fix to apply and the number of other checks that also failed.
+Missing optional details, such as a push event's file list, are reported on screen without triggering an error alert. When several checks fail, the alert shows the action to take and the number of other failures.
 
 You can combine all email notifications flags together if needed.
 
@@ -277,7 +277,7 @@ The `--help` screen is coloured too. Group headings, option names, the values th
 
 `COLOR_THEME` overrides individual colours. It is merged over the built-in theme, so name only the parts you want to change:
 
-Generated configuration files ship this block commented out, so the built-in defaults apply and a later change to them reaches you. Overrides you added are written back as a real block when setup rebuilds the file, so they are not lost. A configuration file written by an earlier version sets every colour explicitly and therefore keeps the old ones: delete its `COLOR_THEME` block to follow the current defaults, or edit the values you want to keep. Such a file still loads unchanged.
+The built-in colours apply unless you set `COLOR_THEME`. Older configurations may set every colour explicitly. Remove that block to use current defaults or edit individual values to keep a custom theme.
 
 ```ini
 COLOR_THEME = { "repository": "bright_magenta bold", "username": "green" }

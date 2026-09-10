@@ -1,11 +1,5 @@
 # Setup & First Run
 
-Printed commands use short names. Activate the tool's virtual environment before running them. For a downloaded script, run them from the script directory. Recovery commands retain selected configuration and dotenv paths.
-
-Before replacing a configuration, setup copies retained inline credentials to the selected private dotenv file when that file has no value for the same key. An existing dotenv value, including an explicit empty value, keeps precedence. If preservation fails, the original configuration stays in place. Setup backups omit inline credentials.
-
-When rebuilding an existing configuration, setup keeps its saved `DOTENV_FILE` unless you pass `--env-file PATH`. A nonempty exported secret takes precedence over the dotenv file. An explicit empty value in that file still overrides the configuration, both after saving and on the next run. Quoted dotenv keys receive the same replacement confirmation as unquoted keys.
-
 ## Before You Start
 
 Install the tool using [Installation](installation.md). You will need a GitHub username or complete profile URL and the [GitHub personal access token](#github-personal-access-token). The wizard collects credentials through hidden prompts.
@@ -21,13 +15,13 @@ The easiest first run is the guided setup wizard:
 github_monitor --setup
 ```
 
-It asks for the target, whether to save it, the polling interval, GitHub authentication, optional email and webhook alerts and output destinations. Polling accepts seconds or values such as `30s`, `2m`, `1.5h`, `1h 30m` and `1d`. The existing automatic timezone setting is retained instead of adding another setup question. Answers stay in memory until the complete summary is reviewed. Choose **Save settings** to write non-secret settings to `github_monitor.conf` and private values to a separate mode-0600 `.env` file. The dotenv file is created when a private value was entered or an inline credential needs to be preserved. An existing configuration file receives a timestamped mode-0600 backup before replacement. The dotenv file is replaced without a backup, so a secret you replace is not left behind in a `.bak` file. A rebuilt file starts from the settings already in place with your answers applied over them. A section you decline is cleared rather than carried over, so declining email leaves no mail server behind.
+The wizard asks for the target, polling interval, GitHub token, optional email and webhook alerts and output files. Polling accepts seconds or durations such as `30s`, `2m`, `1.5h`, `1h 30m` and `1d`.
 
-The wizard links to GitHub's token settings then validates a newly entered token before saving it. Every answer the wizard cannot use offers a way out, so one value you cannot produce right now does not cost you the answers already given: a blank answer asks whether to continue without it and names what stops working, a rejected one offers to enter it again and declining a webhook destination leaves that channel and its alerts off. Email setup signs in to the mail server before saving, so a wrong password or an unreachable host is caught during setup instead of at the first alert. No email is sent. A refused sign-in offers the mail server questions again, and if the server was only unreachable the answers are kept so `--doctor` can check them later. After saving, the wizard offers the read-only Doctor preflight whenever a target was given, so a setup that still has no token can see what is missing, then offers to start monitoring once that run passed. Both prompts default to yes. Commands after setup match a PyPI install or downloaded script and name the selected config plus the dotenv file when one was written.
+Review the summary and change any section before choosing **Save settings**. Regular settings go to `github_monitor.conf` and private values go to `.env`. Setup asks before replacing an existing configuration and keeps a timestamped backup. On a rerun, saved settings provide the defaults. Declining a section disables it, including any previously configured alerts. See [Storing Secrets](configuration.md#storing-secrets) for credential storage and backup details.
 
-`--setup --config-file PATH --env-file PATH` selects custom wizard destinations. Both destinations are checked before the first question, so an unwritable path or a directory given by mistake is reported straight away rather than after you have answered everything. When the configuration file already exists it asks whether to replace it and offers to write somewhere else instead. Setup parses an existing config as data and preserves its supported settings. It moves usable secrets found there into the dotenv output. Nothing is written during questioning or section edits. The summary's **File destinations** section changes where the configuration and dotenv files are written. Moving the dotenv file asks the authentication and notification questions again, since a secret you chose to keep was never going to reach the new file. **Save settings** validates the complete generated config then prepares every file it writes before replacing any destination.
+Setup validates your GitHub token and checks email sign-in without sending a message. After saving, it offers [Doctor Preflight](troubleshooting.md#doctor-preflight) when a target is available, then offers to start monitoring if the checks pass.
 
-Setup replaces each file separately. If saving secrets fails after the configuration was saved, setup stops and identifies the saved configuration. Correct the destination then rerun `--setup` with the same `--config-file` and `--env-file`, review the settings and run `--doctor` before monitoring. A crash between replacements can also leave a new configuration beside the previous dotenv file. If temporary-file cleanup also fails, the error names the private temporary files to remove after restoring directory access. The configuration backup can recover non-secret settings. Replaced secrets are not backed up.
+Use `--config-file PATH` and `--env-file PATH` or the summary's **File destinations** section to choose other files. Both paths must be writable. `--config-file none` and `--env-file none` are not supported by setup.
 
 ## Quick Start
 
@@ -48,7 +42,7 @@ Check setup before monitoring:
 Full options: python3 github_monitor.py --help
 ```
 
-A PyPI install prints `github_monitor` instead of `python3 github_monitor.py`. Windows prints `python github_monitor.py`. An interactive terminal offers the setup wizard with a default-yes prompt. A non-interactive `--setup` run explains how to use `--generate-config` instead. `--setup` needs somewhere to put both files, so it refuses `--config-file none` and `--env-file none`.
+A PyPI install uses `github_monitor`. For manual installations, use `python3 github_monitor.py` on macOS or Linux and `python github_monitor.py` on Windows. Setup needs an interactive terminal. In scripts, use `--generate-config` instead.
 
 When setup saves the target, later runs can omit it. A positional target still overrides `TARGET_GITHUB_USERNAME` for one run. If no target is saved, running the tool without arguments shows the first-run screen above.
 
@@ -83,7 +77,7 @@ Go to your GitHub token settings: [https://github.com/settings/tokens](https://g
 
 Then create a personal access token with the access needed for the accounts and repositories you monitor.
 
-The preferred method validates the token against the configured GitHub API before saving it to `.env`. Input is hidden and the dotenv file is changed only after GitHub returns the authenticated login:
+Use the hidden prompt to validate your token with GitHub and save it to `.env`:
 
 ```sh
 github_monitor --set-github-token

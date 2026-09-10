@@ -33,11 +33,11 @@ Startup resolves values in this order:
 4. Exported secret environment variables
 5. Explicit command-line options
 
-An exported secret overrides the same key from a dotenv file. An explicit command-line option overrides every saved source. This includes `--no-color` in Doctor. Startup checks use these effective values instead of the defaults that existed when the module was imported.
+An exported secret overrides the same key from a dotenv file. Explicit command-line options override saved settings, including `--no-color` in Doctor.
 
 ## Liveness output
 
-`LIVENESS_CHECK_INTERVAL` accepts a finite, nonnegative number of seconds. Set it to `0` to disable liveness output. The default is now 86400 seconds (24 hours), up from 43200 seconds (12 hours) in 2.6.3. Startup reports invalid values before making network requests.
+`LIVENESS_CHECK_INTERVAL` is the quiet period before a monitoring reminder. The default is 86400 seconds (24 hours). Use a nonnegative number of seconds or `0` to disable it.
 
 ## GitHub API URL
 
@@ -116,7 +116,7 @@ Which alerts each channel sends is covered in [Email Notifications](usage.md#ema
 
 ## Webhook Settings
 
-A delivery keeps its original destination and credentials for every retry. Provider errors also redact Bearer and Basic credentials echoed without their Authorization scheme. Reloaded settings apply to the next delivery. Discord templates must produce a JSON object. Dictionary templates and JSON strings are supported, including strings with escaped format braces. Unknown fields such as `{descripton}` and placeholders the alert cannot fill are reported with the template text that failed, before delivery. Legacy JSON strings with doubled object braces still work. Alert text is expanded once, so quotes and braces in a title remain literal text. Mentions remain disabled in every template.
+Discord templates must produce a JSON object. Dictionary templates and JSON strings are supported, including legacy strings with doubled object braces. Unsupported placeholders are reported before delivery. Alert text is kept literal and mentions are disabled. Reloaded settings apply to the next delivery.
 
 GitHub Monitor can send activity alerts through Discord or the native [ntfy publish API](https://docs.ntfy.sh/publish/). Webhook alerts work with or without email.
 
@@ -208,7 +208,7 @@ Which alerts each channel sends is covered in [Webhook Notifications](usage.md#w
 
 ## Storing Secrets
 
-Prefer `--set-github-token` for `GITHUB_TOKEN`, `--set-smtp-password` for `SMTP_PASSWORD` and `--set-webhook-url` for `WEBHOOK_URL` because all three commands keep input hidden. GitHub token setup validates the secret before saving it, and SMTP password setup signs in to the mail server before saving it without sending anything. SMTP password setup reports incomplete mail settings before asking for the password, naming the ones still to set. Store `NTFY_ACCESS_TOKEN` as an environment variable or in a dotenv file. A secret you clear, such as declining the ntfy access token during setup, has its line removed from the dotenv file rather than left behind as an empty value.
+Use `--set-github-token`, `--set-smtp-password` or `--set-webhook-url` to enter secrets through hidden prompts. Token setup validates with GitHub. SMTP setup checks sign-in without sending an email and requires the other mail settings first. Store `NTFY_ACCESS_TOKEN` in an environment variable or dotenv file.
 
 As a fallback, set environment variables using `export` on **Linux/Unix/macOS/WSL** systems:
 
@@ -263,9 +263,20 @@ A forgotten `export` can shadow the dotenv file invisibly, so `--debug` names ev
 
 A secret still holding its `your_...` placeholder counts as unset and is left out, and a run with no secret anywhere says so on one line.
 
-When a `--set-*` command or the setup wizard replaces a secret, it rewrites that one assignment in place and leaves every other line alone. A line you wrote as `export NAME=...` keeps its `export`, so a dotenv file you also source in a shell still exports it. A value you clear has its line removed rather than left empty.
+Secret commands update the selected value without changing other dotenv settings. Clearing a value removes its assignment.
 
 Secret commands finish writing the replacement before changing the existing dotenv file. A failed write leaves the original contents intact. On POSIX systems the replacement is readable and writable only by its owner. Existing dotenv symlinks continue to point to the updated file.
+
+### Reloading secrets and backup contents
+
+On systems with SIGHUP, reloading applies changes from the selected dotenv file. Removing a file-owned
+assignment restores its independently configured fallback or clears the value when no fallback exists.
+A read or parsing failure keeps the last usable credentials and reports how to correct the file.
+An explicit reload can override a startup export with a value present in the file.
+
+Setup keeps the saved `DOTENV_FILE` unless you choose another path with `--env-file`. Changing the destination repeats the authentication and notification questions. Review them carefully: the wizard's secrets can replace values already in the new file. The old file stays intact. At startup, a nonempty exported secret overrides the dotenv file. A dotenv value, including an empty one, overrides the configuration.
+
+Setup moves retained credentials from older configuration files into the selected dotenv file before replacing the configuration. It leaves the original configuration in place if it cannot preserve those credentials. Setup creates a timestamped configuration backup with inline secrets removed. General `--generate-config` backups can contain inline credentials. Replaced dotenv secrets are not backed up.
 
 ## TLS Verification
 
@@ -290,16 +301,3 @@ It is generally not recommended to use values lower than 10 minutes as new event
 `VERIFY_REPOSITORY_CLOSURES` defaults to `True`. Missing issues, pull requests and discussions require confirmation of their closed state, with a separate fixed limit of five extra HTTP requests per monitoring cycle across all repositories. These lookups do not use `NET_MAX_RETRIES` or follow redirects. Unverified items stay in the previous snapshot and are checked again on later cycles. Set `VERIFY_REPOSITORY_CLOSURES = False` to restore immediate disappearance-based alerts without verification requests. The verbose/debug startup summary shows the setting and shared budget. The budget shows `Inactive` when repository tracking or verification is disabled. See [Monitoring Mode](usage.md#monitoring-mode).
 
 An interval below 30 seconds invites the GitHub rate limiter, which stops the tool seeing anything. `--doctor` warns when the configured interval is that short.
-
-
-### Reloading secrets and backup contents
-
-On systems with SIGHUP, reloading applies changes from the selected dotenv file. Removing a file-owned
-assignment restores its independently configured fallback or clears the value when no fallback exists.
-A read or parsing failure keeps the last usable credentials and reports how to correct the file.
-An explicit reload can override a startup export with a value present in the file.
-
-
-Setup's configuration backup blanks inline secret assignments from older configurations while retaining
-other settings and comments. General `--generate-config` backups remain exact copies and can contain
-inline credentials. The dotenv file is not backed up during secret replacement.
