@@ -2698,7 +2698,7 @@ def smtp_connect_and_login(use_ssl, smtp_timeout=15):
         if use_ssl:
             smtp_object.starttls(context=smtp_ssl_context())
         debug_print("SMTP connection established", host=SMTP_HOST, port=SMTP_PORT)
-        smtp_object.login(SMTP_USER, SMTP_PASSWORD)
+        smtp_login(smtp_object, SMTP_USER, SMTP_PASSWORD)
         debug_print("SMTP authentication succeeded", host=SMTP_HOST)
         return smtp_object
     except Exception as connect_error:
@@ -6582,6 +6582,22 @@ def mail_sign_in_settings_missing():
 # Joins setting names into the phrase a message reads out, for example "SMTP_HOST and SMTP_USER"
 def join_setting_names(names, conjunction):
     return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} {conjunction} {names[-1]}"
+
+
+# Signs in while removing the attempted password from SMTP rejection replies before they can be rendered
+def smtp_login(connection, username, password):
+    try:
+        return connection.login(username, password)
+    except smtplib.SMTPResponseException as error:
+        reply = error.smtp_error
+        if password:
+            if isinstance(reply, bytes):
+                reply = reply.replace(str(password).encode("utf-8"), b"<redacted>")
+            else:
+                reply = str(reply).replace(str(password), "<redacted>")
+        error.smtp_error = reply
+        error.args = (error.smtp_code, reply)
+        raise
 
 
 # Signs in to the configured mail server with one entered password, so nothing is saved that cannot deliver
