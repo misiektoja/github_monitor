@@ -150,3 +150,21 @@ def test_a_new_outage_after_a_recovery_alerts_again(gm_module, monkeypatch, tmp_
     errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE, OUTAGE, None, OUTAGE], [(True, True)], 6)
 
     assert [(call["email"], call["webhook"]) for call in errors] == [(True, True), (True, True)]
+
+
+# A failure the loop can retry away is alerted only once the outage has lasted the alert delay, which the second
+# failing check of a poller this slow already is, while the first failing check reaches nobody
+@pytest.mark.parametrize("stop_after,expected", [(2, []), (3, [(True, True)])])
+def test_a_retryable_failure_is_alerted_once_the_outage_has_lasted(gm_module, monkeypatch, tmp_path, stop_after, expected):
+    service_outage = gm_module.GithubException(503, {"message": "Service Unavailable"}, None)
+    errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [service_outage], [(True, True)], stop_after)
+
+    assert [(call["email"], call["webhook"]) for call in errors] == expected
+
+
+# A failure nothing here can retry away is alerted on the first check, since waiting would change nothing
+def test_a_failure_that_cannot_clear_itself_is_alerted_at_once(gm_module, monkeypatch, tmp_path):
+    rejected = gm_module.GithubException(401, {"message": "Bad credentials"}, None)
+    errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [rejected], [(True, True)], 2)
+
+    assert len(errors) == 1
