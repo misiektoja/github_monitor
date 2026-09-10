@@ -2937,7 +2937,7 @@ def debug_monitor_check_start(check_number, user):
 def debug_monitor_check_timing(check_number, user, started_at, interval):
     duration = max(0.0, time.monotonic() - started_at)
     next_check = datetime.now() + dt.timedelta(seconds=interval)
-    debug_print("Completed monitoring check", check=f"#{check_number}", user=user, duration=f"{duration:.3f}s", next=next_check.astimezone().isoformat(), interval=display_time(interval))
+    debug_print("Completed monitoring check", check=f"#{check_number}", user=user, outcome="OK", duration=f"{duration:.3f}s", next=next_check.astimezone().isoformat(), interval=display_time(interval))
 
 
 # Logs one scheduled wait with its reason and next timestamp
@@ -7011,6 +7011,7 @@ def github_monitor_user(user, csv_file_name):
 
             if outage_outcome in ("full", "repeat"):
                 print_cur_ts("Timestamp:\t\t\t")
+            debug_print("Completed monitoring check", check=f"#{check_number}", user=user, outcome="failed", code=advice.code, error=f"{type(e).__name__}: {e}")
             debug_monitor_wait_timing("monitored user refresh failure", GITHUB_CHECK_INTERVAL)
             time.sleep(GITHUB_CHECK_INTERVAL)
             continue

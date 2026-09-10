@@ -264,7 +264,7 @@ def test_monitor_timing_transcript_covers_poll_and_sleep(gm_module, monkeypatch,
 
     output = capsys.readouterr().out
     assert "Starting monitoring check: check=#7, user=octocat" in output
-    assert "Completed monitoring check: check=#7, user=octocat, duration=2.500s" in output
+    assert "Completed monitoring check: check=#7, user=octocat, outcome=OK, duration=2.500s" in output
     assert "interval=1 minute" in output
     assert "Waiting: interval=1 minute, reason=normal monitoring interval" in output
     assert "next=" in output
@@ -484,3 +484,32 @@ def test_a_failed_delivery_reads_the_same_with_verbose_on(gm_module, monkeypatch
     assert transcripts[True] == transcripts[False]
     assert transcripts[True].count("Error sending email:") == 1
     assert transcripts[True].count("Error sending webhook:") == 1
+
+
+# Collects every debug trace in the module as an operation name mapped to the field sets its call sites pass
+def traced_operations(module):
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    traced = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "debug_print" and node.args and isinstance(node.args[0], ast.Constant):
+            traced.setdefault(node.args[0].value, []).append({keyword.arg for keyword in node.keywords})
+    return traced
+
+
+# Verifies both ends of a monitoring check report a result, since a trace that records only the healthy ones
+# makes a failing run look like a hung one. The loop has no offline driver, so this reads the call sites
+def test_both_ends_of_a_monitoring_check_report_a_result(gm_module):
+    completed = traced_operations(gm_module).get("Completed monitoring check", [])
+
+    assert len(completed) == 2, "a monitoring check ends on two paths, and each one reports how it went"
+    assert all("outcome" in fields for fields in completed), "a completed check is traced without saying how it went"
+    assert any({"code", "error"} <= fields for fields in completed), "the failing path names neither the category nor the error"
+
+
+# Verifies every scheduled wait says how long it is and what it is waiting for, since a measured pause with no
+# reason explains nothing about why the run is idle
+def test_every_wait_says_how_long_it_is_and_why(gm_module):
+    waits = traced_operations(gm_module).get("Waiting", [])
+
+    assert waits, "no wait is traced at all"
+    assert all({"interval", "reason"} <= fields for fields in waits), "a wait is traced without its length or its reason"
