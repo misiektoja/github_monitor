@@ -552,9 +552,9 @@ def test_the_delivered_email_names_the_recipient_and_the_subject(gm_module, monk
     assert "* Email delivered to alerts@example.test: New release in misiektoja/github_monitor" in capsys.readouterr().out
 
 
-# Verifies verbose adds no line to a failed delivery, since the error printed under it is not conditional
-# on verbose and a second line would report the same failure twice
-def test_a_failed_delivery_reads_the_same_with_verbose_on(gm_module, monkeypatch, capsys):
+# Verifies verbose does not report a failed delivery twice. It adds the triage fields every recovery block
+# carries under verbose and nothing else, since a second description of the same failure would only repeat it
+def test_a_failed_delivery_is_reported_once_with_verbose_on(gm_module, monkeypatch, capsys):
     configure_smtp(gm_module, monkeypatch)
     configure_webhook(gm_module, monkeypatch)
     monkeypatch.setattr(gm_module, "smtp_connect_and_login", Mock(side_effect=OSError("the server refused the connection")))
@@ -567,9 +567,72 @@ def test_a_failed_delivery_reads_the_same_with_verbose_on(gm_module, monkeypatch
         assert gm_module.send_webhook("Title", "Body", "profile", sleeper=lambda seconds: None) == 1
         transcripts[verbose] = capsys.readouterr().out
 
-    assert transcripts[True] == transcripts[False]
-    assert transcripts[True].count("Error sending email:") == 1
-    assert transcripts[True].count("Error sending webhook:") == 1
+    added = [line for line in transcripts[True].splitlines() if line not in transcripts[False].splitlines()]
+    assert all(line.startswith(("Recovery code: ", "Retryable: ")) for line in added), added
+    for transcript in transcripts.values():
+        assert transcript.count("* Error: ") == 2
+        assert transcript.count("To fix: ") == 2
+
+
+# Verifies an unusable SMTP setting names the fix and the guide, so no delivery path reports without saying what to do
+def test_a_refused_smtp_setting_carries_the_shared_error_block(gm_module, monkeypatch, capsys):
+    configure_smtp(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "SMTP_PORT", "not a port")
+
+    assert gm_module.send_email("subject", "body", "", True) == 1
+
+    output = capsys.readouterr().out
+    assert "* Error: The SMTP settings are incorrect: SMTP_PORT is not a port number between 1 and 65535" in output
+    assert "To fix: Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL then run: " in output
+    assert f"Guide: {gm_module.SMTP_GUIDE_URL}" in output
+
+
+# Verifies a mail server that refuses the session is reported with the fix rather than as a bare line
+def test_a_refused_smtp_session_carries_the_shared_error_block(gm_module, monkeypatch, capsys):
+    configure_smtp(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", Mock(side_effect=OSError("the server refused the connection")))
+
+    assert gm_module.send_email("subject", "body", "", True) == 1
+
+    output = capsys.readouterr().out
+    assert "* Error: The SMTP server could not be reached" in output
+    assert f"Guide: {gm_module.SMTP_GUIDE_URL}" in output
+
+
+@pytest.mark.parametrize("status, code, retryable", [(404, "webhook.rejected", False), (500, "webhook.rejected", True)])
+# Verifies a refused delivery carries the fix, the guide and a retryable flag that follows the status
+def test_a_refused_webhook_delivery_carries_the_shared_error_block(gm_module, monkeypatch, status, code, retryable):
+    configure_webhook(gm_module, monkeypatch)
+
+    advice = gm_module.webhook_failure_advice(f"The webhook service returned HTTP {status}", FakeResponse(status, text="the service said no"))
+
+    assert advice.code == code
+    assert advice.retryable is retryable
+    assert advice.guide_url == gm_module.WEBHOOK_GUIDE_URL
+    assert advice.detail == "the service said no"
+
+
+@pytest.mark.parametrize("message, code", [
+    ("WEBHOOK_URL must contain a complete HTTPS link", "webhook.invalid"),
+    ("WEBHOOK_PROVIDER must be discord or ntfy", "webhook.invalid"),
+    ("The webhook service could not be reached (ConnectionError)", "webhook.unreachable"),
+    ("The webhook delivery did not complete", "webhook.rejected"),
+])
+# Verifies each webhook failure reaches its own code rather than one catch-all the taxonomy cannot distinguish
+def test_each_webhook_failure_reaches_its_own_code(gm_module, message, code):
+    assert gm_module.webhook_failure_advice(message).code == code
+
+
+# Verifies no delivery path prints at all, since a print there is an error line that skipped the recovery block
+def test_no_delivery_path_prints_outside_the_recovery_block(gm_module):
+    delivery = {"send_email", "send_webhook", "print_webhook_error", "smtp_connect_and_login", "post_webhook_request"}
+    offenders = []
+    for node in ast.walk(ast.parse(Path(gm_module.__file__).read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.FunctionDef) or node.name not in delivery:
+            continue
+        offenders.extend(f"{node.name}:{call.lineno}" for call in ast.walk(node) if isinstance(call, ast.Call) and getattr(call.func, "id", "") == "print")
+
+    assert not offenders, "delivery paths printing outside the recovery block: " + ", ".join(offenders)
 
 
 # Collects every debug trace in the module as an operation name mapped to the field sets its call sites pass

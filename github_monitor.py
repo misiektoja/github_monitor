@@ -2504,11 +2504,16 @@ def smtp_connect_and_login(use_ssl, smtp_timeout=15):
         raise
 
 
+# Returns the advice for an SMTP setting or message field that makes a delivery impossible
+def email_settings_advice(validation_error, install_context=None):
+    return make_recovery_advice("smtp.configuration", f"The SMTP settings are incorrect: {validation_error}", f"Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL then run: {render_install_command(['--send-test-email'], install_context)}", False, "", SMTP_GUIDE_URL)
+
+
 # Sends email notification
 def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
     validation_error = validate_email_settings(subject, body, body_html)
     if validation_error is not None:
-        print(f"Error sending email - SMTP settings are incorrect ({validation_error})")
+        print_recovery_advice(email_settings_advice(validation_error))
         return 1
 
     try:
@@ -2534,7 +2539,7 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
         verbose_print(f"Email delivered to {RECEIVER_EMAIL}: {subject}")
     except Exception as e:
         debug_print("SMTP delivery", outcome="failed", host=SMTP_HOST, attempt="1/1", error=f"{type(e).__name__}: {e}")
-        print(f"Error sending email: {sanitize_error_text(e)}")
+        print_recovery_advice(classify_recovery_error(e, "email"))
         return 1
     return 0
 
@@ -3469,9 +3474,38 @@ def build_webhook_headers(provider: str, payload: dict) -> dict:
     return headers
 
 
-# Prints one webhook configuration or delivery failure without exposing private values
-def print_webhook_error(message: Any) -> None:
-    print(f"Error sending webhook: {sanitize_webhook_text(message)}")
+# Returns the HTTP status a webhook failure carries, whether it arrived as a response or as an exception holding one
+def webhook_failure_status(source: Any) -> Optional[int]:
+    status = getattr(source, "status_code", None)
+    if not isinstance(status, int):
+        status = getattr(getattr(source, "response", None), "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+# Returns the service response body a webhook failure carries, kept for the technical detail line --debug prints
+def webhook_failure_detail(source: Any) -> str:
+    body = getattr(getattr(source, "response", source), "text", "")
+    return str(body)[:200] if isinstance(body, str) else ""
+
+
+# Maps one webhook configuration or delivery failure to the advice naming the setting or condition to check
+def webhook_failure_advice(message: Any, source: Any = None) -> RecoveryAdvice:
+    origin = message if source is None else source
+    summary = sanitize_webhook_text(message)
+    lowered = summary.casefold()
+    webhook_command = render_install_command(["--send-test-webhook"])
+    detail = webhook_failure_detail(origin) or summary
+    if any(term in lowered for term in ("must contain", "must be discord", "could not be formatted", "header", "priority", "tags")):
+        return make_recovery_advice("webhook.invalid", summary or "The webhook configuration is not usable", f"Check WEBHOOK_URL, WEBHOOK_PROVIDER and the alert settings then run: {webhook_command}", False, detail, WEBHOOK_GUIDE_URL)
+    if any(term in lowered for term in ("could not be reached", "connection", "timed out", "timeout")):
+        return make_recovery_advice("webhook.unreachable", "The webhook service could not be reached", "Check connectivity and the webhook host, then try again", True, detail, WEBHOOK_GUIDE_URL)
+    status = webhook_failure_status(origin)
+    return make_recovery_advice("webhook.rejected", summary or "The webhook service refused the delivery", f"Confirm the webhook still exists and the URL is current then run: {webhook_command}", status is not None and status >= 500, detail, WEBHOOK_GUIDE_URL)
+
+
+# Reports one webhook configuration or delivery failure through the recovery block, without exposing private values
+def print_webhook_error(message: Any, source: Any = None) -> None:
+    print_recovery_advice(webhook_failure_advice(message, source))
 
 
 # Sends one webhook request with the destination, deadline and redirect policy every delivery shares
@@ -3533,7 +3567,7 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
             last_error = response
             if not retryable or attempt == WEBHOOK_MAX_ATTEMPTS - 1:
                 debug_print("Webhook delivery", channel=provider, outcome="failed", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
-                print_webhook_error(f"HTTP {response.status_code}: {getattr(response, 'text', '')[:200]}")
+                print_webhook_error(f"The webhook service returned HTTP {response.status_code}", response)
                 return 1
             delay = webhook_retry_after_seconds(response) if response.status_code == 429 else WEBHOOK_FALLBACK_RETRY_SECONDS
             debug_monitor_wait_timing(f"webhook HTTP {response.status_code} retry attempt {attempt_number + 1}/{WEBHOOK_MAX_ATTEMPTS}", delay)
@@ -3549,7 +3583,7 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
             debug_monitor_wait_timing(f"webhook request retry attempt {attempt_number + 1}/{WEBHOOK_MAX_ATTEMPTS}", WEBHOOK_FALLBACK_RETRY_SECONDS)
             sleep_func(WEBHOOK_FALLBACK_RETRY_SECONDS)
     debug_print("Webhook delivery", channel=provider, outcome="failed", after=f"{WEBHOOK_MAX_ATTEMPTS} attempts")
-    print_webhook_error(last_error)
+    print_webhook_error("The webhook delivery did not complete", last_error)
     return 1
 
 
