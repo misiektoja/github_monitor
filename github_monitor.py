@@ -993,7 +993,8 @@ def colorize_status(status_text):
 def _split_output_label(value, labels):
     body = value.rstrip("\n")
     cursor = len(body) - len(body.lstrip())
-    if body[cursor:cursor + 1] == "*":
+    # Detail lines are bulleted with either marker, so the label sits behind one of them
+    if body[cursor:cursor + 1] in ("*", "-") and body[cursor + 1:cursor + 2].isspace():
         cursor += 1
         cursor += len(body[cursor:]) - len(body[cursor:].lstrip())
     for label in labels:

@@ -226,6 +226,12 @@ def test_labelled_rows_use_the_expected_theme_part(colored, line, part):
     assert colored[part] in monitor._colorize_line(line)
 
 
+# Verifies bulleted detail rows colour their value like the unbulleted label
+@pytest.mark.parametrize(("line", "value", "part"), [(" - Commit message:\t\t'fix(setup): keep the kept default'", "'fix(setup): keep the kept default'", "commit"), (" - Commit author:\tOcto Cat", "Octo Cat", "username"), (" - Commit SHA:\t8ab4f0c", "8ab4f0c", "id")])
+def test_bulleted_labelled_rows_colour_their_value(colored, line, value, part):
+    assert f"{colored[part]}{value}{monitor.ANSI_RESET}" in monitor._colorize_line(line)
+
+
 # Verifies each real listing row colours its complete identity token
 @pytest.mark.parametrize(("line", "token", "part"), (("🔸 hello-world (fork) ", "hello-world", "repository"), ("- octocat/hello-world [ https://github.com/octocat/hello-world/ ]", "octocat/hello-world", "repository"), ("- hello-world [ https://github.com/octocat/hello-world/ ]", "hello-world", "repository"), ("- octocat [ https://github.com/octocat/ ]", "octocat", "username"), ("- octocat (Octo Cat 🐙)", "octocat (Octo Cat 🐙)", "username")))
 def test_listing_rows_use_their_domain_colour(colored, line, token, part):
