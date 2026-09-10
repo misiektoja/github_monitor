@@ -770,11 +770,13 @@ def truncate_string_per_line(message, truncate_width, tabsize=8):
         current_width = 0
         truncated = []
         position = 0
+        style_open = False
         while position < len(expanded_line):
             # A colour sequence is copied through free of charge, so styling never eats into the visible width
             escape = SGR_SEQUENCE_RE.match(expanded_line, position)
             if escape:
                 truncated.append(escape.group(0))
+                style_open = escape.group(0) not in ("\x1b[0m", "\x1b[m")
                 position = escape.end()
                 continue
             char = expanded_line[position]
@@ -782,6 +784,9 @@ def truncate_string_per_line(message, truncate_width, tabsize=8):
             if char_width is None or char_width < 0:
                 char_width = 0
             if current_width + char_width > truncate_width:
+                # The cut may have dropped the reset, which would leave the colour running into every later line
+                if style_open:
+                    truncated.append(ANSI_RESET)
                 break
             truncated.append(char)
             current_width += char_width
@@ -8030,6 +8035,17 @@ def validate_github_endpoint_url(value):
     return parsed.scheme.casefold() == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
 
 
+# Names every on/off setting holding something other than True or False, since a string such as "false" would count as on
+def runtime_boolean_errors():
+    errors = []
+    for statement in ast.parse(CONFIG_BLOCK, "<built-in-config>", "exec").body:
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name) and isinstance(statement.value, ast.Constant) and isinstance(statement.value.value, bool):
+            value = globals().get(statement.targets[0].id)
+            if not isinstance(value, bool):
+                errors.append(f"{statement.targets[0].id} must be True or False, not {value!r}")
+    return errors
+
+
 # Returns all type and range errors in settings that control runtime timing or counts
 def runtime_configuration_errors():
     errors = []
@@ -8135,6 +8151,10 @@ def doctor_check_configuration(report, args, parser):
     if numeric_errors:
         advice = make_recovery_advice("config.value_invalid", "One or more numeric settings are invalid", recovery_fix_with_guide("Correct the reported settings in the configuration file", CONFIG_GUIDE_URL), False)
         report.add("Configuration", "FAIL", advice.summary, "Invalid numeric settings: " + "; ".join(numeric_errors), advice)
+    boolean_errors = runtime_boolean_errors()
+    if boolean_errors:
+        advice = make_recovery_advice("config.value_invalid", "One or more on/off settings are invalid", recovery_fix_with_guide("Set the reported settings to True or False in the configuration file", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, "Invalid on/off settings: " + "; ".join(boolean_errors), advice)
     if TARGET_GITHUB_USERNAME and not wizard_normalize_target(TARGET_GITHUB_USERNAME):
         advice = make_recovery_advice("config.value_invalid", "Saved GitHub target is invalid", recovery_fix_with_guide("Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL", CONFIG_GUIDE_URL), False)
         report.add("Configuration", "FAIL", advice.summary, sanitize_error_text(TARGET_GITHUB_USERNAME), advice)
@@ -8348,8 +8368,8 @@ def doctor_check_notifications(report):
         report.add("Notifications", "WARN", advice.summary, "Nothing would ever be delivered", advice)
         return
     if not validate_webhook_url(WEBHOOK_URL):
-        advice = make_recovery_advice("webhook.invalid", "Webhook alerts have no valid destination", recovery_fix_with_guide("Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL), False)
-        report.add("Notifications", "FAIL", advice.summary, "WEBHOOK_URL must be a complete supported HTTPS destination", advice)
+        advice = make_recovery_advice("webhook.invalid", "WEBHOOK_URL must contain a complete HTTPS link", recovery_fix_with_guide("Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "FAIL", advice.summary, "The destination is not a complete supported HTTPS link", advice)
         return
     provider = normalized_webhook_provider()
     customization_error = validate_webhook_customization(provider)
@@ -9551,6 +9571,11 @@ def prepare_wizard_atomic_file(path, content):
     return temporary_path
 
 
+# Raised when an existing config is not replaced because nobody could confirm it, as opposed to a path in the way of writing one
+class ConfigExistsError(FileExistsError):
+    pass
+
+
 # Confirms replacing one existing generated configuration, or requires --force outside a terminal
 def confirm_generated_config_replacement(destination, force=False, interactive=None, input_func=input):
     if not destination.exists() or force:
@@ -9561,7 +9586,7 @@ def confirm_generated_config_replacement(destination, force=False, interactive=N
         debug_swallowed_exception("Generated configuration terminal detection", exc)
         terminal_is_interactive = False
     if not terminal_is_interactive:
-        raise FileExistsError(f"Config file '{destination}' already exists. Re-run with --force to replace it after a timestamped backup.")
+        raise ConfigExistsError(f"Config file '{destination}' already exists. Re-run with --force to replace it after a timestamped backup.")
     try:
         answer = str(input_func(f"Config file '{destination}' exists. Replace it and create a timestamped backup? [y/N]: ")).strip().casefold()
     except (EOFError, KeyboardInterrupt):
@@ -9790,7 +9815,7 @@ def main():
                 sys.exit(0)
         except (ValueError, IndexError) as exc:
             debug_swallowed_exception("Generated configuration argument resolution", exc)
-        except FileExistsError as exc:
+        except ConfigExistsError as exc:
             advice = make_recovery_advice("file.exists", "The generated configuration would replace an existing file", recovery_fix_with_guide(str(exc), CONFIG_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
             print_recovery_advice(advice)
             sys.exit(1)

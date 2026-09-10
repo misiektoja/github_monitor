@@ -666,11 +666,11 @@ def test_truncation_applies_to_every_line():
     assert monitor.truncate_string_per_line("abcdef\nabcdef", 3) == "abc\nabc"
 
 
-# Verifies truncation still applies without wcwidth, counting one column per character and skipping colour codes
+# Verifies truncation still applies without wcwidth, counting one column per character, skipping colour codes and closing the cut colour
 def test_truncation_falls_back_to_one_column_per_character_without_wcwidth(monkeypatch):
     monkeypatch.setitem(sys.modules, "wcwidth", None)
 
-    assert monitor.truncate_string_per_line("\x1b[31m0123456789ABCDEF\x1b[0m\n原神原神", 4) == "\x1b[31m0123\n原神原神"
+    assert monitor.truncate_string_per_line("\x1b[31m0123456789ABCDEF\x1b[0m\n原神原神", 4) == "\x1b[31m0123\x1b[0m\n原神原神"
 
 
 # Verifies indented wizard hints stay plain, matching the five tools that never coloured them
@@ -779,3 +779,19 @@ def test_the_help_screen_is_not_repainted_by_the_monitoring_rules(help_palette):
     written = buffer.getvalue()
     assert written == parser.format_help()
     assert help_palette["help_option"] in written
+
+
+# Verifies a cut line closes the colour it opened, so the truncated tail does not paint every line printed after it
+def test_a_truncated_line_closes_its_open_colour():
+    pytest.importorskip("wcwidth")
+
+    assert monitor.truncate_string_per_line("\x1b[31m0123456789ABCDEF\x1b[0m", 10) == "\x1b[31m0123456789" + monitor.ANSI_RESET
+
+
+# Verifies no extra reset is added when the colour closed before the cut or the line was never cut
+def test_a_closed_or_uncut_colour_gains_no_extra_reset():
+    pytest.importorskip("wcwidth")
+
+    assert monitor.truncate_string_per_line("\x1b[31m0123\x1b[0m456789ABCDEF", 10) == "\x1b[31m0123\x1b[0m456789"
+    assert monitor.truncate_string_per_line("\x1b[31m0123\x1b[0m", 10) == "\x1b[31m0123\x1b[0m"
+    assert monitor.truncate_string_per_line("0123456789ABCDEF", 10) == "0123456789"
