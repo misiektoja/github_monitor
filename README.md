@@ -12,9 +12,12 @@
 
 Powerful real-time GitHub OSINT tool that tracks everything from profile updates and contribution streaks to repository engagement and follower changes - even detecting when you've been blocked, all with instant email and webhook notifications.
 
+<p align="center">
+   <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
+</p>
+
 **Full documentation: [misiektoja.github.io/github_monitor](https://misiektoja.github.io/github_monitor/)**
 
-<a id="-quick-install"></a>
 <a id="-quick-install-run"></a>
 ### 🚀 Quick Install & Run
 
@@ -35,10 +38,6 @@ github_monitor --setup
 The wizard asks for the target, authentication, polling intervals and optional notifications. Review the settings before saving them. See [Setup & First Run](https://misiektoja.github.io/github_monitor/setup-and-first-run/) for the service-specific steps.
 
 For the manual single-file method, dependencies and upgrade commands, see [Installation](https://misiektoja.github.io/github_monitor/installation/).
-
-<p align="center">
-   <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
-</p>
 
 ## Features
 
@@ -68,7 +67,6 @@ For the manual single-file method, dependencies and upgrade commands, see [Insta
 * **Runtime controls**: Adjust the running monitor through supported signals.
 * **GitHub deployments**: Connect to public GitHub or GitHub Enterprise.
 
-<a id="common-commands"></a>
 ## Common Commands
 
 Use [Quick Install & Run](#-quick-install-run) for first-time setup. These examples use the PyPI command. See [Command Format by Installation Method](https://misiektoja.github.io/github_monitor/usage/#command-format) for manual-script equivalents.
