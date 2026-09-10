@@ -3673,7 +3673,7 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
             retryable = response.status_code == 429 or 500 <= response.status_code <= 599
             debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", status=response.status_code, retryable=retryable)
             if 200 <= response.status_code <= 299:
-                verbose_print(f"Webhook delivered through {provider}: {webhook_values['title']}")
+                verbose_print(f"Webhook delivered through {webhook_provider_display_name(provider)}: {webhook_values['title']}")
                 debug_print("Webhook delivery", channel=provider, outcome="OK", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 return 0
             last_error = response
@@ -4116,7 +4116,7 @@ def reload_secrets_signal_handler(sig, frame):
         detected_provider = detect_webhook_provider(WEBHOOK_URL)
         if detected_provider and detected_provider != normalized_webhook_provider():
             WEBHOOK_PROVIDER = detected_provider
-            print(f"* Updated webhook provider to {detected_provider}")
+            print(f"* Updated webhook provider to {webhook_provider_display_name(detected_provider)}")
 
     print_cur_ts("Timestamp:\t\t\t")
 
@@ -7635,7 +7635,7 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
         configured_provider = normalized_webhook_provider()
         if detected_provider and detected_provider != configured_provider:
             WEBHOOK_PROVIDER = detected_provider
-            verbose_print(f"Selected webhook provider {detected_provider} from the destination URL")
+            verbose_print(f"Selected webhook provider {webhook_provider_display_name(detected_provider)} from the destination URL")
             if report_warnings:
                 print(f"* Warning: Configured webhook provider did not match the URL. Using {webhook_provider_display_name(detected_provider)}.")
 

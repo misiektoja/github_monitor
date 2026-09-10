@@ -229,7 +229,7 @@ def test_delivery_transcript_covers_retry_and_outcome(gm_module, monkeypatch, ca
     assert "reason=webhook HTTP 503 retry attempt 2/2" in output
     assert "attempt=2/2, status=204, retryable=False" in output
     assert "outcome=OK, attempt=2/2" in output
-    assert "Webhook delivered through discord: Title" in output
+    assert "Webhook delivered through Discord: Title" in output
     assert "private-diagnostic-token" not in output
     assert sleeps == [gm_module.WEBHOOK_FALLBACK_RETRY_SECONDS]
 
