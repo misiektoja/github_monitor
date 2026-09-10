@@ -3254,6 +3254,10 @@ def classify_recovery_error(error, context="unknown", install_context=None):
     if selected_context == "webhook":
         return make_recovery_advice("webhook.invalid", "Webhook setup could not be completed", f"Check the HTTPS destination then run: {webhook_command}", False, detail, WEBHOOK_GUIDE_URL)
     if selected_context == "email":
+        # A settings problem is reported as itself. Only a failure that actually reached the network is
+        # described as one, so an unconfigured mail server is not reported as an unreachable host
+        if isinstance(error, MailConfigurationError):
+            return make_recovery_advice("smtp.configuration", sanitize_error_text(error), "Set the named settings in the config file, or run --setup, then run the command again", False, detail, SMTP_GUIDE_URL)
         return make_recovery_advice("smtp.configuration", "The SMTP server could not be reached", "Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", True, detail, SMTP_GUIDE_URL)
     if selected_context == "config":
         # The parser already names the line and setting, so the summary carries it instead of only --debug
@@ -6161,15 +6165,17 @@ def update_dotenv_value(path: Path, key: str, value: str) -> None:
         raise
     output_lines = []
     replaced = False
+    # A secret cleared by its owner is removed rather than emptied, so a disabled value cannot linger here
+    removing = not value
     for line in existing.splitlines():
         match = match_dotenv_assignment(line, key)
         if match:
-            if not replaced:
+            if not replaced and not removing:
                 output_lines.append(render_dotenv_assignment(key, value, match.group(1)))
-                replaced = True
+            replaced = True
             continue
         output_lines.append(line)
-    if not replaced:
+    if not replaced and not removing:
         output_lines.append(render_dotenv_assignment(key, value))
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -6179,7 +6185,7 @@ def update_dotenv_value(path: Path, key: str, value: str) -> None:
         debug_print("Private settings file update", path=path, key=key, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
     debug_print("Private settings file update succeeded", path=path, key=key, mode="0600")
-    verbose_print(f"Saved {key} in the private settings file")
+    verbose_print(f"{'Saved' if value else 'Removed'} {key} in the private settings file")
 
 
 # Validates one GitHub token without exposing it in errors or output
@@ -6310,6 +6316,25 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
     return str(destination)
 
 
+# Represents a mail server that is not configured well enough for a password to be checked against it
+class MailConfigurationError(ValueError):
+    pass
+
+
+# The settings a sign-in needs before a password can be checked against the mail server
+MAIL_SIGN_IN_SETTINGS = ("SMTP_HOST", "SMTP_USER", "SENDER_EMAIL", "RECEIVER_EMAIL")
+
+
+# Returns the mail settings a sign-in needs that are still empty or still hold their shipped placeholder
+def mail_sign_in_settings_missing():
+    return [name for name in MAIL_SIGN_IN_SETTINGS if not secret_is_set(str(globals().get(name) or ""))]
+
+
+# Joins setting names into the phrase a message reads out, for example "SMTP_HOST and SMTP_USER"
+def join_setting_names(names, conjunction):
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} {conjunction} {names[-1]}"
+
+
 # Signs in to the configured mail server with one entered password, so nothing is saved that cannot deliver
 def smtp_sign_in(password, timeout=5):
     global SMTP_PASSWORD
@@ -6339,6 +6364,11 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
     terminal_is_interactive = sys.stdin.isatty() if interactive is None else interactive
     if not terminal_is_interactive:
         raise ValueError("--set-smtp-password requires an interactive terminal so the password stays hidden")
+    # Checked before the prompts, so nobody types a password only to be told the mail server was never configured
+    missing = mail_sign_in_settings_missing()
+    if missing:
+        names = join_setting_names(missing, "and")
+        raise MailConfigurationError(f"The mail server settings are incomplete, {names} {'is' if len(missing) == 1 else 'are'} not set")
     prompt = input if input_func is None else input_func
     if dotenv_contains_key(destination, "SMTP_PASSWORD"):
         try:

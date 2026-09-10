@@ -140,3 +140,33 @@ def test_set_github_token_replace_question_uses_the_shared_wording(gm_module, mo
         gm_module.run_set_github_token(env_file=destination, interactive=True, input_func=lambda prompt: prompts.append(prompt) or "y", getpass_func=lambda prompt: "github_pat_private")
 
         assert prompts == [f"Replace the saved GitHub token in '{destination.resolve()}'? [y/N]: "]
+
+
+# Verifies a secret cleared by its owner leaves the file rather than staying behind as an empty value
+def test_a_cleared_secret_is_removed_rather_than_emptied(gm_module, tmp_path):
+    destination = tmp_path / ".env-monitor"
+    destination.write_text('UNRELATED=stay\nNTFY_ACCESS_TOKEN="tk_old"\n', encoding="utf-8")
+
+    gm_module.update_dotenv_value(destination, "NTFY_ACCESS_TOKEN", "")
+
+    assert destination.read_text(encoding="utf-8") == "UNRELATED=stay\n"
+
+
+# Verifies clearing a secret the file never held does not add an empty line for it
+def test_clearing_an_absent_secret_writes_nothing(gm_module, tmp_path):
+    destination = tmp_path / ".env-monitor"
+    destination.write_text("UNRELATED=stay\n", encoding="utf-8")
+
+    gm_module.update_dotenv_value(destination, "NTFY_ACCESS_TOKEN", "")
+
+    assert destination.read_text(encoding="utf-8") == "UNRELATED=stay\n"
+
+
+# Verifies an exported assignment is removed too, so a cleared secret cannot survive in the environment
+def test_a_cleared_exported_secret_is_removed(gm_module, tmp_path):
+    destination = tmp_path / ".env-monitor"
+    destination.write_text('export NTFY_ACCESS_TOKEN="tk_old"\nUNRELATED=stay\n', encoding="utf-8")
+
+    gm_module.update_dotenv_value(destination, "NTFY_ACCESS_TOKEN", "")
+
+    assert destination.read_text(encoding="utf-8") == "UNRELATED=stay\n"

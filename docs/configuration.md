@@ -194,7 +194,7 @@ Which alerts each channel sends is covered in [Webhook Notifications](usage.md#w
 
 ## Storing Secrets
 
-Prefer `--set-github-token` for `GITHUB_TOKEN`, `--set-smtp-password` for `SMTP_PASSWORD` and `--set-webhook-url` for `WEBHOOK_URL` because all three commands keep input hidden. GitHub token setup validates the secret before saving it, and SMTP password setup signs in to the mail server before saving it without sending anything. Store `NTFY_ACCESS_TOKEN` as an environment variable or in a dotenv file.
+Prefer `--set-github-token` for `GITHUB_TOKEN`, `--set-smtp-password` for `SMTP_PASSWORD` and `--set-webhook-url` for `WEBHOOK_URL` because all three commands keep input hidden. GitHub token setup validates the secret before saving it, and SMTP password setup signs in to the mail server before saving it without sending anything. SMTP password setup reports incomplete mail settings before asking for the password, naming the ones still to set. Store `NTFY_ACCESS_TOKEN` as an environment variable or in a dotenv file. A secret you clear, such as declining the ntfy access token during setup, has its line removed from the dotenv file rather than left behind as an empty value.
 
 As a fallback, set environment variables using `export` on **Linux/Unix/macOS/WSL** systems:
 

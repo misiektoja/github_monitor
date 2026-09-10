@@ -31,6 +31,14 @@ def make_test_directory():
     return tempfile.TemporaryDirectory(dir=ARTIFACT_ROOT)
 
 
+# Completes the mail settings a sign-in needs, so a test about the password is not stopped by the guard in front of it
+def configure_mail(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+    monkeypatch.setattr(gm_module, "SENDER_EMAIL", "monitor@example.test")
+    monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "alerts@example.test")
+
+
 # Reports an interactive in-memory terminal for prompt gating
 class FakeTTY(io.StringIO):
     # Reports TTY support without requiring a real terminal
@@ -946,8 +954,7 @@ def test_set_smtp_password_signs_in_before_saving(gm_module, request, monkeypatc
     destination = Path(directory.name) / ".env-monitor"
     destination.write_text("UNRELATED=stay\n", encoding="utf-8")
     sign_in = Mock(return_value="monitor@example.test")
-    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
-    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+    configure_mail(gm_module, monkeypatch)
 
     result = gm_module.run_set_smtp_password(str(destination), interactive=True, getpass_func=lambda prompt: "app-password", sign_in=sign_in)
 
@@ -963,11 +970,12 @@ def test_set_smtp_password_signs_in_before_saving(gm_module, request, monkeypatc
 
 
 # Verifies a password the mail server refuses leaves the dotenv file untouched
-def test_set_smtp_password_keeps_the_dotenv_file_on_a_refused_sign_in(gm_module, request):
+def test_set_smtp_password_keeps_the_dotenv_file_on_a_refused_sign_in(gm_module, request, monkeypatch):
     directory = make_test_directory()
     request.addfinalizer(directory.cleanup)
     destination = Path(directory.name) / ".env-monitor"
     destination.write_text("UNRELATED=stay\n", encoding="utf-8")
+    configure_mail(gm_module, monkeypatch)
     refuse = Mock(side_effect=gm_module.smtplib.SMTPAuthenticationError(535, b"authentication failed"))
 
     with pytest.raises(gm_module.smtplib.SMTPAuthenticationError):
@@ -1001,6 +1009,33 @@ def test_smtp_sign_in_uses_the_configured_mail_server(gm_module, monkeypatch):
     connect.assert_called_once_with(True, smtp_timeout=5)
     session.quit.assert_called_once()
     assert gm_module.SMTP_PASSWORD == "saved"
+
+
+# Verifies incomplete mail settings are reported before the password is asked for, not after the sign-in fails
+def test_incomplete_mail_settings_are_refused_before_the_prompt(gm_module, tmp_path, monkeypatch):
+    destination = tmp_path / ".env-monitor"
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
+    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+    monkeypatch.setattr(gm_module, "SENDER_EMAIL", "")
+    monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "")
+
+    with pytest.raises(gm_module.MailConfigurationError) as raised:
+        gm_module.run_set_smtp_password(str(destination), interactive=True, getpass_func=Mock(side_effect=AssertionError("hidden prompt used")), sign_in=Mock(side_effect=AssertionError("signed in")))
+
+    assert str(raised.value) == "The mail server settings are incomplete, SENDER_EMAIL and RECEIVER_EMAIL are not set"
+    assert not destination.exists()
+
+
+# Verifies a host still holding its shipped placeholder counts as unset, so a first run is not sent to it
+def test_a_placeholder_mail_host_is_refused_before_the_prompt(gm_module, tmp_path, monkeypatch):
+    destination = tmp_path / ".env-monitor"
+    configure_mail(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "your_smtp_server_ssl")
+
+    with pytest.raises(gm_module.MailConfigurationError) as raised:
+        gm_module.run_set_smtp_password(str(destination), interactive=True, getpass_func=Mock(side_effect=AssertionError("hidden prompt used")), sign_in=Mock(side_effect=AssertionError("signed in")))
+
+    assert str(raised.value) == "The mail server settings are incomplete, SMTP_HOST is not set"
 
 
 # Verifies incomplete mail server settings are reported instead of a bare connection failure
@@ -1152,8 +1187,7 @@ def test_declining_an_existing_config_without_an_alternative_writes_nothing(gm_m
 # Verifies an interrupted entry reports the cancel itself instead of a mail server that was never contacted
 def test_an_interrupted_secret_entry_is_not_reported_as_an_unreachable_server(gm_module, tmp_path, monkeypatch):
     destination = tmp_path / ".env"
-    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
-    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+    configure_mail(gm_module, monkeypatch)
 
     def interrupt(prompt=""):
         raise KeyboardInterrupt
@@ -1173,8 +1207,7 @@ def test_an_interrupted_secret_entry_is_not_reported_as_an_unreachable_server(gm
 def test_a_declined_secret_replacement_reports_the_kept_value(gm_module, tmp_path, monkeypatch):
     destination = tmp_path / ".env"
     destination.write_text('SMTP_PASSWORD="original"\n', encoding="utf-8")
-    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.test")
-    monkeypatch.setattr(gm_module, "SMTP_USER", "monitor@example.test")
+    configure_mail(gm_module, monkeypatch)
 
     with pytest.raises(gm_module.RecoveryError) as raised:
         gm_module.run_set_smtp_password(str(destination), interactive=True, input_func=lambda prompt: "n", getpass_func=Mock(side_effect=AssertionError("hidden prompt used")))

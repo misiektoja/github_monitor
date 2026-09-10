@@ -136,6 +136,25 @@ def test_config_advice_summary_names_the_rejected_setting(gm_module):
     assert "GITHUB_CHECK_INTERVAL" in gm_module.render_recovery_advice(advice, verbose=False, debug=False)
 
 
+# Verifies an unconfigured mail server is reported as itself, not as a host that could not be reached
+def test_email_advice_reports_a_settings_problem_rather_than_a_connection_one(gm_module):
+    error = gm_module.MailConfigurationError("The mail server settings are incomplete, SENDER_EMAIL is not set")
+
+    advice = gm_module.classify_recovery_error(error, "email")
+
+    assert advice.summary == "The mail server settings are incomplete, SENDER_EMAIL is not set"
+    assert advice.retryable is False
+    assert "could not be reached" not in advice.summary
+
+
+# Verifies a failure that did reach the network is still reported as an unreachable server
+def test_email_advice_still_reports_an_unreachable_server(gm_module):
+    advice = gm_module.classify_recovery_error(OSError("connection refused"), "email")
+
+    assert advice.summary == "The SMTP server could not be reached"
+    assert advice.retryable is True
+
+
 # Verifies a repeated failure category prints its fix once and keeps the retry note on the summary line
 def test_repeated_advice_keeps_the_summary_and_drops_the_fix(gm_module, capsys):
     tracker = gm_module.RecoveryHintTracker()
