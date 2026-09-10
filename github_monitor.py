@@ -9191,25 +9191,35 @@ def render_wizard_dotenv(state):
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-# Creates a unique fsynced mode-0600 backup before replacing one existing file
-def backup_wizard_file(path, timestamp=None):
-    if not path.exists():
+# Copies an existing file to a timestamped owner-only .bak beside it, returning the backup path or None when there was nothing to copy
+def create_timestamped_backup(destination, attempts=100):
+    destination_path = Path(destination).expanduser()
+    if not destination_path.is_file():
         return None
-    stamp = timestamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    original = path.read_bytes()
-    for suffix in range(100):
-        discriminator = "" if suffix == 0 else f".{suffix}"
-        backup_path = path.with_name(f"{path.name}.{stamp}{discriminator}.bak")
+    existing_bytes = destination_path.read_bytes()
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    for attempt in range(attempts):
+        suffix = f".{stamp}.bak" if attempt == 0 else f".{stamp}-{attempt}.bak"
+        backup_path = destination_path.with_name(destination_path.name + suffix)
         try:
-            descriptor = os.open(backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            # O_EXCL so a backup can never overwrite an earlier one, even under a concurrent run
+            descriptor = os.open(str(backup_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
             continue
-        with os.fdopen(descriptor, "wb") as backup_file:
-            backup_file.write(original)
-            backup_file.flush()
-            os.fsync(backup_file.fileno())
-        return backup_path
-    raise FileExistsError(f"Could not create a unique backup for '{path}'")
+        try:
+            with os.fdopen(descriptor, "wb") as backup_file:
+                backup_file.write(existing_bytes)
+                backup_file.flush()
+                os.fsync(backup_file.fileno())
+        except Exception as exc:
+            debug_print("Backup write", path=str(backup_path), outcome="failed", error=f"{type(exc).__name__}: {exc}")
+            try:
+                os.unlink(str(backup_path))
+            except OSError:
+                pass
+            raise
+        return str(backup_path)
+    raise OSError(f"Could not create a unique backup for '{destination_path}' after {attempts} attempts")
 
 
 # Prepares one fsynced mode-0600 temporary file beside its final destination
@@ -9257,7 +9267,7 @@ def write_generated_config(output_file, content, force=False, interactive=None, 
     destination = Path(os.path.expanduser(str(output_file)))
     if not confirm_generated_config_replacement(destination, force, interactive, input_func):
         return None, False
-    backup_path = backup_wizard_file(destination) if destination.exists() else None
+    backup_path = create_timestamped_backup(destination) if destination.exists() else None
     if backup_path is not None:
         debug_print("Generated configuration backup written", path=backup_path)
     temporary_path = prepare_wizard_atomic_file(destination, content)
@@ -9276,7 +9286,7 @@ def save_wizard_files(state):
     config_content = render_wizard_config(state)
     dotenv_content = render_wizard_dotenv(state)
     # Only the configuration is backed up: a copy of the credentials being replaced is the one thing not worth keeping
-    config_backup = backup_wizard_file(state.config_path)
+    config_backup = create_timestamped_backup(state.config_path)
     # A dotenv with nothing in it is noise beside the config, so an empty one is never created
     destinations = [(state.config_path, config_content)]
     if dotenv_content.strip() or state.dotenv_path.exists():
@@ -9362,7 +9372,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         return 1
     saved_rows = [("Configuration:", state.config_path)]
     if config_backup is not None:
-        saved_rows.append(("Backup:", config_backup))
+        saved_rows.append(("Backup:", Path(config_backup)))
     if state.dotenv_path.exists():
         saved_rows.append(("Secrets:" if state.secrets else "Dotenv:", state.dotenv_path))
     saved_width = max(len(label) for label, _ in saved_rows) + 1
@@ -9401,7 +9411,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
 
 
 # Prints the sibling-style first-run actions and optionally launches guided setup
-def run_zero_argument_welcome(parser, input_func=input, input_stream=None, stream=None, install_context=None, setup_runner=None, show_banner=True):
+def print_welcome_screen(parser, input_func=input, input_stream=None, stream=None, install_context=None, setup_runner=None, show_banner=True):
     destination = terminal_surface_stream(sys.stdout if stream is None else stream)
     source = sys.stdin if input_stream is None else input_stream
     context = detect_install_context() if install_context is None else install_context
@@ -9949,7 +9959,7 @@ def main():
         args.username = saved_target
 
     if len(sys.argv) == 1 and not args.username:
-        sys.exit(run_zero_argument_welcome(parser, show_banner=False))
+        sys.exit(print_welcome_screen(parser, show_banner=False))
 
     if args.set_github_token:
         try:

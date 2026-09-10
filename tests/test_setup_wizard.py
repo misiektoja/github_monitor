@@ -1,5 +1,6 @@
 """Offline contract tests for guided setup and the zero-argument welcome."""
 
+import re
 import argparse
 import io
 import os
@@ -301,9 +302,9 @@ def test_setup_save_backs_up_only_the_config_and_migrates_config_secrets(gm_modu
 
     config_backup = gm_module.save_wizard_files(state)
 
-    assert config_backup.read_text(encoding="utf-8") == config_original
-    assert stat.S_IMODE(config_backup.stat().st_mode) == 0o600
-    assert [entry.name for entry in Path(directory.name).iterdir() if entry.name.endswith(".bak")] == [config_backup.name]
+    assert Path(config_backup).read_text(encoding="utf-8") == config_original
+    assert stat.S_IMODE(Path(config_backup).stat().st_mode) == 0o600
+    assert [entry.name for entry in Path(directory.name).iterdir() if entry.name.endswith(".bak")] == [Path(config_backup).name]
     assert "GITHUB_TOKEN" not in config_path.read_text(encoding="utf-8")
     dotenv_content = dotenv_path.read_text(encoding="utf-8")
     assert 'UNRELATED="keep"' in dotenv_content
@@ -532,7 +533,7 @@ def test_zero_argument_welcome_setup_starts_monitoring(gm_module, request, monke
     monkeypatch.setattr(gm_module.getpass, "getpass", lambda _prompt="": "private-token")
     monkeypatch.setattr(gm_module, "launch_wizard_monitoring", lambda arguments: launched.append(arguments) or 0)
 
-    exit_code = gm_module.run_zero_argument_welcome(
+    exit_code = gm_module.print_welcome_screen(
         wizard_parser(),
         scripted_reader(["y", *minimal_setup_answers("y", "y")]),
         FakeTTY(),
@@ -574,7 +575,7 @@ def test_zero_argument_welcome_offers_guided_setup_on_a_tty(gm_module):
         return 7
 
     context = gm_module.InstallContext("manual", "Linux", ("/private/runtime/python3", "/private/install/github_monitor.py"))
-    exit_code = gm_module.run_zero_argument_welcome(wizard_parser(), scripted_reader(["y"]), input_stream, output, install_context=context, setup_runner=setup_runner)
+    exit_code = gm_module.print_welcome_screen(wizard_parser(), scripted_reader(["y"]), input_stream, output, install_context=context, setup_runner=setup_runner)
 
     transcript = output.getvalue()
     assert exit_code == 7
@@ -594,7 +595,7 @@ def test_zero_argument_welcome_offers_guided_setup_on_a_tty(gm_module):
 def test_zero_argument_welcome_non_interactive_has_no_prompt(gm_module):
     output = io.StringIO()
 
-    exit_code = gm_module.run_zero_argument_welcome(wizard_parser(), stream=output, input_stream=io.StringIO())
+    exit_code = gm_module.print_welcome_screen(wizard_parser(), stream=output, input_stream=io.StringIO())
 
     assert exit_code == 1
     assert "Run the guided setup wizard now?" not in output.getvalue()
@@ -1060,7 +1061,7 @@ def test_interrupting_the_welcome_offer_reports_a_cancellation(gm_module):
     def interrupt():
         raise KeyboardInterrupt
 
-    exit_code = gm_module.run_zero_argument_welcome(wizard_parser(), interrupt, FakeTTY(), output, setup_runner=lambda *args, **kwargs: pytest.fail("the wizard ran after being interrupted"))
+    exit_code = gm_module.print_welcome_screen(wizard_parser(), interrupt, FakeTTY(), output, setup_runner=lambda *args, **kwargs: pytest.fail("the wizard ran after being interrupted"))
 
     assert exit_code == 1
     assert "Setup cancelled." in output.getvalue()
@@ -1255,7 +1256,7 @@ def test_every_setup_block_heading_is_followed_by_one_blank_line(gm_module, requ
 def test_zero_argument_welcome_closes_with_a_blank_line(gm_module):
     output = io.StringIO()
 
-    exit_code = gm_module.run_zero_argument_welcome(wizard_parser(), stream=output, input_stream=io.StringIO())
+    exit_code = gm_module.print_welcome_screen(wizard_parser(), stream=output, input_stream=io.StringIO())
 
     assert exit_code == 1
     assert output.getvalue().endswith(f"{gm_module.QUICK_START_GUIDE_URL}\n\n")
@@ -1435,3 +1436,34 @@ def test_a_rejected_duration_keeps_the_default(gm_module):
     assert "  Keeping 60s - 1m." in written
     # The hint the question carries belongs in the prompt, not in the offer that repeats it
     assert "Try entering the GitHub polling interval again? [Y/n]: " in written
+
+
+# Verifies the backup name every tool in this family writes, so one documented shape covers them all
+def test_the_backup_carries_the_family_name_and_mode(tmp_path, gm_module):
+    destination = tmp_path / "monitor.conf"
+    destination.write_text("SETTING = 1\n", encoding="utf-8")
+
+    backup_path = gm_module.create_timestamped_backup(destination)
+
+    assert re.fullmatch(r"monitor\.conf\.\d{14}\.bak", Path(backup_path).name)
+    assert Path(backup_path).read_text(encoding="utf-8") == "SETTING = 1\n"
+    assert stat.S_IMODE(Path(backup_path).stat().st_mode) == 0o600
+
+
+# Verifies a second backup in the same second takes its own name rather than overwriting the first
+def test_a_second_backup_in_the_same_second_keeps_the_first(tmp_path, gm_module):
+    destination = tmp_path / "monitor.conf"
+    destination.write_text("first\n", encoding="utf-8")
+    first = gm_module.create_timestamped_backup(destination)
+    destination.write_text("second\n", encoding="utf-8")
+
+    second = gm_module.create_timestamped_backup(destination)
+
+    assert first != second
+    assert Path(first).read_text(encoding="utf-8") == "first\n"
+    assert Path(second).read_text(encoding="utf-8") == "second\n"
+
+
+# Verifies a destination that is not there yet earns no backup, since there is nothing to copy
+def test_a_missing_destination_earns_no_backup(tmp_path, gm_module):
+    assert gm_module.create_timestamped_backup(tmp_path / "absent.conf") is None

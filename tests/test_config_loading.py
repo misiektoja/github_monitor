@@ -1,5 +1,6 @@
 """Tests that a config file is read as data and never executed."""
 
+from pathlib import Path
 import pytest
 
 import github_monitor as monitor
@@ -116,7 +117,7 @@ def test_generated_config_backs_up_the_file_it_replaces(tmp_path):
 
     assert written is True
     assert config.read_text(encoding="utf-8") == "GITHUB_CHECK_INTERVAL = 60\n"
-    assert backup_path is not None and backup_path.read_text(encoding="utf-8") == "GITHUB_CHECK_INTERVAL = 1200\n"
+    assert backup_path is not None and Path(backup_path).read_text(encoding="utf-8") == "GITHUB_CHECK_INTERVAL = 1200\n"
 
 
 # Verifies a fresh destination needs no approval and no backup
