@@ -839,6 +839,22 @@ def test_a_failed_delivery_test_reaches_the_summary(gm_module, monkeypatch):
     assert "1 check(s) failed, 0 warning(s)." in summary.getvalue()
 
 
+# Verifies a failed delivery test fails the whole run, so the exit code and the last sentence agree
+def test_a_failed_delivery_test_changes_the_exit_code(gm_module, monkeypatch):
+    configure_healthy_doctor(gm_module, monkeypatch)
+    configure_email(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "smtp_connect_and_login", lambda use_ssl, smtp_timeout=15: SimpleNamespace(quit=lambda: None))
+    output = FakeTTY()
+
+    result = gm_module.run_doctor_preflight(doctor_args(), Mock(), request_get=successful_request, github_factory=FakeGithub, module_finder=lambda name: object(), input_func=lambda: "yes", input_stream=FakeTTY(), stream=output, email_sender=Mock(return_value=1), webhook_sender=Mock(return_value=0))
+
+    transcript = output.getvalue()
+    assert result == 1
+    assert "[FAIL] Doctor test email delivery failed" in transcript
+    assert "1 check(s) failed" in transcript
+    assert "All checks passed" not in transcript
+
+
 # Verifies every doctor entry point renders its summary after the delivery tests, so the sentence and the exit code describe one run
 def test_the_summary_is_rendered_after_the_delivery_tests(gm_module):
     import ast
