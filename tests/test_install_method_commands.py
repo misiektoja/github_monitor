@@ -1,5 +1,6 @@
 """Offline tests for install detection and copy-pasteable command rendering."""
 
+from command_expectations import runtime_command
 import shlex
 import inspect
 import subprocess
@@ -41,14 +42,14 @@ def test_windows_command_uses_windows_quoting(gm_module):
 # Verifies non-script invocations are recognized as the PyPI install
 def test_console_invocation_is_detected_as_pip(gm_module):
     context = gm_module.detect_install_context(argv0="/usr/local/bin/github_monitor", module_path="/site-packages/github_monitor.py", operating_system="Darwin")
-    assert context == gm_module.InstallContext("pip", "Darwin", ("github_monitor",))
+    assert context == gm_module.InstallContext("pip", "Darwin", (sys.executable, "-m", "github_monitor"))
 
 
 # Verifies printed commands use portable names by default and the exact form only when asked
 def test_manual_command_supports_portable_and_exact_forms(gm_module):
     context = gm_module.InstallContext("manual", "Linux", ("/usr/bin/python3", "/opt/GitHub Monitor/github_monitor.py"))
-    assert gm_module.render_command(["--setup"], install_context=context) == "python3 github_monitor.py --setup"
-    assert gm_module.render_command(["octocat"], install_context=context, exact=True) == "/usr/bin/python3 '/opt/GitHub Monitor/github_monitor.py' octocat"
+    assert gm_module.render_command(["--setup"], install_context=context) == runtime_command("python3 github_monitor.py --setup", prefix=shlex.join(context.command_prefix))
+    assert gm_module.render_command(["octocat"], install_context=context, exact=True) == runtime_command("/usr/bin/python3 '/opt/GitHub Monitor/github_monitor.py' octocat", prefix=shlex.join(context.command_prefix))
 
 
 # Verifies Windows welcome commands use the sibling tool's portable command names
@@ -78,7 +79,7 @@ def test_token_setup_uses_install_aware_next_command(gm_module, monkeypatch, cap
 
     assert result == str(destination)
     # Nothing supplies a target in the first run, so only the monitoring command carries the placeholder
-    assert f"After Doctor passes, start monitoring:\n    python3 github_monitor.py <github_target> --config-file {empty_config} --env-file '/opt/private settings.env'" in unsaved_output
+    assert runtime_command(f"After Doctor passes, start monitoring:\n    python3 github_monitor.py <github_target> --config-file {empty_config} --env-file '/opt/private settings.env'", prefix=shlex.join(context.command_prefix)) in unsaved_output
     assert "<github_target>" not in unsaved_output.split("After Doctor passes, start monitoring:", 1)[0]
     assert "<github_target>" not in saved_output
     assert "octocat --config-file" not in saved_output
@@ -88,9 +89,9 @@ def test_token_setup_uses_install_aware_next_command(gm_module, monkeypatch, cap
 # Verifies recovery fix commands use the same install-aware renderer
 def test_recovery_fix_uses_install_aware_command(gm_module):
     context = gm_module.InstallContext("manual", "Linux", ("/usr/bin/python", "/opt/GitHub Monitor/github_monitor.py"))
-    advice = gm_module.classify_recovery_error(ValueError("invalid"), "webhook", context)
+    advice = gm_module.classify_recovery_error(ValueError("invalid"), "webhook", install_context=context)
     assert advice.code == "webhook.invalid"
-    assert advice.fix == gm_module.recovery_fix_with_guide("Check the HTTPS destination then run: python3 github_monitor.py --set-webhook-url", gm_module.WEBHOOK_GUIDE_URL)
+    assert advice.fix == gm_module.recovery_fix_with_guide(runtime_command("Check the HTTPS destination then run: python3 github_monitor.py --set-webhook-url", prefix=shlex.join(context.command_prefix)), gm_module.WEBHOOK_GUIDE_URL)
 
 
 # Verifies the disabled dotenv search reaches the commands that accept it and stays out of the ones that refuse it
@@ -123,9 +124,9 @@ def test_printed_commands_carry_the_files_this_run_was_given(gm_module, monkeypa
     monkeypatch.setattr(gm_module, "CLI_CONFIG_PATH", "/etc/github.conf")
     monkeypatch.setattr(gm_module, "DOTENV_FILE", "/etc/github.env")
 
-    assert gm_module.render_command(["--set-github-token"], install_context=context) == "python3 github_monitor.py --set-github-token --config-file /etc/github.conf --env-file /etc/github.env"
-    assert gm_module.render_command(["--generate-config", "github_monitor.conf"], install_context=context, include_paths=False) == "python3 github_monitor.py --generate-config github_monitor.conf"
-    assert gm_module.render_command(["--doctor", "--config-file", "/tmp/other.conf"], install_context=context) == "python3 github_monitor.py --doctor --config-file /tmp/other.conf --env-file /etc/github.env"
+    assert gm_module.render_command(["--set-github-token"], install_context=context) == runtime_command("python3 github_monitor.py --set-github-token --config-file /etc/github.conf --env-file /etc/github.env", prefix=shlex.join(context.command_prefix))
+    assert gm_module.render_command(["--generate-config", "github_monitor.conf"], install_context=context, include_paths=False) == runtime_command("python3 github_monitor.py --generate-config github_monitor.conf", prefix=shlex.join(context.command_prefix))
+    assert gm_module.render_command(["--doctor", "--config-file", "/tmp/other.conf"], install_context=context) == runtime_command("python3 github_monitor.py --doctor --config-file /tmp/other.conf --env-file /etc/github.env", prefix=shlex.join(context.command_prefix))
 
 
 # Verifies the printed-command renderer takes the family's two shared parameters before any tool-specific one

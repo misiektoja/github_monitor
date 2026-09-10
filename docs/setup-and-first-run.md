@@ -1,5 +1,8 @@
 # Setup & First Run
 
+
+When rebuilding an existing configuration, setup keeps its saved `DOTENV_FILE` unless you pass `--env-file PATH`. A nonempty exported secret takes precedence over the dotenv file. An explicit empty value in that file still overrides the configuration, both after saving and on the next run. Quoted dotenv keys receive the same replacement confirmation as unquoted keys.
+
 ## Before You Start
 
 Install the tool using [Installation](installation.md). You will need a GitHub username or complete profile URL and the [GitHub personal access token](#github-personal-access-token). The wizard collects credentials through hidden prompts.
@@ -23,7 +26,7 @@ The wizard links to GitHub's token settings then validates a newly entered token
 
 ## Quick Start
 
-Run the tool without arguments to see the same first-run screen used across the monitor tools. It uses short portable commands instead of the active interpreter and absolute script paths:
+The commands printed below use the active installation and quote paths containing spaces.
 
 ```text
 For <github_target>, use a GitHub username or complete profile URL.

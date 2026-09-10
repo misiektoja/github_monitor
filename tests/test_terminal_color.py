@@ -331,9 +331,28 @@ def test_terminal_stream_colors_and_sanitizes(colored):
     assert "\x1b[2J" not in terminal.getvalue()
 
 
+# Records progress output without a live terminal
+class RecordingProgressStream:
+    # Starts an empty output record
+    def __init__(self):
+        self.values = []
+
+    # Reports the terminal capability required by progress output
+    def isatty(self):
+        return True
+
+    # Records one progress write
+    def write(self, text):
+        self.values.append(text)
+
+    # Leaves recorded output immediately available
+    def flush(self):
+        pass
+
+
 # Verifies doctor progress has no ANSI and erases visible width
 def test_doctor_progress_line_is_never_colored(colored, monkeypatch):
-    terminal = type("Stream", (), {"isatty": lambda self: True, "write": lambda self, text: self.values.append(text), "flush": lambda self: None, "values": []})()
+    terminal = RecordingProgressStream()
     monkeypatch.setattr(monitor, "VERBOSE_MODE", False)
     monkeypatch.setattr(monitor, "DEBUG_MODE", False)
     progress = monitor.DoctorProgress(terminal)
@@ -635,7 +654,7 @@ def test_name_palette_differs_from_every_whole_line_style():
 
 # Verifies repository progress contains no ANSI escapes
 def test_repository_progress_line_has_no_ansi_escapes(colored, monkeypatch):
-    terminal = type("Stream", (), {"write": lambda self, text: self.values.append(text), "flush": lambda self: None, "values": []})()
+    terminal = RecordingProgressStream()
     monkeypatch.setattr(monitor, "stdout_bck", terminal)
     monkeypatch.setattr(monitor.shutil, "get_terminal_size", lambda fallback=(80, 20): type("Size", (), {"columns": 80})())
     monkeypatch.setattr(monitor, "_progress_line_width", 0)

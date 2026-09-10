@@ -2968,7 +2968,7 @@ def detect_install_context(argv0=None, module_path=None, operating_system=None):
     source_path = str(Path(__file__ if module_path is None else module_path).resolve())
     selected_system = platform.system() if operating_system is None else str(operating_system)
     manual = Path(invocation).suffix.casefold() == ".py"
-    prefix = (sys.executable, source_path) if manual else ("github_monitor",)
+    prefix = (sys.executable, source_path) if manual else (sys.executable, "-m", "github_monitor")
     return InstallContext("manual" if manual else "pip", selected_system, prefix)
 
 
@@ -3048,7 +3048,7 @@ def command_targets(explicit_target=None, saved_target=None, placeholder="<githu
 
 
 # Renders one install-aware command with platform quoting, carrying the paths this run was given
-def render_command(arguments=None, include_paths=True, *, install_context=None, exact=False):
+def render_command(arguments=None, include_paths=True, *, install_context=None, exact=True):
     context = detect_install_context() if install_context is None else install_context
     prefix = context.command_prefix
     if not exact:
@@ -6357,7 +6357,7 @@ def _dotenv_contains_key(path: Path, key: str) -> bool:
         debug_print("Dotenv key check read", path=path, key=key, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
     debug_print("Dotenv key check read succeeded", path=path, key=key)
-    return any(match_dotenv_assignment(line, key) for line in content.splitlines())
+    return any(binding.key == key for binding in _dotenv_bindings(content))
 
 
 # Returns the dotenv parser's own bindings for one file's text, where a quoted value written across several lines is one binding
@@ -6367,24 +6367,8 @@ def _dotenv_bindings(text):
     return list(parse_stream(StringIO(text)))
 
 
-# Writes the given secrets into one dotenv file with 0600 permissions, replacing each assignment in place and preserving unrelated lines
-def update_dotenv_file(destination, updates):
-    if not hasattr(updates, "items"):
-        raise TypeError("Dotenv updates must be a mapping")
-    path = Path(destination).expanduser()
-    for key, value in updates.items():
-        if key not in SECRET_KEYS:
-            raise ValueError(f"Refusing to write an unknown dotenv key: {key}")
-        if not isinstance(value, str):
-            raise TypeError(f"Dotenv value for {key} must be a string")
-    if not path.parent.is_dir():
-        raise FileNotFoundError(f"Dotenv parent directory does not exist: {path.parent}")
-    debug_print("Reading private settings file before update", path=path, exists=path.exists())
-    try:
-        existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    except Exception as exc:
-        debug_print("Private settings file read", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
-        raise
+# Rewrites complete dotenv bindings while preserving unrelated content
+def render_private_settings(existing, updates):
     output_parts = []
     replaced = set()
     # Rebuilt from the parser's own bindings rather than physical lines, since a quoted value can span several
@@ -6417,7 +6401,29 @@ def update_dotenv_file(destination, updates):
     # Checked before it replaces the file, so a rewrite can never publish a secret the next run cannot read back
     rewritten = {binding.key: binding.value for binding in _dotenv_bindings(content) if binding.key is not None}
     if any(rewritten.get(key, "") != value for key, value in updates.items()):
-        raise ValueError(f"Updating '{{path}}' would not store the requested values")
+        raise ValueError("The dotenv update would not store the requested values")
+    return content
+
+
+# Writes the given secrets into one dotenv file with 0600 permissions, replacing each assignment in place and preserving unrelated lines
+def update_dotenv_file(destination, updates):
+    if not hasattr(updates, "items"):
+        raise TypeError("Dotenv updates must be a mapping")
+    path = Path(destination).expanduser()
+    for key, value in updates.items():
+        if key not in SECRET_KEYS:
+            raise ValueError(f"Refusing to write an unknown dotenv key: {key}")
+        if not isinstance(value, str):
+            raise TypeError(f"Dotenv value for {key} must be a string")
+    if not path.parent.is_dir():
+        raise FileNotFoundError(f"Dotenv parent directory does not exist: {path.parent}")
+    debug_print("Reading private settings file before update", path=path, exists=path.exists())
+    try:
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    except Exception as exc:
+        debug_print("Private settings file read", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    content = render_private_settings(existing, updates)
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as dotenv_file:
@@ -9026,7 +9032,7 @@ def wizard_email_settings_error(values, secrets):
 
 
 # Loads safe baseline values from existing config and dotenv files without applying them globally
-def build_wizard_state(config_path, dotenv_path, install_context=None):
+def build_wizard_state(config_path, dotenv_path, install_context=None, *, env_file_explicit=True):
     selected_config = Path(config_path).expanduser().resolve()
     selected_dotenv = Path(dotenv_path).expanduser().resolve()
     if selected_config == selected_dotenv:
@@ -9038,6 +9044,12 @@ def build_wizard_state(config_path, dotenv_path, install_context=None):
         existing_values = parse_config_content(selected_config.read_text(encoding="utf-8"), str(selected_config), reference_values=defaults)
     values = dict(defaults)
     values.update(existing_values)
+    if not env_file_explicit and existing_values.get("DOTENV_FILE"):
+        if str(existing_values["DOTENV_FILE"]).casefold() == "none":
+            raise ValueError("Setup needs a writable dotenv destination. Pass --env-file PATH to choose one.")
+        selected_dotenv = wizard_validate_destination(existing_values["DOTENV_FILE"], "Dotenv destination")
+    if selected_config == selected_dotenv:
+        raise ValueError("Configuration and dotenv must use different files")
     secrets = {}
     if selected_dotenv.exists():
         debug_print("Reading setup baseline dotenv", path=selected_dotenv)
@@ -9617,34 +9629,9 @@ def render_wizard_config(state):
 
 # Updates selected dotenv assignments in memory while preserving unrelated lines
 def render_wizard_dotenv(state):
-    try:
-        existing = state.dotenv_path.read_text(encoding="utf-8") if state.dotenv_path.exists() else ""
-    except Exception as exc:
-        raise ValueError(f"Dotenv file '{state.dotenv_path}' could not be read: {type(exc).__name__}: {exc}") from None
-    lines = existing.splitlines()
-    for key, value in state.secrets.items():
-        if key not in SECRET_KEYS:
-            continue
-        if not value:
-            # A secret the wizard cleared is removed, so a disabled token cannot linger in the file
-            lines = [line for line in lines if not match_dotenv_assignment(line, key)]
-            continue
-        if "\r" in value or "\n" in value or "\x00" in value:
-            raise ValueError(f"{key} contains an unsupported line break or null byte")
-        replaced = False
-        updated = []
-        for line in lines:
-            match = match_dotenv_assignment(line, key)
-            if match:
-                if not replaced:
-                    updated.append(render_dotenv_assignment(key, value, match.group(1)))
-                    replaced = True
-            else:
-                updated.append(line)
-        if not replaced:
-            updated.append(render_dotenv_assignment(key, value))
-        lines = updated
-    return "\n".join(lines) + ("\n" if lines else "")
+    existing = state.dotenv_path.read_text(encoding="utf-8") if state.dotenv_path.exists() else ""
+    updates = {key: value for key, value in state.secrets.items() if key in SECRET_KEYS}
+    return render_private_settings(existing, updates)
 
 
 # Copies an existing file to a timestamped owner-only .bak beside it, returning the backup path or None when there was nothing to copy
@@ -9803,7 +9790,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         destination.write(apply_color_to_text(render_recovery_advice(classify_recovery_error(exc, "config"))) + "\n")
         return 1
     try:
-        state = build_wizard_state(selected_config, selected_dotenv, context)
+        state = build_wizard_state(selected_config, selected_dotenv, context, env_file_explicit=env_file is not None)
         destination.write(colorize("header", "Setup Wizard\n") + "\n")
         destination.write("This asks a few questions and writes a ready-to-run configuration.\n")
         destination.write("Press Enter to accept the shown default. Ctrl+C cancels.\n\n")
@@ -9816,7 +9803,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
             destination.write("\n" + colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
             return 1
         if chosen_config != state.config_path:
-            state = build_wizard_state(chosen_config, selected_dotenv, context)
+            state = build_wizard_state(chosen_config, selected_dotenv, context, env_file_explicit=env_file is not None)
             destination.write("\n")
         wizard_collect_all(state, input_func, getpass_func, destination, token_validator)
         if not wizard_review_setup(state, input_func, getpass_func, destination, token_validator):
