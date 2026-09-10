@@ -716,7 +716,7 @@ def test_a_refused_webhook_delivery_carries_the_shared_error_block(gm_module, mo
 
     assert advice.code == code
     assert advice.retryable is retryable
-    assert advice.guide_url == gm_module.WEBHOOK_GUIDE_URL
+    assert advice.fix.endswith(f"\nGuide: {gm_module.WEBHOOK_GUIDE_URL}")
     assert advice.detail == "the service said no"
 
 

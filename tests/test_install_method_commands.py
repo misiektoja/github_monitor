@@ -81,7 +81,7 @@ def test_recovery_fix_uses_install_aware_command(gm_module):
     context = gm_module.InstallContext("manual", "Linux", ("/usr/bin/python", "/opt/GitHub Monitor/github_monitor.py"))
     advice = gm_module.classify_recovery_error(ValueError("invalid"), "webhook", context)
     assert advice.code == "webhook.invalid"
-    assert advice.fix == "Check the HTTPS destination then run: python3 github_monitor.py --set-webhook-url"
+    assert advice.fix == gm_module.recovery_fix_with_guide("Check the HTTPS destination then run: python3 github_monitor.py --set-webhook-url", gm_module.WEBHOOK_GUIDE_URL)
 
 
 # Verifies the disabled dotenv search reaches the commands that accept it and stays out of the ones that refuse it

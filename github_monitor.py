@@ -2511,7 +2511,7 @@ def smtp_connect_and_login(use_ssl, smtp_timeout=15):
 
 # Returns the advice for an SMTP setting or message field that makes a delivery impossible
 def email_settings_advice(validation_error, install_context=None):
-    return make_recovery_advice("smtp.invalid", f"The SMTP settings are incorrect: {validation_error}", f"Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL then run: {render_command(['--send-test-email'], install_context=install_context)}", False, "", SMTP_GUIDE_URL)
+    return make_recovery_advice("smtp.invalid", f"The SMTP settings are incorrect: {validation_error}", recovery_fix_with_guide(f"Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL then run: {render_command(['--send-test-email'], install_context=install_context)}", SMTP_GUIDE_URL), False)
 
 
 # Sends email notification
@@ -2849,6 +2849,7 @@ CONNECTIVITY_ENDPOINT_FIX = "Check network, DNS, proxy and CHECK_INTERNET_URL se
 RECOVERY_CODES = frozenset({
     "auth.github_token_invalid",
     "auth.github_token_missing",
+    "config.insecure",
     "config.invalid",
     "config.missing",
     "config.value_invalid",
@@ -2887,7 +2888,6 @@ class RecoveryAdvice:
     fix: str
     retryable: bool
     detail: str = ""
-    guide_url: str = ""
 
 
 class RecoveryError(Exception):
@@ -2899,21 +2899,26 @@ class RecoveryError(Exception):
 
 
 # Constructs validated recovery advice with every user-facing field sanitized
-def make_recovery_advice(code, summary, fix, retryable=False, detail="", guide_url=""):
+def make_recovery_advice(code, summary, fix, retryable=False, detail=""):
     if code not in RECOVERY_CODES:
         raise ValueError(f"Unsupported recovery code: {code}")
-    return RecoveryAdvice(code, sanitize_error_text(summary), sanitize_error_text(fix), bool(retryable), sanitize_error_text(detail), sanitize_error_text(guide_url))
+    return RecoveryAdvice(code, sanitize_error_text(summary), sanitize_error_text(fix), bool(retryable), sanitize_error_text(detail))
+
+
+# Adds a directly relevant documentation link on its own line
+def recovery_fix_with_guide(fix, guide_url):
+    return f"{fix}\nGuide: {guide_url}"
 
 
 # Returns the advice a cancelled secret entry reports, worded the same way by every one-shot secret command
 def secret_entry_cancelled_advice(subject, flag, guide_url):
-    return make_recovery_advice("secret.entry", f"{subject[:1].upper()}{subject[1:]} setup was cancelled and the dotenv file was not changed", f"Run {flag} again when you have the value ready", False, "", guide_url)
+    return make_recovery_advice("secret.entry", f"{subject[:1].upper()}{subject[1:]} setup was cancelled and the dotenv file was not changed", recovery_fix_with_guide(f"Run {flag} again when you have the value ready", guide_url), False)
 
 
 # Returns the advice a declined secret replacement reports, worded the same way by every one-shot secret command
 def secret_replacement_declined_advice(subject, flag, guide_url, plural=False):
     kept = "were left as they are" if plural else "was left as it is"
-    return make_recovery_advice("secret.entry", f"The saved {subject} {kept} and the dotenv file was not changed", f"Run {flag} again and answer y to replace the saved value", False, "", guide_url)
+    return make_recovery_advice("secret.entry", f"The saved {subject} {kept} and the dotenv file was not changed", recovery_fix_with_guide(f"Run {flag} again and answer y to replace the saved value", guide_url), False)
 
 
 # Renders recovery advice according to the effective diagnostic modes
@@ -2923,8 +2928,6 @@ def render_recovery_advice(advice, debug=None, retry_note="", with_fix=True, lab
     if not with_fix:
         return lines[0]
     lines.append(f"To fix: {sanitize_error_text(advice.fix)}")
-    if advice.guide_url:
-        lines.append(f"Guide: {sanitize_error_text(advice.guide_url)}")
     # A detail that only repeats the summary spends a line saying nothing
     if debug_enabled and advice.detail and advice.detail != advice.summary:
         lines.append(f"Technical detail: {sanitize_error_text(advice.detail)}")
@@ -3058,7 +3061,7 @@ def classify_recovery_error(error, context="runtime", detail="", install_context
     debug_command = render_command(["--debug"], install_context=install_context)
     # Checked ahead of every context, since a local descriptor limit is not a failure of whatever call hit it
     if error is not None and is_too_many_open_files(error):
-        return make_recovery_advice("resource.exhausted", "This process ran out of file descriptors, which is a local limit and not a GitHub problem", "Raise the file descriptor limit, for example with 'ulimit -n 4096', or set LimitNOFILE= if you run under systemd, then restart the tool", False, detail, DEBUG_GUIDE_URL)
+        return make_recovery_advice("resource.exhausted", "This process ran out of file descriptors, which is a local limit and not a GitHub problem", recovery_fix_with_guide("Raise the file descriptor limit, for example with 'ulimit -n 4096', or set LimitNOFILE= if you run under systemd, then restart the tool", DEBUG_GUIDE_URL), False, detail)
     if selected_context == "connectivity":
         # Classified from the error, because a failed endpoint check has one answer whatever the exception was
         timed_out = isinstance(error, (req.Timeout, TimeoutError, socket.timeout))
@@ -3066,52 +3069,52 @@ def classify_recovery_error(error, context="runtime", detail="", install_context
         # No guide, because no page covers this check and the doctor report already ends with the troubleshooting link
         return make_recovery_advice("network.timeout" if timed_out else "network.unavailable", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail)
     if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
-        return make_recovery_advice("network.timeout", "The network request timed out", "Check connectivity and increase the configured timeout before trying again", True, detail, DEBUG_GUIDE_URL)
+        return make_recovery_advice("network.timeout", "The network request timed out", recovery_fix_with_guide("Check connectivity and increase the configured timeout before trying again", DEBUG_GUIDE_URL), True, detail)
     if isinstance(error, (req.ConnectionError, socket.gaierror)):
-        return make_recovery_advice("network.unavailable", "The configured service could not be reached", "Check the network and configured service URL then try again", True, detail, DEBUG_GUIDE_URL)
+        return make_recovery_advice("network.unavailable", "The configured service could not be reached", recovery_fix_with_guide("Check the network and configured service URL then try again", DEBUG_GUIDE_URL), True, detail)
     if isinstance(error, req.RequestException):
-        return make_recovery_advice("network.unavailable", "The configured service request failed", "Check the network and configured service URL then try again", True, detail, DEBUG_GUIDE_URL)
+        return make_recovery_advice("network.unavailable", "The configured service request failed", recovery_fix_with_guide("Check the network and configured service URL then try again", DEBUG_GUIDE_URL), True, detail)
     if isinstance(error, BadCredentialsException):
-        return make_recovery_advice("auth.github_token_invalid", "GitHub rejected the configured token", f"Create or review the token then run: {token_command}", False, detail, AUTH_GUIDE_URL)
+        return make_recovery_advice("auth.github_token_invalid", "GitHub rejected the configured token", recovery_fix_with_guide(f"Create or review the token then run: {token_command}", AUTH_GUIDE_URL), False, detail)
     if isinstance(error, RateLimitExceededException):
-        return make_recovery_advice("github.rate_limited", "GitHub API rate limiting paused the request", "Wait for the reported reset time before trying again", True, detail, DEBUG_GUIDE_URL)
+        return make_recovery_advice("github.rate_limited", "GitHub API rate limiting paused the request", recovery_fix_with_guide("Wait for the reported reset time before trying again", DEBUG_GUIDE_URL), True, detail)
     if isinstance(error, UnknownObjectException):
         code = "target.not_found" if selected_context == "target" else "github.not_found"
-        return make_recovery_advice(code, "GitHub could not find the requested resource", "Check the target name and token access then try again", False, detail, DEBUG_GUIDE_URL)
+        return make_recovery_advice(code, "GitHub could not find the requested resource", recovery_fix_with_guide("Check the target name and token access then try again", DEBUG_GUIDE_URL), False, detail)
     if isinstance(error, GithubException):
         status = getattr(error, "status", None)
         if status == 403:
-            return make_recovery_advice("github.forbidden", "GitHub refused access to the requested resource", "Check token permissions and resource visibility", False, detail, AUTH_GUIDE_URL)
+            return make_recovery_advice("github.forbidden", "GitHub refused access to the requested resource", recovery_fix_with_guide("Check token permissions and resource visibility", AUTH_GUIDE_URL), False, detail)
         retryable = status is None or (isinstance(status, int) and status >= 500)
-        return make_recovery_advice("github.api_error", "GitHub returned an API error", f"Try again or run {debug_command} for sanitized technical detail", retryable, detail, DEBUG_GUIDE_URL)
+        return make_recovery_advice("github.api_error", "GitHub returned an API error", recovery_fix_with_guide(f"Try again or run {debug_command} for sanitized technical detail", DEBUG_GUIDE_URL), retryable, detail)
     if isinstance(error, smtplib.SMTPAuthenticationError):
-        return make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", "Check SMTP_USER and replace SMTP_PASSWORD before sending another test", False, detail, SMTP_GUIDE_URL)
+        return make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", recovery_fix_with_guide("Check SMTP_USER and replace SMTP_PASSWORD before sending another test", SMTP_GUIDE_URL), False, detail)
     if isinstance(error, PermissionError):
-        return make_recovery_advice("file.unwritable", "A required file could not be written", "Check the destination path and file permissions", False, detail, CONFIG_GUIDE_URL)
+        return make_recovery_advice("file.unwritable", "A required file could not be written", recovery_fix_with_guide("Check the destination path and file permissions", CONFIG_GUIDE_URL), False, detail)
     if isinstance(error, FileNotFoundError):
         code = "config.missing" if selected_context == "config" else "dotenv.missing" if selected_context == "dotenv" else "file.unreadable"
-        return make_recovery_advice(code, "A required file could not be found", "Check the configured path and try again", False, detail, CONFIG_GUIDE_URL)
+        return make_recovery_advice(code, "A required file could not be found", recovery_fix_with_guide("Check the configured path and try again", CONFIG_GUIDE_URL), False, detail)
     if selected_context == "github_token":
-        return make_recovery_advice("auth.github_token_invalid", "GitHub token setup could not be completed", f"Correct the problem then run: {token_command}", False, detail, AUTH_GUIDE_URL)
+        return make_recovery_advice("auth.github_token_invalid", "GitHub token setup could not be completed", recovery_fix_with_guide(f"Correct the problem then run: {token_command}", AUTH_GUIDE_URL), False, detail)
     if selected_context == "webhook":
-        return make_recovery_advice("webhook.invalid", "Webhook setup could not be completed", f"Check the HTTPS destination then run: {webhook_command}", False, detail, WEBHOOK_GUIDE_URL)
+        return make_recovery_advice("webhook.invalid", "Webhook setup could not be completed", recovery_fix_with_guide(f"Check the HTTPS destination then run: {webhook_command}", WEBHOOK_GUIDE_URL), False, detail)
     if selected_context == "email":
         # A settings problem is reported as itself. Only a failure that actually reached the network is
         # described as one, so an unconfigured mail server is not reported as an unreachable host
         # A server that refused the message is not a server that could not be reached, so the fix names the addresses
         if isinstance(error, (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError)):
-            return make_recovery_advice("smtp.delivery", "The mail server refused the message", "Check SENDER_EMAIL and RECEIVER_EMAIL, then confirm the server accepts mail from this sender", False, detail, SMTP_GUIDE_URL)
+            return make_recovery_advice("smtp.delivery", "The mail server refused the message", recovery_fix_with_guide("Check SENDER_EMAIL and RECEIVER_EMAIL, then confirm the server accepts mail from this sender", SMTP_GUIDE_URL), False, detail)
         if isinstance(error, MailConfigurationError):
-            return make_recovery_advice("smtp.invalid", sanitize_error_text(error), "Set the named settings in the config file, or run --setup, then run the command again", False, detail, SMTP_GUIDE_URL)
-        return make_recovery_advice("smtp.connection", "The SMTP server could not be reached", "Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", True, detail, SMTP_GUIDE_URL)
+            return make_recovery_advice("smtp.invalid", sanitize_error_text(error), recovery_fix_with_guide("Set the named settings in the config file, or run --setup, then run the command again", SMTP_GUIDE_URL), False, detail)
+        return make_recovery_advice("smtp.connection", "The SMTP server could not be reached", recovery_fix_with_guide("Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", SMTP_GUIDE_URL), True, detail)
     if selected_context == "config":
         # The parser already names the line and setting, so the summary carries it instead of only --debug
         reason = sanitize_error_text(error)
         summary = f"The selected configuration is invalid: {reason}" if reason else "The selected configuration is invalid"
-        return make_recovery_advice("config.invalid", summary, f"Correct the reported setting, or generate a fresh configuration with: {config_command}", False, detail, CONFIG_GUIDE_URL)
+        return make_recovery_advice("config.invalid", summary, recovery_fix_with_guide(f"Correct the reported setting, or generate a fresh configuration with: {config_command}", CONFIG_GUIDE_URL), False, detail)
     if selected_context == "timezone":
-        return make_recovery_advice("timezone.invalid", "The configured timezone is invalid", "Install tzlocal for automatic detection or set a valid pytz timezone", False, detail, CONFIG_GUIDE_URL)
-    return make_recovery_advice("unknown", "An unexpected error stopped the requested action", unknown_failure_fix(debug_command), False, detail, SUPPORT_GUIDE_URL)
+        return make_recovery_advice("timezone.invalid", "The configured timezone is invalid", recovery_fix_with_guide("Install tzlocal for automatic detection or set a valid pytz timezone", CONFIG_GUIDE_URL), False, detail)
+    return make_recovery_advice("unknown", "An unexpected error stopped the requested action", recovery_fix_with_guide(unknown_failure_fix(debug_command), SUPPORT_GUIDE_URL), False, detail)
 
 
 # Returns whether a webhook URL is a complete private HTTPS link
@@ -3562,12 +3565,12 @@ def webhook_failure_advice(message: Any, source: Any = None) -> RecoveryAdvice:
     detail = webhook_failure_detail(origin) or summary
     status = webhook_failure_status(origin)
     if status == 429 or "rate limit" in lowered:
-        return make_recovery_advice("webhook.rate_limited", "The webhook service is rate limiting deliveries", "Reduce how many alert types are enabled, or wait for the service to accept deliveries again", True, detail, WEBHOOK_GUIDE_URL)
+        return make_recovery_advice("webhook.rate_limited", "The webhook service is rate limiting deliveries", recovery_fix_with_guide("Reduce how many alert types are enabled, or wait for the service to accept deliveries again", WEBHOOK_GUIDE_URL), True, detail)
     if any(term in lowered for term in ("must contain", "must be discord", "could not be formatted", "header", "priority", "tags")):
-        return make_recovery_advice("webhook.invalid", summary or "The webhook configuration is not usable", f"Check WEBHOOK_URL, WEBHOOK_PROVIDER and the alert settings then run: {webhook_command}", False, detail, WEBHOOK_GUIDE_URL)
+        return make_recovery_advice("webhook.invalid", summary or "The webhook configuration is not usable", recovery_fix_with_guide(f"Check WEBHOOK_URL, WEBHOOK_PROVIDER and the alert settings then run: {webhook_command}", WEBHOOK_GUIDE_URL), False, detail)
     if any(term in lowered for term in ("could not be reached", "connection", "timed out", "timeout")):
-        return make_recovery_advice("webhook.connection", "The webhook service could not be reached", "Check connectivity and the webhook host, then try again", True, detail, WEBHOOK_GUIDE_URL)
-    return make_recovery_advice("webhook.rejected", summary or "The webhook service refused the delivery", f"Confirm the webhook still exists and the URL is current then run: {webhook_command}", status is not None and status >= 500, detail, WEBHOOK_GUIDE_URL)
+        return make_recovery_advice("webhook.connection", "The webhook service could not be reached", recovery_fix_with_guide("Check connectivity and the webhook host, then try again", WEBHOOK_GUIDE_URL), True, detail)
+    return make_recovery_advice("webhook.rejected", summary or "The webhook service refused the delivery", recovery_fix_with_guide(f"Confirm the webhook still exists and the URL is current then run: {webhook_command}", WEBHOOK_GUIDE_URL), status is not None and status >= 500, detail)
 
 
 # Reports one webhook configuration or delivery failure through the recovery block, without exposing private values
@@ -3670,15 +3673,15 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
 # Reports a step that failed and left its output or alerts degraded, naming the step in front of the classified failure
 def print_degraded_error(subject, error, label="Error"):
     advice = classify_recovery_error(error)
-    print_recovery_advice(make_recovery_advice(advice.code, f"{subject}: {advice.summary}", advice.fix, advice.retryable, advice.detail, advice.guide_url), label=label)
+    print_recovery_advice(make_recovery_advice(advice.code, f"{subject}: {advice.summary}", advice.fix, advice.retryable, advice.detail), label=label)
 
 
 # Returns the advice an optional library that is missing carries, naming what the run loses and how to install it
-def missing_dependency_advice(package, effect, alternative=""): return make_recovery_advice("dependency.missing", f"{effect} because the optional '{package}' library is missing", f"Install it with: {shlex.join([sys.executable, '-m', 'pip', 'install', package])}" + (f". {alternative}" if alternative else ""), False, "", INSTALL_GUIDE_URL)
+def missing_dependency_advice(package, effect, alternative=""): return make_recovery_advice("dependency.missing", f"{effect} because the optional '{package}' library is missing", recovery_fix_with_guide(f"Install it with: {shlex.join([sys.executable, '-m', 'pip', 'install', package])}" + (f". {alternative}" if alternative else ""), INSTALL_GUIDE_URL), False)
 
 
 # Reports a CSV row or header that could not be written, which never stops a monitoring cycle
-def print_csv_write_error(error): print_recovery_advice(make_recovery_advice("file.unwritable", str(error), "Check CSV_FILE and its parent directory permissions", False, f"{type(error).__name__}: {error}", CSV_GUIDE_URL))
+def print_csv_write_error(error): print_recovery_advice(make_recovery_advice("file.unwritable", str(error), recovery_fix_with_guide("Check CSV_FILE and its parent directory permissions", CSV_GUIDE_URL), False, f"{type(error).__name__}: {error}"))
 
 
 # Initializes the CSV file
@@ -3924,13 +3927,13 @@ def resolve_local_timezone():
             LOCAL_TIMEZONE_STATE = "auto"
         elif get_localzone is None:
             LOCAL_TIMEZONE_STATE = "auto_unavailable"
-            timezone_advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", "Install tzlocal for automatic detection or set LOCAL_TIMEZONE to a valid pytz timezone", False, "LOCAL_TIMEZONE is Auto but tzlocal is unavailable", CONFIG_GUIDE_URL)
+            timezone_advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", recovery_fix_with_guide("Install tzlocal for automatic detection or set LOCAL_TIMEZONE to a valid pytz timezone", CONFIG_GUIDE_URL), False, "LOCAL_TIMEZONE is Auto but tzlocal is unavailable")
         else:
             LOCAL_TIMEZONE_STATE = "auto_failed"
-            timezone_advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", "Set LOCAL_TIMEZONE to a valid pytz timezone", False, "tzlocal did not return a supported timezone", CONFIG_GUIDE_URL)
+            timezone_advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", recovery_fix_with_guide("Set LOCAL_TIMEZONE to a valid pytz timezone", CONFIG_GUIDE_URL), False, "tzlocal did not return a supported timezone")
     elif not is_valid_timezone(LOCAL_TIMEZONE):
         LOCAL_TIMEZONE_STATE = "invalid"
-        timezone_advice = make_recovery_advice("timezone.invalid", f"Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid", "Set LOCAL_TIMEZONE to a valid pytz timezone name", False, f"Time zone: {LOCAL_TIMEZONE}", CONFIG_GUIDE_URL)
+        timezone_advice = make_recovery_advice("timezone.invalid", f"Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid", recovery_fix_with_guide("Set LOCAL_TIMEZONE to a valid pytz timezone name", CONFIG_GUIDE_URL), False, f"Time zone: {LOCAL_TIMEZONE}")
     return timezone_advice
 
 
@@ -5889,7 +5892,7 @@ def load_config_file(config_path, namespace=None, report_errors=True, loaded_nam
         error_out.append(detail)
     if report_errors:
         config_command = render_command(["--generate-config", "github_monitor.conf"], include_paths=False)
-        advice = make_recovery_advice("config.invalid", detail, f"Keep only documented SETTING = value lines with plain literal values or regenerate with: {config_command}", False, detail, CONFIG_GUIDE_URL)
+        advice = make_recovery_advice("config.invalid", detail, recovery_fix_with_guide(f"Keep only documented SETTING = value lines with plain literal values or regenerate with: {config_command}", CONFIG_GUIDE_URL), False, detail)
         print_recovery_advice(advice)
     return False
 
@@ -5947,7 +5950,7 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
         except Exception as exc:
             env_path = DOTENV_FILE if DOTENV_FILE else None
             verbose_degraded_feature("Dotenv loading", "dotenv-based private settings", exc)
-            advice = make_recovery_advice("file.unreadable", "The dotenv file could not be read", "Check DOTENV_FILE and its permissions or disable it with --env-file none", False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
+            advice = make_recovery_advice("file.unreadable", "The dotenv file could not be read", recovery_fix_with_guide("Check DOTENV_FILE and its permissions or disable it with --env-file none", CONFIG_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
             if errors_out is not None:
                 errors_out.append(advice.summary + f": {advice.detail}")
             if report_errors:
@@ -7656,20 +7659,19 @@ class DoctorCheck:
     status: str
     label: str
     detail: str = ""
-    fix: str = ""
-    guide: str = ""
+    advice: Optional[RecoveryAdvice] = None
 
 
 # Builds one validated doctor row, which is where the status, the required action and a duplicated detail are decided
-def make_doctor_check(section, status, label, detail="", fix="", guide=""):
+def make_doctor_check(section, status, label, detail="", advice=None):
     normalized_status = str(status).upper()
     if normalized_status not in DOCTOR_STATUSES:
         raise ValueError(f"Unsupported doctor status {status}")
     # A row the user has to act on is useless without an action, so the row is rejected rather than printed bare
-    if normalized_status in ("WARN", "FAIL") and not fix:
+    if normalized_status in ("WARN", "FAIL") and (advice is None or not advice.fix):
         raise ValueError(f"Doctor {normalized_status} rows require a fix")
-    # Several rows carry the same text as their label and printing it twice reads as two problems
-    return DoctorCheck(section, normalized_status, label, "" if str(detail).strip() == str(label).strip() else detail, fix, guide)
+    # Several advice objects carry the same text as their summary and printing it twice reads as two problems
+    return DoctorCheck(section, normalized_status, label, "" if str(detail).strip() == str(label).strip() else detail, advice)
 
 
 @dataclass
@@ -7684,8 +7686,8 @@ class DoctorReport:
     webhook_ready: bool = False
 
     # Adds one validated result row to the report and returns it, so a row rendered on its own is still validated here
-    def add(self, section, status, label, detail="", fix="", guide=""):
-        check = make_doctor_check(section, status, label, detail, fix, guide)
+    def add(self, section, status, label, detail="", advice=None):
+        check = make_doctor_check(section, status, label, detail, advice)
         self.checks.append(check)
         return check
 
@@ -7752,14 +7754,16 @@ def doctor_check_environment(report, module_finder=None):
     if sys.version_info >= MINIMUM_PYTHON_VERSION:
         report.add("Environment", "PASS", f"Python {version} is supported", f"Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}")
     else:
-        report.add("Environment", "FAIL", f"Python {version} is unsupported", f"Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}", f"Install Python {MINIMUM_PYTHON_VERSION_TEXT} or newer")
+        advice = make_recovery_advice("dependency.missing", f"Python {version} is unsupported", recovery_fix_with_guide(f"Install Python {MINIMUM_PYTHON_VERSION_TEXT} or newer", INSTALL_GUIDE_URL), False)
+        report.add("Environment", "FAIL", advice.summary, f"Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}", advice)
     required = (("requests", "requests"), ("urllib3", "urllib3"), ("python-dateutil", "dateutil"), ("pytz", "pytz"), ("PyGithub", "github"))
     for package_name, module_name in required:
         if doctor_dependency_available(module_name, module_finder):
             report.add("Environment", "PASS", f"Required dependency {package_name} is installed")
         else:
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
-            report.add("Environment", "FAIL", f"Required dependency {package_name} is missing", "The monitor cannot run its required path without this package", f"Install it with: {install_command}")
+            advice = make_recovery_advice("dependency.missing", f"Required dependency {package_name} is missing", recovery_fix_with_guide(f"Install it with: {install_command}", INSTALL_GUIDE_URL), False)
+            report.add("Environment", "FAIL", advice.summary, "The monitor cannot run its required path without this package", advice)
     optional = (("python-dotenv", "dotenv", "dotenv discovery and loading"), ("tzlocal", "tzlocal", "automatic timezone detection"))
     # The classic Command Prompt is the only place this library changes anything, so a machine it cannot affect is not warned about a package it does not need
     if platform.system() == "Windows":
@@ -7769,7 +7773,8 @@ def doctor_check_environment(report, module_finder=None):
             report.add("Environment", "PASS", f"Optional dependency {package_name} is installed", f"Used only for {feature}")
         else:
             install_command = shlex.join([sys.executable, "-m", "pip", "install", package_name])
-            report.add("Environment", "WARN", f"Optional dependency {package_name} is not installed", f"{feature[:1].upper() + feature[1:]} will not work. Every other feature is unaffected", f"Install it with: {install_command}")
+            advice = make_recovery_advice("dependency.missing", f"Optional dependency {package_name} is not installed", recovery_fix_with_guide(f"Install it with: {install_command}", INSTALL_GUIDE_URL), False)
+            report.add("Environment", "WARN", advice.summary, f"{feature[:1].upper() + feature[1:]} will not work. Every other feature is unaffected", advice)
 
 
 # Returns whether a URL is a complete credential-free HTTPS endpoint
@@ -7819,18 +7824,21 @@ def doctor_check_configuration(report, args, parser):
     if CONFIG_DISCOVERY_DISABLED:
         report.add("Configuration", "PASS", "No configuration file selected", "Using built-in defaults and command-line overrides")
     elif CLI_CONFIG_PATH and not cfg_path:
-        report.add("Configuration", "FAIL", "Configuration file was not found", f"Requested path: {CLI_CONFIG_PATH}", "Correct --config-file or generate a new configuration with --generate-config")
+        advice = make_recovery_advice("config.missing", "Configuration file was not found", recovery_fix_with_guide("Correct --config-file or generate a new configuration with --generate-config", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, f"Requested path: {CLI_CONFIG_PATH}", advice)
     elif cfg_path:
         loaded = load_config_file(cfg_path, report_errors=False, loaded_names_out=configured_settings, diagnostic_overrides=(args.verbose is True, args.debug is True), error_out=config_errors, retired_names_out=retired_settings)
         if loaded:
             report.add("Configuration", "PASS", "Configuration file loaded", f"Path: {cfg_path}")
         else:
-            report.add("Configuration", "FAIL", "Configuration file could not be loaded", config_errors[0] if config_errors else f"Path: {cfg_path}", "Keep only documented SETTING = value lines with plain literal values or regenerate the file")
+            advice = make_recovery_advice("config.invalid", "Configuration file could not be loaded", recovery_fix_with_guide("Keep only documented SETTING = value lines with plain literal values or regenerate the file", CONFIG_GUIDE_URL), False)
+            report.add("Configuration", "FAIL", advice.summary, config_errors[0] if config_errors else f"Path: {cfg_path}", advice)
     else:
         report.add("Configuration", "PASS", "No configuration file selected", "Using built-in defaults and command-line overrides")
     if retired_settings:
         listed = ", ".join(sorted(retired_settings))
-        report.add("Configuration", "WARN", "Retired configuration settings were ignored", listed, "Remove the retired settings from the configuration file")
+        advice = make_recovery_advice("config.invalid", "Retired configuration settings were ignored", recovery_fix_with_guide("Remove the retired settings from the configuration file", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "WARN", advice.summary, listed, advice)
     apply_diagnostic_cli_overrides(args)
     dotenv_errors = []
     env_path = load_startup_secrets(args.env_file, configured_settings, report_errors=False, errors_out=dotenv_errors)
@@ -7838,14 +7846,16 @@ def doctor_check_configuration(report, args, parser):
     apply_webhook_cli_overrides(args, parser, report_warnings=False)
     trace_unresolved_secrets()
     if args.repos is not None and not (TRACK_REPOS_CHANGES or args.track_repos_changes is True):
-        report.add("Configuration", "FAIL", "Repository selection cannot take effect", "--repos requires repository detail tracking", "Add --track-repos-changes or remove --repos")
+        advice = make_recovery_advice("config.invalid", "Repository selection cannot take effect", recovery_fix_with_guide("Add --track-repos-changes or remove --repos", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, "--repos requires repository detail tracking", advice)
     apply_monitoring_cli_overrides(args, parser, strict=False)
     if DOTENV_FILE and DOTENV_FILE.casefold() == "none":
         report.add("Configuration", "PASS", "No dotenv file selected", "Using environment variables and other configured sources")
     elif env_path and os.path.isfile(env_path) and not dotenv_errors:
         report.add("Configuration", "PASS", "Dotenv file loaded", f"Path: {env_path}")
     elif dotenv_errors:
-        report.add("Configuration", "WARN", "Dotenv file could not be loaded", dotenv_errors[0], "Correct --env-file, install python-dotenv or disable dotenv loading with --env-file none")
+        advice = make_recovery_advice("file.unreadable", "Dotenv file could not be loaded", recovery_fix_with_guide("Correct --env-file, install python-dotenv or disable dotenv loading with --env-file none", SECRETS_GUIDE_URL), False)
+        report.add("Configuration", "WARN", advice.summary, dotenv_errors[0], advice)
     else:
         report.add("Configuration", "PASS", "No dotenv file selected", "Using environment variables and other configured sources")
     source_order = ("dotenv file", "environment", "configuration file", "built-in configuration", "command line")
@@ -7861,33 +7871,41 @@ def doctor_check_configuration(report, args, parser):
     if VERIFY_SSL:
         report.add("Configuration", "PASS", "TLS certificate verification is on", "Every outbound request checks the server certificate")
     else:
-        report.add("Configuration", "WARN", "TLS certificate verification is off", "VERIFY_SSL is False, so an intercepted connection cannot be told apart from the real service", "Set VERIFY_SSL back to True unless this network intercepts TLS with its own certificate authority", TLS_GUIDE_URL)
+        advice = make_recovery_advice("config.insecure", "TLS certificate verification is off", recovery_fix_with_guide("Set VERIFY_SSL back to True unless this network intercepts TLS with its own certificate authority", TLS_GUIDE_URL), False)
+        report.add("Configuration", "WARN", advice.summary, "VERIFY_SSL is False, so an intercepted connection cannot be told apart from the real service", advice)
     if not validate_github_endpoint_url(GITHUB_API_URL):
-        report.add("Configuration", "FAIL", "GitHub API URL is invalid", sanitize_error_text(GITHUB_API_URL) or "No URL configured", "Set GITHUB_API_URL to a complete HTTPS URL without credentials, query parameters or fragments")
+        advice = make_recovery_advice("config.value_invalid", "GitHub API URL is invalid", recovery_fix_with_guide("Set GITHUB_API_URL to a complete HTTPS URL without credentials, query parameters or fragments", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, sanitize_error_text(GITHUB_API_URL) or "No URL configured", advice)
     if not validate_github_endpoint_url(GITHUB_HTML_URL):
-        report.add("Configuration", "FAIL", "GitHub web URL is invalid", sanitize_error_text(GITHUB_HTML_URL) or "No URL configured", "Set GITHUB_HTML_URL to a complete HTTPS URL without credentials, query parameters or fragments")
+        advice = make_recovery_advice("config.value_invalid", "GitHub web URL is invalid", recovery_fix_with_guide("Set GITHUB_HTML_URL to a complete HTTPS URL without credentials, query parameters or fragments", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, sanitize_error_text(GITHUB_HTML_URL) or "No URL configured", advice)
     timezone_advice = resolve_local_timezone()
     timezone_label = TIMEZONE_CHECK_LABELS[LOCAL_TIMEZONE_STATE]
     if timezone_advice is not None:
-        report.add("Configuration", "FAIL", timezone_label, timezone_advice.detail, timezone_advice.fix, timezone_advice.guide_url)
+        report.add("Configuration", "FAIL", timezone_label, timezone_advice.detail, timezone_advice)
         # The report still stamps timestamps, so it falls back rather than stopping before the diagnosis
         LOCAL_TIMEZONE = "UTC"
     else:
         report.add("Configuration", "PASS", timezone_label, f"Time zone: {LOCAL_TIMEZONE}")
     if GITHUB_CHECK_INTERVAL < DOCTOR_MIN_SAFE_CHECK_INTERVAL:
-        report.add("Configuration", "WARN", "Check intervals are short", f"{display_time(GITHUB_CHECK_INTERVAL)} between checks", f"Raise GITHUB_CHECK_INTERVAL to at least {DOCTOR_MIN_SAFE_CHECK_INTERVAL} seconds", INTERVALS_GUIDE_URL)
+        advice = make_recovery_advice("github.rate_limited", "Check intervals are short", recovery_fix_with_guide(f"Raise GITHUB_CHECK_INTERVAL to at least {DOCTOR_MIN_SAFE_CHECK_INTERVAL} seconds", INTERVALS_GUIDE_URL), True)
+        report.add("Configuration", "WARN", advice.summary, f"{display_time(GITHUB_CHECK_INTERVAL)} between checks", advice)
     numeric_errors = runtime_configuration_errors()
     if numeric_errors:
-        report.add("Configuration", "FAIL", "One or more numeric settings are invalid", "Invalid numeric settings: " + "; ".join(numeric_errors), "Correct the reported settings in the configuration file", CONFIG_GUIDE_URL)
+        advice = make_recovery_advice("config.value_invalid", "One or more numeric settings are invalid", recovery_fix_with_guide("Correct the reported settings in the configuration file", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, "Invalid numeric settings: " + "; ".join(numeric_errors), advice)
     if TARGET_GITHUB_USERNAME and not wizard_normalize_target(TARGET_GITHUB_USERNAME):
-        report.add("Configuration", "FAIL", "Saved GitHub target is invalid", sanitize_error_text(TARGET_GITHUB_USERNAME), "Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL")
+        advice = make_recovery_advice("config.value_invalid", "Saved GitHub target is invalid", recovery_fix_with_guide("Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, sanitize_error_text(TARGET_GITHUB_USERNAME), advice)
     event_types_valid = isinstance(EVENTS_TO_MONITOR, (list, tuple)) and any(isinstance(value, str) and value.strip() for value in EVENTS_TO_MONITOR)
     if not DO_NOT_MONITOR_GITHUB_EVENTS and not event_types_valid:
-        report.add("Configuration", "FAIL", "Event type selection is invalid", "No usable event type is configured", "Add ALL or at least one supported event name to EVENTS_TO_MONITOR")
+        advice = make_recovery_advice("config.value_invalid", "Event type selection is invalid", recovery_fix_with_guide("Add ALL or at least one supported event name to EVENTS_TO_MONITOR", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, "No usable event type is configured", advice)
     try:
         ascii_log_separators_enabled()
     except ValueError as exc:
-        report.add("Configuration", "FAIL", "Log separator mode is invalid", str(exc), "Set ASCII_LOG_SEPARATORS to Auto, On or Off")
+        advice = make_recovery_advice("config.value_invalid", "Log separator mode is invalid", recovery_fix_with_guide("Set ASCII_LOG_SEPARATORS to Auto, On or Off", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, str(exc), advice)
     return cfg_path, env_path
 
 
@@ -7896,20 +7914,23 @@ def doctor_check_authentication(report, request_get=None):
     report.github_token = str(GITHUB_TOKEN or "")
     if not report.github_token or report.github_token == "your_github_classic_personal_access_token":
         token_command = render_command(["--set-github-token"])
-        report.add("Authentication", "FAIL", "GitHub token is missing", "No usable GITHUB_TOKEN was resolved", f"Create a token then run: {token_command}", AUTH_GUIDE_URL)
+        advice = make_recovery_advice("auth.github_token_missing", "GitHub token is missing", recovery_fix_with_guide(f"Create a token then run: {token_command}", AUTH_GUIDE_URL), False)
+        report.add("Authentication", "FAIL", advice.summary, "No usable GITHUB_TOKEN was resolved", advice)
         return
     try:
         report.authenticated_login = validate_github_token(report.github_token, request_get=request_get)
         report.add("Authentication", "PASS", "GitHub token was accepted", f"Authenticated as: {report.authenticated_login}")
     except Exception as exc:
         detail = sanitize_error_text(exc).replace(" and the dotenv file was not changed", "")
-        report.add("Authentication", "FAIL", "GitHub token validation failed", f"{type(exc).__name__}: {detail}", "Check the token, its access and GITHUB_API_URL then run doctor again", AUTH_GUIDE_URL)
+        advice = make_recovery_advice("auth.github_token_invalid", "GitHub token validation failed", recovery_fix_with_guide("Check the token, its access and GITHUB_API_URL then run doctor again", AUTH_GUIDE_URL), False)
+        report.add("Authentication", "FAIL", advice.summary, f"{type(exc).__name__}: {detail}", advice)
 
 
 # Adds one bounded connectivity check for the configured startup endpoint
 def doctor_check_connectivity(report, request_get=None):
     if not validate_github_endpoint_url(CHECK_INTERNET_URL):
-        report.add("Connectivity", "FAIL", "The connectivity endpoint URL is invalid", sanitize_error_text(CHECK_INTERNET_URL) or "No URL configured", "Set CHECK_INTERNET_URL to a complete HTTPS URL")
+        row_advice = make_recovery_advice("config.value_invalid", "The connectivity endpoint URL is invalid", recovery_fix_with_guide("Set CHECK_INTERNET_URL to a complete HTTPS URL", CONFIG_GUIDE_URL), False)
+        report.add("Connectivity", "FAIL", row_advice.summary, sanitize_error_text(CHECK_INTERNET_URL) or "No URL configured", row_advice)
         return
     # The same check the monitor runs at startup, so doctor cannot disagree with it about the same endpoint
     if check_internet(quiet=True, operation="doctor connectivity", request_get=request_get):
@@ -7917,14 +7938,15 @@ def doctor_check_connectivity(report, request_get=None):
         return
     # The row names the endpoint, so the technical cause goes where the other tools put it
     advice = classify_recovery_error(LAST_CONNECTIVITY_ERROR, "connectivity")
-    report.add("Connectivity", "FAIL", advice.summary, f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}", advice.fix, advice.guide_url)
+    report.add("Connectivity", "FAIL", advice.summary, f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}", advice)
 
 
 # Adds a target lookup and retains the fetched profile for feed checks
 def doctor_check_target(report, github_factory=None):
     if not report.target_name:
         command = render_command(["<github_target>", "--doctor"])
-        report.add("Target", "WARN", "No GitHub target was provided", "Nothing will be monitored until one is given", f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL)
+        advice = make_recovery_advice("target.missing", "No GitHub target was provided", recovery_fix_with_guide(f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL), False)
+        report.add("Target", "WARN", advice.summary, "Nothing will be monitored until one is given", advice)
         return
     if not report.authenticated_login:
         report.add("Target", "SKIP", "The monitored profile was not checked", "The GitHub token did not validate, so no lookup was attempted")
@@ -7936,7 +7958,8 @@ def doctor_check_target(report, github_factory=None):
         resolved_login = str(getattr(report.target_profile, "login", report.target_name))
         report.add("Target", "PASS", "GitHub target is accessible", f"Resolved login: {resolved_login}")
     except Exception as exc:
-        report.add("Target", "FAIL", "GitHub target is not accessible", f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check the username, token access and GitHub Enterprise endpoint then run doctor again", QUICK_START_GUIDE_URL)
+        advice = make_recovery_advice("target.not_found", "GitHub target is not accessible", recovery_fix_with_guide("Check the username, token access and GitHub Enterprise endpoint then run doctor again", QUICK_START_GUIDE_URL), False)
+        report.add("Target", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
 
 
 # Evaluates one lazy PyGithub feed without retaining its potentially large contents
@@ -7959,14 +7982,16 @@ def doctor_check_monitoring(report, contribution_checker=None):
                 doctor_probe_feed(operation, factory)
                 report.add("Monitoring", "PASS", label)
             except Exception as exc:
-                report.add("Monitoring", "FAIL", label.replace(" is accessible", " is unavailable"), f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check target visibility, token access and GitHub API availability")
+                advice = make_recovery_advice("github.api_error", label.replace(" is accessible", " is unavailable"), recovery_fix_with_guide("Check target visibility, token access and GitHub API availability", DEBUG_GUIDE_URL), False)
+                report.add("Monitoring", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
         if DO_NOT_MONITOR_GITHUB_EVENTS:
             report.add("Monitoring", "PASS", "GitHub event monitoring is disabled", "No event feed check was needed")
     if TRACK_REPOS_CHANGES:
         if REPOS_TO_MONITOR:
             report.add("Monitoring", "PASS", "Repository detail tracking is enabled", f"Selection: {', '.join(str(value) for value in REPOS_TO_MONITOR)}")
         else:
-            report.add("Monitoring", "WARN", "Repository detail tracking has no selected repositories", "No repository detail alerts can fire", "Set REPOS_TO_MONITOR or pass --repos")
+            advice = make_recovery_advice("config.value_invalid", "Repository detail tracking has no selected repositories", recovery_fix_with_guide("Set REPOS_TO_MONITOR or pass --repos", CONFIG_GUIDE_URL), False)
+            report.add("Monitoring", "WARN", advice.summary, "No repository detail alerts can fire", advice)
     else:
         report.add("Monitoring", "PASS", "Repository detail tracking is disabled")
     if TRACK_CONTRIB_CHANGES and report.target_profile is not None:
@@ -7975,7 +8000,8 @@ def doctor_check_monitoring(report, contribution_checker=None):
             checker(report.target_name, today_local(), report.github_token)
             report.add("Monitoring", "PASS", "Daily contribution feed is accessible")
         except Exception as exc:
-            report.add("Monitoring", "FAIL", "Daily contribution feed is unavailable", f"{type(exc).__name__}: {sanitize_error_text(exc)}", "Check token access, timezone and GitHub GraphQL availability")
+            advice = make_recovery_advice("github.api_error", "Daily contribution feed is unavailable", recovery_fix_with_guide("Check token access, timezone and GitHub GraphQL availability", DEBUG_GUIDE_URL), False)
+            report.add("Monitoring", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
     elif TRACK_CONTRIB_CHANGES:
         report.add("Monitoring", "SKIP", "Daily contribution feed was not checked", "The target profile was not fetched, so no lookup was attempted")
     else:
@@ -8004,7 +8030,8 @@ def doctor_add_path_check(report, label, path):
     if writable:
         report.add("Configuration", "PASS", f"{label} appears writable", detail)
     else:
-        report.add("Configuration", "FAIL", f"{label} is not writable: {selected}", detail, f"Choose a writable path for the {label.lower()} or correct its parent permissions")
+        advice = make_recovery_advice("file.unwritable", f"{label} is not writable: {selected}", recovery_fix_with_guide(f"Choose a writable path for the {label.lower()} or correct its parent permissions", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, detail, advice)
 
 
 # Adds read-only checks for each file monitoring would write
@@ -8043,7 +8070,7 @@ def doctor_add_smtp_login_check(report):
         smtp_object = smtp_connect_and_login(SMTP_SSL, smtp_timeout=5)
     except Exception as exc:
         advice = classify_recovery_error(exc, "email")
-        report.add("Notifications", "FAIL", advice.summary, advice.detail, advice.fix, advice.guide_url or SMTP_GUIDE_URL)
+        report.add("Notifications", "FAIL", advice.summary, advice.detail, advice)
         return
     finally:
         smtp_quit_quietly(smtp_object)
@@ -8053,14 +8080,16 @@ def doctor_add_smtp_login_check(report):
 
 # Adds the doctor row for email alerts whose settings cannot deliver, worded the same way by every sibling monitor
 def doctor_add_email_unusable_check(report, detail, fix):
-    report.add("Notifications", "WARN", EMAIL_UNUSABLE_CHECK_LABEL, detail, fix, SMTP_GUIDE_URL)
+    advice = make_recovery_advice("smtp.invalid", EMAIL_UNUSABLE_CHECK_LABEL, recovery_fix_with_guide(fix, SMTP_GUIDE_URL), False, detail)
+    report.add("Notifications", "WARN", advice.summary, detail, advice)
 
 
 # Adds channel readiness checks and stores structural delivery-test readiness
 def doctor_check_notifications(report):
     problem = email_settings_problem()
     if not _startup_email_notification_categories() and problem is None:
-        report.add("Notifications", "WARN", "Email is configured but no alert types are selected", "Nothing would ever be emailed", "Turn on at least one email alert in the configuration file", SMTP_GUIDE_URL)
+        advice = make_recovery_advice("smtp.invalid", "Email is configured but no alert types are selected", recovery_fix_with_guide("Turn on at least one email alert in the configuration file", SMTP_GUIDE_URL), False)
+        report.add("Notifications", "WARN", advice.summary, "Nothing would ever be emailed", advice)
     elif not doctor_email_alerts_enabled():
         report.add("Notifications", "PASS", "Email notifications are disabled", "No SMTP connection was attempted and no email was sent")
     else:
@@ -8074,22 +8103,28 @@ def doctor_check_notifications(report):
         report.add("Notifications", "PASS", "Webhook alerts are disabled")
         return
     if not WEBHOOK_ENABLED:
-        report.add("Notifications", "WARN", "Webhook alert types are selected but webhooks are switched off", "Nothing would ever be delivered", "Set WEBHOOK_ENABLED to True, or turn the alert types off", WEBHOOK_GUIDE_URL)
+        advice = make_recovery_advice("webhook.invalid", "Webhook alert types are selected but webhooks are switched off", recovery_fix_with_guide("Set WEBHOOK_ENABLED to True, or turn the alert types off", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "WARN", advice.summary, "Nothing would ever be delivered", advice)
         return
     if not validate_webhook_url(WEBHOOK_URL):
-        report.add("Notifications", "FAIL", "Webhook alerts have no valid destination", "WEBHOOK_URL must be a complete supported HTTPS destination", "Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL)
+        advice = make_recovery_advice("webhook.invalid", "Webhook alerts have no valid destination", recovery_fix_with_guide("Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "FAIL", advice.summary, "WEBHOOK_URL must be a complete supported HTTPS destination", advice)
         return
     provider = normalized_webhook_provider()
     customization_error = validate_webhook_customization(provider)
     header_error = validate_webhook_headers(provider)
     if not provider:
-        report.add("Notifications", "FAIL", "Webhook provider is invalid", sanitize_error_text(WEBHOOK_PROVIDER), "Set WEBHOOK_PROVIDER to discord or ntfy", WEBHOOK_GUIDE_URL)
+        advice = make_recovery_advice("webhook.invalid", "Webhook provider is invalid", recovery_fix_with_guide("Set WEBHOOK_PROVIDER to discord or ntfy", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "FAIL", advice.summary, sanitize_error_text(WEBHOOK_PROVIDER), advice)
     elif customization_error is not None:
-        report.add("Notifications", "FAIL", "Webhook customization is invalid", customization_error, "Correct WEBHOOK_TEMPLATE, WEBHOOK_USERNAME, WEBHOOK_AVATAR_URL or WEBHOOK_TRANSFORMS", WEBHOOK_GUIDE_URL)
+        advice = make_recovery_advice("webhook.invalid", "Webhook customization is invalid", recovery_fix_with_guide("Correct WEBHOOK_TEMPLATE, WEBHOOK_USERNAME, WEBHOOK_AVATAR_URL or WEBHOOK_TRANSFORMS", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "FAIL", advice.summary, customization_error, advice)
     elif header_error is not None:
-        report.add("Notifications", "FAIL", "Webhook headers are invalid", header_error, "Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", WEBHOOK_GUIDE_URL)
+        advice = make_recovery_advice("webhook.invalid", "Webhook headers are invalid", recovery_fix_with_guide("Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "FAIL", advice.summary, header_error, advice)
     elif not deliberate_webhook_types and not WEBHOOK_ERROR_NOTIFICATION:
-        report.add("Notifications", "WARN", "Webhook alerts are on but no alert types are selected", "Nothing would ever be delivered", "Turn on at least one webhook alert in the configuration file, or set WEBHOOK_ENABLED to False", WEBHOOK_GUIDE_URL)
+        advice = make_recovery_advice("webhook.invalid", "Webhook alerts are on but no alert types are selected", recovery_fix_with_guide("Turn on at least one webhook alert in the configuration file, or set WEBHOOK_ENABLED to False", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "WARN", advice.summary, "Nothing would ever be delivered", advice)
     else:
         report.webhook_ready = True
         report.add("Notifications", "PASS", f"{WEBHOOK_READY_CHECK_LABEL} for {webhook_provider_display_name()}", f"Alerts: {', '.join(_startup_webhook_notification_categories())}. The private link was not displayed. No webhook was sent during this passive check")
@@ -8108,11 +8143,10 @@ def print_doctor_check(check, *, stream=None):
     if check.detail:
         # The report is written to a sanitize-only surface, so the link colour every other line gets from the stream is applied here
         destination.write(f"  {_sub_outside_color(_URL_RE, lambda match: colorize('link', match.group(0)), sanitize_doctor_text(check.detail))}\n")
-    if check.fix and check.status != "PASS":
-        destination.write(f"  {colorize('info', f'To fix: {sanitize_doctor_text(check.fix)}')}\n")
-        # The closing summary already points at the doctor page, so a row links only to a page of its own
-        if check.guide:
-            destination.write(f"  {colorize('info', f'Guide: {sanitize_doctor_text(check.guide)}')}\n")
+    if check.status != "PASS" and check.advice is not None:
+        # The fix carries its own guide line, so each line is indented and styled on its own
+        for advice_line in f"To fix: {check.advice.fix}".splitlines():
+            destination.write(f"  {colorize('info', sanitize_doctor_text(advice_line))}\n")
 
 
 # The fixed section order the report renders in, chosen so each section depends only on the ones above it
@@ -8191,7 +8225,8 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
             if result == 0:
                 check = report.add("Optional delivery tests", "PASS", "Doctor test email delivered", "One real test email was sent after confirmation")
             else:
-                check = report.add("Optional delivery tests", "FAIL", "Doctor test email delivery failed", "The approved test email could not be delivered", "Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL)
+                advice = make_recovery_advice("smtp.connection", "Doctor test email delivery failed", recovery_fix_with_guide("Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL), True)
+                check = report.add("Optional delivery tests", "FAIL", advice.summary, "The approved test email could not be delivered", advice)
         else:
             check = report.add("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test. Run doctor again and approve the email test when ready")
         print_doctor_check(check, stream=destination)
@@ -8203,7 +8238,8 @@ def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=No
             if result == 0:
                 check = report.add("Optional delivery tests", "PASS", f"Doctor test webhook through {provider} delivered", "One real test webhook was sent after confirmation")
             else:
-                check = report.add("Optional delivery tests", "FAIL", f"Doctor test webhook through {provider} delivery failed", "The approved test webhook could not be delivered", "Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL)
+                advice = make_recovery_advice("webhook.connection", f"Doctor test webhook through {provider} delivery failed", recovery_fix_with_guide("Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL), True)
+                check = report.add("Optional delivery tests", "FAIL", advice.summary, "The approved test webhook could not be delivered", advice)
         else:
             check = report.add("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test. Run doctor again and approve the webhook test when ready")
         print_doctor_check(check, stream=destination)
@@ -9483,12 +9519,12 @@ def main():
         except (ValueError, IndexError) as exc:
             debug_swallowed_exception("Generated configuration argument resolution", exc)
         except FileExistsError as exc:
-            advice = make_recovery_advice("file.exists", "The generated configuration would replace an existing file", str(exc), False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
+            advice = make_recovery_advice("file.exists", "The generated configuration would replace an existing file", recovery_fix_with_guide(str(exc), CONFIG_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
             print_recovery_advice(advice)
             sys.exit(1)
         except OSError as exc:
             debug_print("Generated configuration write", path=locals().get('output_file', '<unknown>'), outcome="failed", error=f"{type(exc).__name__}: {exc}")
-            advice = make_recovery_advice("file.unwritable", "The generated configuration could not be written", "Check the destination path and file permissions", False, f"{type(exc).__name__}: {exc}", CONFIG_GUIDE_URL)
+            advice = make_recovery_advice("file.unwritable", "The generated configuration could not be written", recovery_fix_with_guide("Check the destination path and file permissions", CONFIG_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
             print_recovery_advice(advice)
             sys.exit(1)
         # No filename provided so write to stdout buffer as UTF-8
@@ -9895,10 +9931,10 @@ def main():
         if incompatible:
             parser.error("--setup can only be combined with --config-file, --env-file, --verbose or --debug")
         if isinstance(args.config_file, str) and args.config_file.casefold() == "none":
-            print_recovery_advice(make_recovery_advice("file.unwritable", "--setup has nowhere to write the configuration", f"Replace '--config-file none' with a writable path, or drop the flag to write {DEFAULT_CONFIG_FILENAME} in the current directory", False, "", CONFIG_GUIDE_URL))
+            print_recovery_advice(make_recovery_advice("file.unwritable", "--setup has nowhere to write the configuration", recovery_fix_with_guide(f"Replace '--config-file none' with a writable path, or drop the flag to write {DEFAULT_CONFIG_FILENAME} in the current directory", CONFIG_GUIDE_URL), False))
             sys.exit(1)
         if isinstance(args.env_file, str) and args.env_file.casefold() == "none":
-            print_recovery_advice(make_recovery_advice("file.unwritable", "--setup has nowhere to write the private settings", "Replace '--env-file none' with a writable path, or drop the flag to write .env in the current directory", False, "", SECRETS_GUIDE_URL))
+            print_recovery_advice(make_recovery_advice("file.unwritable", "--setup has nowhere to write the private settings", recovery_fix_with_guide("Replace '--env-file none' with a writable path, or drop the flag to write .env in the current directory", SECRETS_GUIDE_URL), False))
             sys.exit(1)
         sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, show_banner=False))
 
@@ -9934,7 +9970,7 @@ def main():
 
     if not cfg_path and CLI_CONFIG_PATH:
         config_command = render_command(["--generate-config", "github_monitor.conf"], include_paths=False)
-        advice = make_recovery_advice("config.missing", f"Config file '{CLI_CONFIG_PATH}' does not exist", f"Correct --config-file or generate a new configuration with: {config_command}", False, f"FileNotFoundError: {CLI_CONFIG_PATH}", CONFIG_GUIDE_URL)
+        advice = make_recovery_advice("config.missing", f"Config file '{CLI_CONFIG_PATH}' does not exist", recovery_fix_with_guide(f"Correct --config-file or generate a new configuration with: {config_command}", CONFIG_GUIDE_URL), False, f"FileNotFoundError: {CLI_CONFIG_PATH}")
         print_recovery_advice(advice)
         sys.exit(1)
 
@@ -9953,7 +9989,7 @@ def main():
     if not args.username and TARGET_GITHUB_USERNAME:
         saved_target = wizard_normalize_target(TARGET_GITHUB_USERNAME)
         if not saved_target:
-            advice = make_recovery_advice("config.value_invalid", "The saved GitHub target is invalid", "Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL", False, f"Rejected target: {TARGET_GITHUB_USERNAME}", CONFIG_GUIDE_URL)
+            advice = make_recovery_advice("config.value_invalid", "The saved GitHub target is invalid", recovery_fix_with_guide("Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL", CONFIG_GUIDE_URL), False, f"Rejected target: {TARGET_GITHUB_USERNAME}")
             print_recovery_advice(advice)
             sys.exit(1)
         args.username = saved_target
@@ -9997,7 +10033,7 @@ def main():
         sys.exit(1)
 
     if type(GITHUB_CHECK_INTERVAL) is not int or GITHUB_CHECK_INTERVAL <= 0:
-        advice = make_recovery_advice("config.value_invalid", "The GitHub polling interval is invalid", "Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds", False, f"GITHUB_CHECK_INTERVAL={GITHUB_CHECK_INTERVAL}", CONFIG_GUIDE_URL)
+        advice = make_recovery_advice("config.value_invalid", "The GitHub polling interval is invalid", recovery_fix_with_guide("Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds", CONFIG_GUIDE_URL), False, f"GITHUB_CHECK_INTERVAL={GITHUB_CHECK_INTERVAL}")
         print_recovery_advice(advice)
         sys.exit(1)
 
@@ -10035,18 +10071,18 @@ def main():
 
     # Checked before the token, so a first run is told the simplest missing thing first
     if not args.username:
-        advice = make_recovery_advice("target.missing", "No GitHub username was provided", "Add the GitHub username to the monitoring command", False, "The positional GITHUB_USERNAME argument was empty", QUICK_START_GUIDE_URL)
+        advice = make_recovery_advice("target.missing", "No GitHub username was provided", recovery_fix_with_guide("Add the GitHub username to the monitoring command", QUICK_START_GUIDE_URL), False, "The positional GITHUB_USERNAME argument was empty")
         print_recovery_advice(advice)
         sys.exit(1)
 
     if not GITHUB_TOKEN or GITHUB_TOKEN == "your_github_classic_personal_access_token":
         token_command = render_command(["--set-github-token"])
-        advice = make_recovery_advice("auth.github_token_missing", "No usable GitHub token is configured", f"Create a token then run: {token_command}", False, "GITHUB_TOKEN is empty or still uses the generated placeholder", AUTH_GUIDE_URL)
+        advice = make_recovery_advice("auth.github_token_missing", "No usable GitHub token is configured", recovery_fix_with_guide(f"Create a token then run: {token_command}", AUTH_GUIDE_URL), False, "GITHUB_TOKEN is empty or still uses the generated placeholder")
         print_recovery_advice(advice)
         sys.exit(1)
 
     if not GITHUB_API_URL:
-        advice = make_recovery_advice("config.value_invalid", "GITHUB_API_URL is empty", "Set GITHUB_API_URL in config or pass --github-url with a complete HTTPS API URL", False, "The effective GITHUB_API_URL was empty", CONFIG_GUIDE_URL)
+        advice = make_recovery_advice("config.value_invalid", "GITHUB_API_URL is empty", recovery_fix_with_guide("Set GITHUB_API_URL in config or pass --github-url with a complete HTTPS API URL", CONFIG_GUIDE_URL), False, "The effective GITHUB_API_URL was empty")
         print_recovery_advice(advice)
         sys.exit(1)
 
@@ -10084,7 +10120,7 @@ def main():
             debug_print("CSV startup write check", path=CSV_FILE, outcome="failed", error=f"{type(e).__name__}: {e}")
             advice = classify_recovery_error(e, "file")
             if advice.code == "unknown":
-                advice = make_recovery_advice("file.unwritable", "The CSV file cannot be opened for writing", "Check CSV_FILE and its parent directory permissions", False, f"{type(e).__name__}: {e}", CSV_GUIDE_URL)
+                advice = make_recovery_advice("file.unwritable", "The CSV file cannot be opened for writing", recovery_fix_with_guide("Check CSV_FILE and its parent directory permissions", CSV_GUIDE_URL), False, f"{type(e).__name__}: {e}")
             print_recovery_advice(advice)
             sys.exit(1)
 
@@ -10103,7 +10139,7 @@ def main():
     try:
         ascii_log_separators_enabled()
     except ValueError as e:
-        advice = make_recovery_advice("config.value_invalid", "ASCII_LOG_SEPARATORS is invalid", "Set ASCII_LOG_SEPARATORS to Auto, On or Off", False, f"{type(e).__name__}: {e}", CONFIG_GUIDE_URL)
+        advice = make_recovery_advice("config.value_invalid", "ASCII_LOG_SEPARATORS is invalid", recovery_fix_with_guide("Set ASCII_LOG_SEPARATORS to Auto, On or Off", CONFIG_GUIDE_URL), False, f"{type(e).__name__}: {e}")
         print_recovery_advice(advice)
         sys.exit(1)
 
@@ -10116,7 +10152,7 @@ def main():
             FINAL_LOG_PATH = str(log_path)
             sys.stdout = Logger(FINAL_LOG_PATH)
         except Exception as e:
-            advice = make_recovery_advice("file.unwritable", "The output log could not be opened", "Check GITHUB_LOGFILE and its parent directory permissions or use --disable-logging", False, f"{type(e).__name__}: {e}", CONFIG_GUIDE_URL)
+            advice = make_recovery_advice("file.unwritable", "The output log could not be opened", recovery_fix_with_guide("Check GITHUB_LOGFILE and its parent directory permissions or use --disable-logging", CONFIG_GUIDE_URL), False, f"{type(e).__name__}: {e}")
             print_recovery_advice(advice)
             sys.exit(1)
     else:

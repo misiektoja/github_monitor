@@ -27,7 +27,7 @@ def test_recovery_rendering_redacts_secrets_at_both_boundaries(gm_module, monkey
     webhook_url = "https://discord.com/api/webhooks/123/private-recovery-value"
     monkeypatch.setattr(gm_module, "GITHUB_TOKEN", github_token)
     monkeypatch.setattr(gm_module, "WEBHOOK_URL", webhook_url)
-    advice = gm_module.make_recovery_advice("network.unavailable", f"Request failed for {github_token}", "Check the connection", True, f"Authorization: Bearer {github_token} at {webhook_url}", gm_module.DEBUG_GUIDE_URL)
+    advice = gm_module.make_recovery_advice("network.unavailable", f"Request failed for {github_token}", gm_module.recovery_fix_with_guide("Check the connection", gm_module.DEBUG_GUIDE_URL), True, f"Authorization: Bearer {github_token} at {webhook_url}")
 
     normal = gm_module.render_recovery_advice(advice, debug=False)
     debug = gm_module.render_recovery_advice(advice, debug=True)
@@ -113,7 +113,6 @@ def test_the_connectivity_advice_carries_no_guide_link(gm_module):
 
     assert advice.code == "network.unavailable"
     assert advice.fix == "Check network, DNS, proxy and CHECK_INTERNET_URL settings"
-    assert advice.guide_url == ""
 
 
 # Verifies RecoveryError carries structured advice and its original cause
@@ -474,7 +473,7 @@ GUIDELESS_ADVICE = {
 }
 
 # The guide sits in this positional slot for each builder, or inside the fix when the signature carries no slot
-GUIDE_SLOT = {"advice": 4, "make_recovery_advice": 5}
+GUIDE_SLOT = {"advice": 4, "make_recovery_advice": None}
 
 
 # True when this builder attaches a documentation link in any of the three shapes the tool uses

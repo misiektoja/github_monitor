@@ -1199,8 +1199,7 @@ def test_an_interrupted_secret_entry_is_not_reported_as_an_unreachable_server(gm
     advice = gm_module.classify_recovery_error(raised.value, "email")
     assert advice.summary == "SMTP password setup was cancelled and the dotenv file was not changed"
     assert advice.code == "secret.entry"
-    assert advice.fix == "Run --set-smtp-password again when you have the value ready"
-    assert advice.guide_url == gm_module.SMTP_GUIDE_URL
+    assert advice.fix == gm_module.recovery_fix_with_guide("Run --set-smtp-password again when you have the value ready", gm_module.SMTP_GUIDE_URL)
     assert not destination.exists()
 
 

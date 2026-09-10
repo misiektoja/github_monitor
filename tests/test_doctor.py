@@ -297,7 +297,7 @@ def test_missing_colorama_is_reported_on_windows(gm_module, monkeypatch):
     missing = next(check for check in report.checks if "colorama" in check.label)
     assert missing.status == "WARN"
     assert missing.detail == "Coloured output in the classic Windows Command Prompt will not work. Every other feature is unaffected"
-    assert "-m pip install colorama" in missing.fix
+    assert "-m pip install colorama" in missing.advice.fix
 
 
 # Verifies the bootstrap report scopes the same library to the platform it applies to
@@ -377,7 +377,7 @@ def test_doctor_reports_repository_selection_without_tracking(gm_module, monkeyp
 
     check = next(check for check in report.checks if check.label == "Repository selection cannot take effect")
     assert check.status == "FAIL"
-    assert "--track-repos-changes" in check.fix
+    assert "--track-repos-changes" in check.advice.fix
 
 
 # Verifies invalid timing, retry and event settings are diagnosed before runtime
@@ -569,9 +569,9 @@ def test_doctor_progress_is_tty_only(gm_module):
 # Verifies every non-pass transcript row carries an action plus a link only when the row has a page of its own
 def test_doctor_non_pass_rows_always_render_a_fix(gm_module):
     report = gm_module.DoctorReport()
-    report.add("Configuration", "WARN", "Warning row", "warning detail", "correct warning")
-    report.add("Authentication", "FAIL", "Failure row", "failure detail", "correct failure", gm_module.AUTH_GUIDE_URL)
-    report.add("Optional delivery tests", "SKIP", "Skipped row", "declined", "approve later")
+    report.add("Configuration", "WARN", "Warning row", "warning detail", gm_module.make_recovery_advice("config.invalid", "Warning row", "correct warning", False))
+    report.add("Authentication", "FAIL", "Failure row", "failure detail", gm_module.make_recovery_advice("auth.github_token_invalid", "Failure row", gm_module.recovery_fix_with_guide("correct failure", gm_module.AUTH_GUIDE_URL), False))
+    report.add("Optional delivery tests", "SKIP", "Skipped row", "declined", gm_module.make_recovery_advice("smtp.connection", "Skipped row", "approve later", True))
     output = io.StringIO()
 
     for check in report.checks:
@@ -694,8 +694,7 @@ def test_unusable_email_settings_warn_and_name_the_same_settings(gm_module, monk
     assert email_check.status == "WARN"
     assert email_check.label == gm_module.EMAIL_UNUSABLE_CHECK_LABEL
     assert email_check.detail == "SMTP_USER or SMTP_PASSWORD is empty or still set to its placeholder"
-    assert email_check.fix == "Set SMTP_USER and SMTP_PASSWORD or turn the email alerts off"
-    assert email_check.guide == gm_module.SMTP_GUIDE_URL
+    assert email_check.advice.fix == gm_module.recovery_fix_with_guide("Set SMTP_USER and SMTP_PASSWORD or turn the email alerts off", gm_module.SMTP_GUIDE_URL)
     assert report.email_ready is False
 
 
@@ -715,7 +714,7 @@ def test_a_rejected_smtp_sign_in_fails_the_check(gm_module, monkeypatch):
 
     email_check = report.checks[0]
     assert email_check.status == "FAIL"
-    assert email_check.fix
+    assert email_check.advice is not None and email_check.advice.fix
     assert report.email_ready is False
 
 
@@ -791,7 +790,7 @@ def test_a_link_in_a_detail_line_is_coloured_as_a_link(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "_COLOR_STYLES", {name: gm_module._build_ansi_sequence(value) for name, value in gm_module.DEFAULT_COLOR_THEME.items() if gm_module._build_ansi_sequence(value)})
     report = gm_module.DoctorReport()
     report.add("Connectivity", "PASS", "The connectivity endpoint is reachable", "Endpoint: https://api.github.com")
-    report.add("Authentication", "FAIL", "The token did not validate", "", "Create a token at https://github.com/settings/tokens", gm_module.DOCTOR_GUIDE_URL)
+    report.add("Authentication", "FAIL", "The token did not validate", "", gm_module.make_recovery_advice("auth.github_token_invalid", "The token did not validate", gm_module.recovery_fix_with_guide("Create a token at https://github.com/settings/tokens", gm_module.DOCTOR_GUIDE_URL), False))
     stream = io.StringIO()
 
     gm_module.render_doctor_sections(report, stream)
@@ -805,16 +804,17 @@ def test_a_link_in_a_detail_line_is_coloured_as_a_link(gm_module, monkeypatch):
 def test_only_the_four_shared_markers_are_accepted(gm_module):
     report = gm_module.DoctorReport()
     assert gm_module.DOCTOR_STATUSES == ("PASS", "WARN", "FAIL", "SKIP")
-    assert [report.add("Configuration", status, "a label", "", "do the thing").status for status in gm_module.DOCTOR_STATUSES] == list(gm_module.DOCTOR_STATUSES)
+    advice = gm_module.make_recovery_advice("config.invalid", "a label", "do the thing", False)
+    assert [report.add("Configuration", status, "a label", "", advice).status for status in gm_module.DOCTOR_STATUSES] == list(gm_module.DOCTOR_STATUSES)
 
     with pytest.raises(ValueError):
-        report.add("Configuration", "INFO", "a label", "", "do the thing")
+        report.add("Configuration", "INFO", "a label", "", advice)
 
 
 # Verifies one row reads as one block: the action lines sit under the marker at the detail indent while a pass row has none
 def test_the_action_lines_sit_indented_under_their_marker(gm_module):
     report = gm_module.DoctorReport()
-    report.add("Configuration", "WARN", "a warning row", "a detail worth keeping", "do the thing", gm_module.DOCTOR_GUIDE_URL)
+    report.add("Configuration", "WARN", "a warning row", "a detail worth keeping", gm_module.make_recovery_advice("config.invalid", "a warning row", gm_module.recovery_fix_with_guide("do the thing", gm_module.DOCTOR_GUIDE_URL), False))
     report.add("Configuration", "PASS", "a passing row")
     output = io.StringIO()
 
@@ -892,7 +892,7 @@ def test_the_connectivity_row_names_the_shared_endpoint(gm_module, monkeypatch):
     assert (passing.status, passing.label, passing.detail) == ("PASS", "The connectivity endpoint is reachable", "Endpoint: https://probe.example/ping")
     assert (failing.status, failing.label, failing.detail) == ("FAIL", "The connectivity endpoint could not be reached", "Endpoint: https://probe.example/ping")
     # The row carries no guide, because no page covers this check and the report ends with the doctor link
-    assert (failing.fix, failing.guide) == ("Check network, DNS, proxy and CHECK_INTERNET_URL settings", "")
+    assert failing.advice.fix == "Check network, DNS, proxy and CHECK_INTERNET_URL settings"
 
 
 # Verifies a timed out endpoint keeps the wording the recovery advice gives every other surface
@@ -1043,7 +1043,7 @@ def test_a_rate_limiting_interval_is_warned_about(gm_module, monkeypatch):
 
     rows = [check for check in report.checks if check.label == "Check intervals are short"]
     assert [check.status for check in rows] == ["WARN"]
-    assert str(gm_module.DOCTOR_MIN_SAFE_CHECK_INTERVAL) in rows[0].fix
+    assert str(gm_module.DOCTOR_MIN_SAFE_CHECK_INTERVAL) in rows[0].advice.fix
 
 
 # The default interval is safe, so the row must stay away rather than warning about every run
@@ -1095,7 +1095,7 @@ def test_doctor_warns_when_webhook_alerts_are_selected_but_switched_off(gm_modul
 
     webhook = report.checks[-1]
     assert (webhook.status, webhook.label) == ("WARN", "Webhook alert types are selected but webhooks are switched off")
-    assert "WEBHOOK_ENABLED" in webhook.fix
+    assert "WEBHOOK_ENABLED" in webhook.advice.fix
     assert report.webhook_ready is False
 
 
@@ -1116,7 +1116,7 @@ def test_doctor_warns_when_email_is_configured_but_nothing_is_selected(gm_module
 
     email = report.checks[0]
     assert (email.status, email.label) == ("WARN", "Email is configured but no alert types are selected")
-    assert email.fix == "Turn on at least one email alert in the configuration file"
+    assert email.advice.fix == gm_module.recovery_fix_with_guide("Turn on at least one email alert in the configuration file", gm_module.SMTP_GUIDE_URL)
     assert report.email_ready is False
 
 
@@ -1137,10 +1137,11 @@ def test_the_doctor_row_builder_carries_the_family_name(gm_module):
 def test_the_report_method_validates_through_the_builder(gm_module):
     report = gm_module.DoctorReport()
 
-    added = report.add("Environment", "warn", "A label", "A detail", "A fix")
+    advice = gm_module.make_recovery_advice("config.invalid", "A label", "A fix", False)
+    added = report.add("Environment", "warn", "A label", "A detail", advice)
 
     assert report.checks == [added]
-    assert added == gm_module.make_doctor_check("Environment", "warn", "A label", "A detail", "A fix")
+    assert added == gm_module.make_doctor_check("Environment", "warn", "A label", "A detail", advice)
 
 
 # Verifies the preflight and its row printer answer to the names every sibling uses for them
@@ -1151,3 +1152,27 @@ def test_the_doctor_entry_points_carry_the_family_names(gm_module):
     parameters = list(inspect.signature(gm_module.print_doctor_check).parameters.values())
     assert parameters[0].name == "check"
     assert all(parameter.kind is inspect.Parameter.KEYWORD_ONLY for parameter in parameters[1:])
+
+
+# One row shape and one advice shape across the family: the advice rides on the row and its fix carries the
+# guide, so a row or an advice copied from a sibling means the same thing here
+def test_the_doctor_row_and_its_advice_share_one_contract(gm_module):
+    row_parameters = list(inspect.signature(gm_module.make_doctor_check).parameters.values())
+    advice_parameters = list(inspect.signature(gm_module.make_recovery_advice).parameters.values())
+
+    assert [parameter.name for parameter in row_parameters] == ["section", "status", "label", "detail", "advice"]
+    assert [parameter.default for parameter in row_parameters[3:]] == ["", None]
+    assert [parameter.name for parameter in advice_parameters] == ["code", "summary", "fix", "retryable", "detail"]
+    assert gm_module.recovery_fix_with_guide("do the thing", "https://example.invalid/page") == "do the thing\nGuide: https://example.invalid/page"
+
+
+# A non-pass row is refused without advice and keeps the advice it was given, which is where its fix and guide live
+def test_a_row_carries_its_advice_and_refuses_to_go_without(gm_module):
+    advice = gm_module.make_recovery_advice("config.invalid", "a warning row", gm_module.recovery_fix_with_guide("do the thing", gm_module.DOCTOR_GUIDE_URL), False)
+
+    row = gm_module.make_doctor_check("Configuration", "WARN", "a warning row", "a detail worth keeping", advice)
+
+    assert row.advice is advice
+    assert not hasattr(advice, "guide_url")
+    with pytest.raises(ValueError):
+        gm_module.make_doctor_check("Configuration", "WARN", "a warning row", "a detail worth keeping")

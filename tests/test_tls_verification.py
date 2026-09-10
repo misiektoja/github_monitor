@@ -161,7 +161,7 @@ def test_the_doctor_passes_while_verification_is_on(gm_module, tls_setting):
 
     check = tls_doctor_check(gm_module)
 
-    assert (check.status, check.fix) == ("PASS", "")
+    assert (check.status, check.advice) == ("PASS", None)
 
 
 # Verifies the doctor warns while verification is off and names the setting to change and where it is documented
@@ -172,8 +172,8 @@ def test_the_doctor_warns_while_verification_is_off(gm_module, tls_setting):
 
     assert check.status == "WARN"
     assert "VERIFY_SSL" in check.detail
-    assert "VERIFY_SSL" in check.fix
-    assert check.guide == gm_module.TLS_GUIDE_URL
+    assert "VERIFY_SSL" in check.advice.fix
+    assert check.advice.fix.endswith(f"\nGuide: {gm_module.TLS_GUIDE_URL}")
 
 
 @pytest.mark.parametrize("verify, concise", [(True, False), (False, True)])
