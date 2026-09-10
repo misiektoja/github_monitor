@@ -6024,11 +6024,13 @@ def match_dotenv_assignment(line: Any, key: str):
 
 # Renders one quoted dotenv assignment, keeping the export prefix of the line it replaces
 def render_dotenv_assignment(key: str, value: str, prefix: str = "") -> str:
-    return f'{prefix}{key}="{value.replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34))}"'
+    # A line break inside a value would split the assignment, so it is escaped rather than written through
+    escaped = value.replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34)).replace("\r", "\\r").replace("\n", "\\n")
+    return f'{prefix}{key}="{escaped}"'
 
 
 # Returns whether one dotenv file already assigns the requested key
-def dotenv_contains_key(path: Path, key: str) -> bool:
+def _dotenv_contains_key(path: Path, key: str) -> bool:
     if not path.exists():
         debug_print("Dotenv key check skipped because file does not exist", path=path, key=key)
         return False
@@ -6042,39 +6044,51 @@ def dotenv_contains_key(path: Path, key: str) -> bool:
     return any(match_dotenv_assignment(line, key) for line in content.splitlines())
 
 
-# Updates one dotenv assignment while preserving unrelated lines
-def update_dotenv_value(path: Path, key: str, value: str) -> None:
+# Writes the given secrets into one dotenv file with 0600 permissions, replacing each assignment in place and preserving unrelated lines
+def update_dotenv_file(destination, updates):
+    if not hasattr(updates, "items"):
+        raise TypeError("Dotenv updates must be a mapping")
+    path = Path(destination).expanduser()
+    for key, value in updates.items():
+        if key not in SECRET_KEYS:
+            raise ValueError(f"Refusing to write an unknown dotenv key: {key}")
+        if not isinstance(value, str):
+            raise TypeError(f"Dotenv value for {key} must be a string")
     if not path.parent.is_dir():
         raise FileNotFoundError(f"Dotenv parent directory does not exist: {path.parent}")
-    debug_print("Reading private settings file before update", path=path, key=key, exists=path.exists())
+    debug_print("Reading private settings file before update", path=path, exists=path.exists())
     try:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
     except Exception as exc:
-        debug_print("Private settings file read", path=path, key=key, outcome="failed", error=f"{type(exc).__name__}: {exc}")
+        debug_print("Private settings file read", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
     output_lines = []
-    replaced = False
-    # A secret cleared by its owner is removed rather than emptied, so a disabled value cannot linger here
-    removing = not value
+    replaced = set()
     for line in existing.splitlines():
-        match = match_dotenv_assignment(line, key)
-        if match:
-            if not replaced and not removing:
-                output_lines.append(render_dotenv_assignment(key, value, match.group(1)))
-            replaced = True
+        matches = ((name, match_dotenv_assignment(line, name)) for name in updates)
+        key, match = next(((name, match) for name, match in matches if match), (None, None))
+        if key is None or match is None:
+            output_lines.append(line)
             continue
-        output_lines.append(line)
-    if not replaced and not removing:
-        output_lines.append(render_dotenv_assignment(key, value))
+        # A secret cleared by its owner is removed rather than emptied, so a disabled value cannot linger here
+        if key not in replaced and updates[key]:
+            # An "export " the owner wrote is kept, since dropping it changes what a shell sourcing the file exports
+            output_lines.append(render_dotenv_assignment(key, updates[key], match.group(1)))
+        replaced.add(key)
+    for key, value in updates.items():
+        if key not in replaced and value:
+            output_lines.append(render_dotenv_assignment(key, value))
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as dotenv_file:
             dotenv_file.write("\n".join(output_lines) + "\n")
     except Exception as exc:
-        debug_print("Private settings file update", path=path, key=key, outcome="failed", error=f"{type(exc).__name__}: {exc}")
+        debug_print("Private settings file update", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise
-    debug_print("Private settings file update succeeded", path=path, key=key, mode="0600")
-    verbose_print(f"{'Saved' if value else 'Removed'} {key} in the private settings file")
+    debug_print("Private settings file update succeeded", path=path, mode="0600")
+    for key, value in updates.items():
+        verbose_print(f"{'Saved' if value else 'Removed'} {key} in the private settings file")
+    return {"path": str(path), "updated_keys": tuple(updates)}
 
 
 # Validates one GitHub token without exposing it in errors or output
@@ -6123,7 +6137,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     if not terminal_is_interactive:
         raise GitHubTokenConfigurationError("--set-github-token requires an interactive terminal so the token stays hidden")
     prompt = input if input_func is None else input_func
-    if dotenv_contains_key(destination, "GITHUB_TOKEN"):
+    if _dotenv_contains_key(destination, "GITHUB_TOKEN"):
         try:
             confirmed = read_interactively(prompt, f"Replace the saved GitHub token in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
@@ -6145,7 +6159,7 @@ def run_set_github_token(env_file=None, api_url=None, interactive=None, input_fu
     print("* Checking the entered GitHub token before changing the dotenv file ...")
     login = validate_github_token(token, api_url=api_url)
     try:
-        update_dotenv_value(destination, "GITHUB_TOKEN", token)
+        update_dotenv_file(destination, {"GITHUB_TOKEN": token})
     except Exception as exc:
         debug_print("Private settings file update", path=destination, key="GITHUB_TOKEN", outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError(f"Could not save GITHUB_TOKEN in '{destination}'. Check the path and file permissions") from None
@@ -6172,7 +6186,7 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
     if not terminal_is_interactive:
         raise ValueError("--set-webhook-url requires an interactive terminal so the webhook URL stays hidden")
     prompt = input if input_func is None else input_func
-    if dotenv_contains_key(destination, "WEBHOOK_URL"):
+    if _dotenv_contains_key(destination, "WEBHOOK_URL"):
         try:
             confirmed = read_interactively(prompt, f"Replace the saved webhook URL in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
@@ -6192,7 +6206,7 @@ def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpas
         DEBUG_MODE = previous_debug_mode
     if not validate_webhook_url(webhook_url):
         raise ValueError("That does not look like a complete HTTPS webhook URL and the dotenv file was not changed")
-    update_dotenv_value(destination, "WEBHOOK_URL", webhook_url)
+    update_dotenv_file(destination, {"WEBHOOK_URL": webhook_url})
     paths = []
     if config_path:
         paths.extend(("--config-file", str(config_path)))
@@ -6259,7 +6273,7 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
         names = join_setting_names(missing, "and")
         raise MailConfigurationError(f"The mail server settings are incomplete, {names} {'is' if len(missing) == 1 else 'are'} not set")
     prompt = input if input_func is None else input_func
-    if dotenv_contains_key(destination, "SMTP_PASSWORD"):
+    if _dotenv_contains_key(destination, "SMTP_PASSWORD"):
         try:
             confirmed = read_interactively(prompt, f"Replace the saved SMTP password in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
@@ -6280,7 +6294,7 @@ def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getp
         DEBUG_MODE = previous_debug_mode
     check = smtp_sign_in if sign_in is None else sign_in
     signed_in_user = check(smtp_password, timeout=WIZARD_SMTP_TIMEOUT)
-    update_dotenv_value(destination, "SMTP_PASSWORD", smtp_password)
+    update_dotenv_file(destination, {"SMTP_PASSWORD": smtp_password})
     paths = []
     if config_path:
         paths.extend(("--config-file", str(config_path)))

@@ -241,13 +241,14 @@ def test_file_transcript_covers_success_and_failure(gm_module, monkeypatch, caps
     destination = Path(directory.name) / ".env"
     monkeypatch.setattr(gm_module, "DEBUG_MODE", True)
 
-    gm_module.update_dotenv_value(destination, "GITHUB_TOKEN", "private-file-value")
+    gm_module.update_dotenv_file(destination, {"GITHUB_TOKEN": "private-file-value"})
     with pytest.raises(IsADirectoryError):
-        gm_module.update_dotenv_value(Path(directory.name), "GITHUB_TOKEN", "private-file-value")
+        gm_module.update_dotenv_file(Path(directory.name), {"GITHUB_TOKEN": "private-file-value"})
 
     output = capsys.readouterr().out
     assert f"Private settings file update succeeded: path={destination}" in output
-    assert f"Private settings file read: path={directory.name}, key=GITHUB_TOKEN, outcome=failed" in output
+    # The read covers the whole file rather than one key, so the line names the path and what went wrong
+    assert f"Private settings file read: path={directory.name}, outcome=failed" in output
     assert "IsADirectoryError" in output
     assert "private-file-value" not in output
 

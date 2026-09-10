@@ -57,10 +57,10 @@ def test_token_setup_uses_install_aware_next_command(gm_module, monkeypatch, cap
     saved_config = tmp_path / "saved.conf"
     saved_config.write_text('TARGET_GITHUB_USERNAME = "octocat"\n', encoding="utf-8")
     monkeypatch.setattr(gm_module, "resolve_secret_env_path", Mock(return_value=destination))
-    monkeypatch.setattr(gm_module, "dotenv_contains_key", Mock(return_value=False))
+    monkeypatch.setattr(gm_module, "_dotenv_contains_key", Mock(return_value=False))
     monkeypatch.setattr(gm_module, "validate_github_token", Mock(return_value="octocat"))
     update = Mock()
-    monkeypatch.setattr(gm_module, "update_dotenv_value", update)
+    monkeypatch.setattr(gm_module, "update_dotenv_file", update)
 
     result = gm_module.run_set_github_token(interactive=True, getpass_func=lambda prompt: "private-value", install_context=context, config_path=empty_config)
     unsaved_output = capsys.readouterr().out
