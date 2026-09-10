@@ -3642,6 +3642,8 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Dotenv", str(env_path) if env_path else "None", concise=True),
         StartupSummaryRow("GitHub API URL", str(GITHUB_API_URL)),
         StartupSummaryRow("Track repository changes", str(TRACK_REPOS_CHANGES)),
+        StartupSummaryRow("Verify repository closures", str(VERIFY_REPOSITORY_CLOSURES)),
+        StartupSummaryRow("Closure verification budget", f"{REPOSITORY_CLOSURE_REQUEST_BUDGET} requests/check (shared)" if TRACK_REPOS_CHANGES and VERIFY_REPOSITORY_CLOSURES else "Inactive"),
         StartupSummaryRow("Track contribution changes", str(TRACK_CONTRIB_CHANGES)),
         StartupSummaryRow("Monitor GitHub events", str(not DO_NOT_MONITOR_GITHUB_EVENTS)),
         StartupSummaryRow("Owned repositories only", str(not GET_ALL_REPOS)),
