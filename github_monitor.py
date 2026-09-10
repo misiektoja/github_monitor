@@ -3886,6 +3886,18 @@ def truncate_utf8_bytes(text: str, max_bytes: int, suffix: str = "") -> str:
     return encoded[:max_bytes - len(encoded_suffix)].decode("utf-8", errors="ignore") + suffix
 
 
+# Converts one HTML email body to the Discord markdown subset, so a Discord alert reads like the email
+def html_body_to_discord_markdown(body_html: str) -> str:
+    text = re.sub(r"(?is)</?(?:html|head|body)\s*>", "", str(body_html or ""))
+    text = re.sub(r"(?is)<a\s[^>]*?href=[\"']([^\"']*)[\"'][^>]*>(.*?)</a>", lambda m: f"[{m.group(2)}]({m.group(1)})", text)
+    text = re.sub(r"(?is)<b\s*>(.*?)</b\s*>", lambda m: f"**{m.group(1)}**" if m.group(1).strip() else m.group(1), text)
+    text = re.sub(r"(?is)<i\s*>(.*?)</i\s*>", lambda m: f"*{m.group(1)}*" if m.group(1).strip() else m.group(1), text)
+    text = re.sub(r"(?is)<br\s*/?>", "\n", text)
+    # Anything still tag-shaped is layout the markdown body has no use for, such as a stray paragraph or list wrapper
+    text = re.sub(r"(?s)<[^>]+>", "", text)
+    return html.unescape(text).strip()
+
+
 # Builds one bounded ntfy title and message pair
 def build_ntfy_webhook_message(title: str, description: str) -> tuple[str, str]:
     safe_title = sanitize_webhook_text(title)[:WEBHOOK_EMBED_TITLE_LIMIT] or "GitHub Monitor"
@@ -4029,7 +4041,7 @@ def _retain_webhook_secrets(deliver):
 
 @_retain_webhook_secrets
 # Sends one webhook through an isolated bounded retry path that never uses GitHub retries
-def send_webhook(title: str, description: str, notification_type: str = "event", force: bool = False, sleeper: Optional[Callable[[float], None]] = None, image_url: str = "", report_delivery: bool = True) -> int:
+def send_webhook(title: str, description: str, notification_type: str = "event", force: bool = False, sleeper: Optional[Callable[[float], None]] = None, image_url: str = "", report_delivery: bool = True, discord_description: str = "") -> int:
     if not force and not webhook_event_enabled(notification_type):
         verbose_print(f"Webhook delivery skipped because {notification_type} alerts are disabled")
         return 1
@@ -4049,10 +4061,12 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
     if header_error is not None:
         print_webhook_error(header_error)
         return 1
+    # Discord renders markdown, so it gets the email's formatting while ntfy keeps the plain body it can display
+    effective_description = discord_description if provider == "discord" and discord_description else description
     try:
-        webhook_values = build_webhook_values(title, description, notification_type, image_url)
+        webhook_values = build_webhook_values(title, effective_description, notification_type, image_url)
         request_headers = build_webhook_headers(provider, webhook_values)
-        discord_payload = build_webhook_payload(title, description, notification_type, image_url, webhook_values) if provider == "discord" else None
+        discord_payload = build_webhook_payload(title, effective_description, notification_type, image_url, webhook_values) if provider == "discord" else None
     except ValueError as exc:
         print_webhook_error(exc)
         return 1
@@ -4111,7 +4125,7 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
         email_delivered = send_email(subject, body, body_html, SMTP_SSL) == 0
     if webhook_attempted:
         print(f"Sending webhook notification via {webhook_provider_display_name()}")
-        webhook_delivered = send_webhook(subject, body, notification_type, force=True) == 0
+        webhook_delivered = send_webhook(subject, body, notification_type, force=True, discord_description=html_body_to_discord_markdown(body_html)) == 0
     # Delivery, not the attempt, so a channel that failed is retried while one that succeeded is not resent
     return email_delivered, webhook_delivered
 

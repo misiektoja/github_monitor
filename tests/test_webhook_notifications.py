@@ -201,7 +201,7 @@ def test_notification_channels_are_independent(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "send_webhook", webhook_send)
     assert gm_module.send_notification_channels("profile", "Title", "Body", email_enabled=False) == (False, True)
     email_send.assert_not_called()
-    webhook_send.assert_called_once_with("Title", "Body", "profile", force=True)
+    webhook_send.assert_called_once_with("Title", "Body", "profile", force=True, discord_description="")
 
 
 # Verifies category CLI overrides enable webhooks while preserving an explicit error override
