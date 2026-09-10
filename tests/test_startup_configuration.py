@@ -101,6 +101,21 @@ def test_exported_secrets_override_dotenv_values(gm_module, monkeypatch, request
     assert gm_module.WEBHOOK_URL == "https://ntfy.sh/dotenv-topic"
 
 
+# Verifies an empty export is treated as absent, so a shell-profile leftover does not blank the dotenv value
+def test_an_empty_export_does_not_shadow_the_dotenv_value(gm_module, monkeypatch, request):
+    directory = make_test_directory()
+    request.addfinalizer(directory.cleanup)
+    dotenv = Path(directory.name) / ".env"
+    dotenv.write_text('GITHUB_TOKEN="dotenv-value"\n', encoding="utf-8")
+    monkeypatch.setattr(gm_module, "DOTENV_FILE", "")
+    monkeypatch.setattr(gm_module, "GITHUB_TOKEN", "config-value")
+    monkeypatch.setenv("GITHUB_TOKEN", "")
+
+    gm_module.load_startup_secrets(str(dotenv))
+
+    assert gm_module.GITHUB_TOKEN == "dotenv-value"
+
+
 # Verifies an unedited placeholder is never reported as a configured secret, whichever layer carried it
 def test_placeholder_secrets_are_not_reported_as_configured(gm_module, monkeypatch, request):
     directory = make_test_directory()
