@@ -1,5 +1,6 @@
 """Offline tests for install detection and copy-pasteable command rendering."""
 
+import shlex
 import inspect
 import subprocess
 import sys
@@ -11,6 +12,14 @@ from unittest.mock import Mock
 def test_pypi_command_uses_console_entry_point(gm_module):
     context = gm_module.InstallContext("pip", "Linux", ("github_monitor",))
     assert gm_module.render_command(["--set-github-token"], install_context=context) == "github_monitor --set-github-token"
+
+
+# Verifies a value only shaped like a placeholder is quoted, so pasting the rendered command cannot run a substitution
+def test_a_value_shaped_like_a_placeholder_is_quoted(gm_module):
+    crafted = "<$(echo>marker)>"
+
+    assert shlex.split(gm_module.quote_command_argument(crafted)) == [crafted]
+    assert gm_module.quote_command_argument("<github_target>") == "<github_target>"
 
 
 # Verifies manual detection keeps the active interpreter and absolute script path

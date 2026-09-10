@@ -3002,10 +3002,15 @@ def active_path_arguments(arguments=()):
     return paths
 
 
+# The documentation placeholders a printed command carries unquoted, because the reader replaces them before running it
+COMMAND_PLACEHOLDERS = frozenset(("<github_target>",))
+
+
 # Renders one command argument for the shell, leaving a <placeholder> as documentation for the reader to replace
 def quote_command_argument(argument, windows=False):
     text = str(argument)
-    if text.startswith("<") and text.endswith(">"):
+    # Matched exactly rather than by shape, since any other angle-bracket value is user-derived and would otherwise reach the shell unquoted
+    if text in COMMAND_PLACEHOLDERS:
         return text
     return subprocess.list2cmdline([text]) if windows else shlex.quote(text)
 
