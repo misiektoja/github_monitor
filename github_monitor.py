@@ -6852,7 +6852,10 @@ def github_monitor_user(user, csv_file_name):
     debug_monitor_wait_timing("initial monitoring interval", GITHUB_CHECK_INTERVAL)
     time.sleep(GITHUB_CHECK_INTERVAL)
     alive_since = int(time.time())
-    email_sent = False
+    # The error alert is tracked once per channel and per failure category
+    error_email_sent = False
+    error_webhook_sent = False
+    error_delivery_code = None
     monitor_recovery_tracker = RecoveryHintTracker()
     outage = OutageReporter()
     profile_field_unavailable = object()
@@ -6875,7 +6878,9 @@ def github_monitor_user(user, csv_file_name):
                 print("* GitHub API client recreated after token reload")
             debug_github_operation("monitored user profile refresh", user)
             g_user = g.get_user(user)
-            email_sent = False
+            error_email_sent = False
+            error_webhook_sent = False
+            error_delivery_code = None
             monitor_recovery_tracker.reset()
             outage_lasted = outage.recovered()
             if outage_lasted is not None:
@@ -6883,35 +6888,35 @@ def github_monitor_user(user, csv_file_name):
                 alive_since = int(time.time())
 
         except (GithubException, Exception) as e:
-            safe_error = sanitize_error_text(e)
             verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
             advice = classify_recovery_error(e, "target")
+            # A failure that changes category is a different failure, so each channel earns a new alert for it
+            if advice.code != error_delivery_code:
+                error_email_sent = False
+                error_webhook_sent = False
+                error_delivery_code = advice.code
 
             # A failure that has not changed is left to the liveness cadence rather than repeated every check
             outage_outcome = outage.failed(advice, LIVENESS_REMINDER_SECONDS)
+            delivery_reported = False
             if outage_outcome in ("full", "repeat"):
                 print_recovery_advice(advice, tracker=monitor_recovery_tracker, retry_note=f"retrying in {display_time(GITHUB_CHECK_INTERVAL)}")
             elif outage_outcome == "degraded":
                 print_outage_liveness(user, advice, outage.since)
 
-            # A rejected token or a refused request will not clear on its own, so it is worth an alert
-            rejected_request = isinstance(e, GithubException) and getattr(e, "status", None) == 400
-            should_notify = advice.code in ("auth.github_token_invalid", "github.forbidden") or rejected_request
+            m_subject = f"github_monitor: {advice.summary} (user: {user})"
+            m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
+            m_body_html = f"<html><head></head><body><b>{html.escape(advice.summary)}</b><br><br>To fix: {html.escape(advice.fix)}<br><br>GitHub Monitor will retry in {html.escape(display_time(GITHUB_CHECK_INTERVAL))}.{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
+            # Attempted on every failing check rather than only on the report, so a channel that failed is tried again
+            if (ERROR_NOTIFICATION and not error_email_sent) or (webhook_event_enabled("error") and not error_webhook_sent):
+                email_delivered, webhook_delivered = send_notification_channels("error", m_subject, m_body, m_body_html, ERROR_NOTIFICATION and not error_email_sent, webhook_event_enabled("error") and not error_webhook_sent)
+                error_email_sent = error_email_sent or email_delivered
+                error_webhook_sent = error_webhook_sent or webhook_delivered
+                delivery_reported = True
 
-            if should_notify and (ERROR_NOTIFICATION or webhook_event_enabled("error")) and not email_sent:
-                m_subject = f"github_monitor: {advice.summary} (user: {user})"
-                m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\n{safe_error}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
-                m_body_html = (
-                    f"<html><head></head><body>"
-                    f"<b>{html.escape(advice.summary)}</b><br><br>"
-                    f"To fix: {html.escape(advice.fix)}<br><br>"
-                    f"{html.escape(safe_error)}{get_cur_ts('<br><br>Timestamp: ')}"
-                    f"</body></html>"
-                )
-                send_notification_channels("error", m_subject, m_body, m_body_html, ERROR_NOTIFICATION)
-                email_sent = True
-
-            if outage_outcome in ("full", "repeat"):
+            # A retry can reach the screen on a check the outage reporter keeps quiet, and a delivery line
+            # with nothing under it reads as a run that stopped there
+            if outage_outcome in ("full", "repeat") or delivery_reported:
                 print_cur_ts("Timestamp:\t\t\t")
             debug_print("Completed monitoring check", check=f"#{check_number}", user=user, outcome="failed", code=advice.code, error=f"{type(e).__name__}: {e}")
             debug_monitor_wait_timing("monitored user refresh failure", GITHUB_CHECK_INTERVAL)
