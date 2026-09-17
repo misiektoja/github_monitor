@@ -6,10 +6,10 @@ Powerful real-time GitHub OSINT tool that tracks everything from profile updates
    <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
 </p>
 
-<a id="-quick-install-run"></a>
+<a id="quick-install-run"></a>
 ### 🚀 Quick Install & Run
 
-New to Python or unsure what is installed? Follow the [Python install walkthrough](installation.md#new-to-python-install-everything) first.
+New to Python or unsure what is installed? Follow the [Python install walkthrough](installation.md#new-to-python-check-and-install) first.
 
 Install from PyPI:
 
@@ -23,10 +23,11 @@ Run the setup wizard:
 github_monitor --setup
 ```
 
-The wizard asks for the target, authentication, polling intervals and optional notifications. Review the settings before saving them. See [Setup & First Run](setup-and-first-run.md) for the service-specific steps.
+The wizard asks for the target, the GitHub token and optional notifications. Review the settings before saving them. See [Setup & First Run](setup-and-first-run.md) for how to create the GitHub personal access token.
 
 For the manual single-file method, dependencies and upgrade commands, see [Installation](installation.md).
 
+<a id="features"></a>
 ## Features
 
 ### 🔍 Activity and Profile Tracking
@@ -54,31 +55,3 @@ For the manual single-file method, dependencies and upgrade commands, see [Insta
 * **Flexible settings**: Use configuration files, dotenv files, environment variables and command-line options.
 * **Runtime controls**: Adjust the running monitor through supported signals.
 * **GitHub deployments**: Connect to public GitHub or GitHub Enterprise.
-
-## Common Commands
-
-Use [Quick Install & Run](#-quick-install-run) for first-time setup. These examples use the PyPI command. See [Command Format by Installation Method](usage.md#command-format) for manual-script equivalents.
-
-Replace the target placeholders with a GitHub username or complete profile URL. Monitoring requires the [GitHub personal access token](setup-and-first-run.md#github-personal-access-token) described in the setup guide.
-
-| I want to... | Run this |
-| --- | --- |
-| Configure the target, credentials and alerts | `github_monitor --setup` |
-| Start monitoring with saved credentials | `github_monitor <github_target>` |
-| Check setup before monitoring | `github_monitor --doctor <github_target>` |
-| Enter or replace credentials through hidden prompts | `github_monitor --set-github-token` |
-| Use a specific configuration and secrets file | `github_monitor --config-file github_monitor.conf --env-file .env <github_target>` |
-| List public repositories | `github_monitor <github_target> -r` |
-| List every supported command-line option | `github_monitor --help` |
-
-Monitoring runs until you press `Ctrl+C`. For email, Discord and ntfy alerts, CSV output and service-specific commands, see [Usage](usage.md). If a run fails, start with [Doctor Preflight](troubleshooting.md#doctor-preflight).
-
-## Documentation
-
-* [Installation](installation.md) - Python setup, package or manual install and upgrades
-* [Setup & First Run](setup-and-first-run.md) - credentials, target selection and the setup wizard
-* [Configuration](configuration.md) - settings, notifications and secret storage
-* [Usage](usage.md) - monitoring, output and command options
-* [Troubleshooting](troubleshooting.md) - Doctor checks and recovery steps
-* [Testing](testing.md) - automated checks and documentation builds
-* [About](about.md) - contributing, security, licensing and support

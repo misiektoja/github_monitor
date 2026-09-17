@@ -1,76 +1,49 @@
 # Setup & First Run
 
-## Before You Start
+<a id="run-the-setup-wizard"></a>
+## Run the setup wizard
 
-Install the tool using [Installation](installation.md). You will need a GitHub username or complete profile URL and the [GitHub personal access token](#github-personal-access-token). The wizard collects credentials through hidden prompts.
+Already installed? Run the setup command below for your installation and follow the prompts. Otherwise, start with [Installation](installation.md).
 
-Open a terminal in the directory where you want to keep the configuration and monitoring output. Later commands should use that directory or explicitly select the same `--config-file` and `--env-file` paths. Manual installations use the [command equivalents](usage.md#command-format).
+Setup asks who to monitor, the GitHub token, how often to check and which alerts and output files you want. You can review your answers before saving. Regular settings go in `github_monitor.conf` and private values go in `.env`. Keep `.env` private.
 
-<a id="setup-wizard"></a>
-## Guided Setup
+Press Enter to accept a default or Ctrl+C to cancel. Cancelling before saving leaves your files untouched. Cancelling after saving keeps the saved settings. For changes to an existing setup, see [Configuration File](configuration.md#configuration-file).
 
-The easiest first run is the guided setup wizard:
+After saving, follow the offered Doctor checks and monitoring steps.
 
-```sh
-github_monitor --setup
-```
+=== "PyPI"
 
-The wizard asks for the target, polling interval, GitHub token, optional email and webhook alerts and output files. Polling accepts seconds or durations such as `30s`, `2m`, `1.5h`, `1h 30m` and `1d`.
+    ```sh
+    github_monitor --setup
+    ```
 
-Review the summary and change any section before choosing **Save settings**. Regular settings go to `github_monitor.conf` and private values go to `.env`. Setup asks before replacing an existing configuration and keeps a timestamped backup. On a rerun, saved settings provide the defaults. Declining a section disables it, including any previously configured alerts. See [Storing Secrets](configuration.md#storing-secrets) for credential storage and backup details.
+=== "Manual Python script on macOS or Linux"
 
-Setup validates your GitHub token and checks email sign-in without sending a message. After saving, it offers [Doctor Preflight](troubleshooting.md#doctor-preflight) when a target is available, then offers to start monitoring if the checks pass.
-
-Use `--config-file PATH` and `--env-file PATH` or the summary's **File destinations** section to choose other files. Both paths must be writable. `--config-file none` and `--env-file none` are not supported by setup.
-
-## Quick Start
-
-The commands printed below match the installation method and quote selected paths containing spaces.
-
-```text
-For <github_target>, use a GitHub username or complete profile URL.
-
-Quickest start (already configured):
-    python3 github_monitor.py <github_target>
-
-Easiest start (guided setup wizard):
+    ```sh
     python3 github_monitor.py --setup
+    ```
 
-Check setup before monitoring:
-    python3 github_monitor.py --doctor <github_target>
+=== "Manual Python script on Windows"
 
-Full options: python3 github_monitor.py --help
-```
+    ```powershell
+    python github_monitor.py --setup
+    ```
 
-A PyPI install uses `github_monitor`. For manual installations, use `python3 github_monitor.py` on macOS or Linux and `python github_monitor.py` on Windows. Setup needs an interactive terminal. In scripts, use `--generate-config` instead.
+A **target** is the GitHub user whose activity you want to monitor. The wizard asks for a GitHub personal access token and validates it. See [GitHub Personal Access Token](#github-personal-access-token) for how to create one.
 
-When setup saves the target, later runs can omit it. A positional target still overrides `TARGET_GITHUB_USERNAME` for one run. If no target is saved, running the tool without arguments shows the first-run screen above.
+The polling prompts accept plain seconds or the `s`, `m`, `h` and `d` units. They show both the seconds and a readable form of the default.
 
-For manual setup, create a [GitHub personal access token](#github-personal-access-token) then validate and save it through the hidden prompt:
+With a saved target, running GitHub Monitor without a target starts monitoring that user. If no target is saved, an interactive no-argument run offers setup.
 
-```sh
-github_monitor --set-github-token
-```
+<a id="before-you-start"></a>
+## Before you start
 
-Start monitoring `github_username`:
+You need two things before the first monitoring run:
 
-```sh
-github_monitor github_username
-```
+1. A GitHub target. Either a username or a complete profile URL works.
+2. A GitHub personal access token with the access needed for the accounts and repositories you monitor. See [GitHub Personal Access Token](#github-personal-access-token).
 
-Or if you installed [manually](installation.md#manual-installation):
-
-```sh
-python3 github_monitor.py --setup
-python3 github_monitor.py <github_target>
-```
-
-To get the list of all supported command-line arguments / flags:
-
-```sh
-github_monitor --help
-```
-
+<a id="github-personal-access-token"></a>
 ## GitHub Personal Access Token
 
 Go to your GitHub token settings: [https://github.com/settings/tokens](https://github.com/settings/tokens)
@@ -104,6 +77,96 @@ Fallback methods are:
 
 If you update `GITHUB_TOKEN` in the active dotenv file, send a `SIGHUP` signal to reload it without restarting the tool. More information is available in [Storing Secrets](configuration.md#storing-secrets) and [Signal Controls](usage.md#signal-controls-macoslinuxunix).
 
-## Continue with Usage
+<a id="not-sure-which-command-you-need"></a>
+## Not sure which command you need?
 
-Use [Usage](usage.md) for monitoring and output options or [Configuration](configuration.md) to adjust saved settings. If setup or monitoring fails, run [Doctor Preflight](troubleshooting.md#doctor-preflight) and follow the reported recovery steps.
+| I want to... | Run this |
+| --- | --- |
+| Set up GitHub Monitor for the first time | Use the setup command for your installation above |
+| Start monitoring with existing authentication | `github_monitor <github_target>`, where the target is a username or complete profile URL |
+| Start the target saved in `TARGET_GITHUB_USERNAME` | `github_monitor --config-file github_monitor.conf` |
+| Check the token, connectivity and one target | `github_monitor --doctor <github_target>` |
+| Most securely enter or replace `GITHUB_TOKEN` | Run `github_monitor --set-github-token` and enter the token at the hidden prompt |
+| Save an SMTP password for email alerts | Run `github_monitor --set-smtp-password` |
+| Send a test email | Run `github_monitor --send-test-email` |
+| Set up webhook alerts | Run the setup wizard and choose webhook alerts |
+| Save a new webhook URL | Run `github_monitor --set-webhook-url` |
+| Send a test webhook | Run `github_monitor --send-test-webhook` |
+| List the user's repositories with stats | `github_monitor <github_target> -r` |
+| List the user's starred repositories | `github_monitor <github_target> -g` |
+| List followers and followings | `github_monitor <github_target> -f` |
+| List recent events | `github_monitor <github_target> -l -n 10` |
+| Write every change to a CSV file | `github_monitor <github_target> -b changes.csv` |
+| List every supported command-line flag | `github_monitor --help` |
+
+<a id="run-individual-commands"></a>
+## Run Individual Commands
+
+The examples below use PyPI. For a manual script, replace `github_monitor` with `python3 github_monitor.py` on macOS or Linux. Use `python github_monitor.py` on Windows and run it from the directory holding the script or give its full path. See [Command Format by Installation Method](usage.md#command-format-by-installation-method).
+
+Throughout this page `<github_target>` means a GitHub username or a complete profile URL.
+
+<a id="save-the-github-token"></a>
+### Save the GitHub token
+
+To configure authentication without the wizard, `--set-github-token` is the recommended and most secure entry method. It reads the token through a hidden prompt, so the value does not appear on screen or in the command line. It validates the token with GitHub before updating only `GITHUB_TOKEN`. If validation fails, it does not change the `.env` file.
+
+```sh
+github_monitor --set-github-token
+```
+
+The `-t` and `--github-token` options still work, but their values may appear in shell history or process listings.
+
+<a id="save-notification-credentials"></a>
+### Save notification credentials
+
+The SMTP password is entered through a hidden prompt, checked against the mail server and saved as `SMTP_PASSWORD` in `.env`:
+
+```sh
+github_monitor --set-smtp-password
+```
+
+A webhook URL is the private address used to deliver notifications. Treat it like a password because anyone who has it may be able to post through it. Follow the [webhook setup steps](configuration.md#webhook-settings) then save the link:
+
+```sh
+github_monitor --set-webhook-url
+```
+
+The link is entered through a hidden prompt and saved as `WEBHOOK_URL` in `.env`. This command only saves the link. It does not turn on webhook alerts or send a message. See [Webhook Settings](configuration.md#webhook-settings) to choose your alerts then run `github_monitor --send-test-webhook` to test them.
+
+<a id="start-monitoring"></a>
+### Start monitoring
+
+The first example uses a positional target. The second uses a saved `TARGET_GITHUB_USERNAME`:
+
+```sh
+github_monitor <github_target>
+github_monitor --config-file github_monitor.conf
+```
+
+For a [manual script](installation.md#install-the-manual-script):
+
+```sh
+python3 github_monitor.py <github_target>
+```
+
+To check the setup before the first run, without writing anything:
+
+```sh
+github_monitor --doctor <github_target>
+```
+
+See [Doctor Preflight](troubleshooting.md#doctor-preflight) for what it reports.
+
+To see all supported command-line arguments and flags:
+
+```sh
+github_monitor --help
+```
+
+<a id="next-step"></a>
+## Next Step
+
+Run [Doctor](troubleshooting.md#doctor-preflight) before an unattended run to confirm the token, connectivity and notification settings.
+
+With the token saved and a first run working, continue to [Configuration](configuration.md) for targets, SMTP, webhooks and secrets. See [Usage](usage.md) for command formats, monitoring, listing commands, notifications and output files.

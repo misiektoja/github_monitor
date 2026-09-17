@@ -2,6 +2,7 @@
 
 The offline test suite covers everything in `github_monitor.py` that can run without network access. GitHub API objects are replaced with test doubles, so the suite needs no GitHub account, no network and no credentials.
 
+<a id="running-the-suite"></a>
 ## Running the suite
 
 From the repository root:
@@ -29,10 +30,12 @@ mkdocs build --strict
 
 CI runs all three on every push and pull request, across Python 3.10 through 3.14, and again before anything is published to PyPI.
 
+<a id="what-is-covered"></a>
 ## What is covered
 
 The test layout mirrors the surfaces a user touches rather than the module layout. See [tests/README.md](https://github.com/misiektoja/github_monitor/blob/main/tests/README.md) for the file-by-file map.
 
+<a id="conventions"></a>
 ## Conventions
 
 * Keep every test offline. If a code path needs network access, stub it with `monkeypatch` rather than skipping the test.

@@ -16,12 +16,10 @@ Powerful real-time GitHub OSINT tool that tracks everything from profile updates
    <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor.png" alt="github_monitor_screenshot" width="100%"/>
 </p>
 
-**Full documentation: [misiektoja.github.io/github_monitor](https://misiektoja.github.io/github_monitor/)**
-
-<a id="-quick-install-run"></a>
+<a id="quick-install-run"></a>
 ### 🚀 Quick Install & Run
 
-New to Python or unsure what is installed? Follow the [Python install walkthrough](https://misiektoja.github.io/github_monitor/installation/#new-to-python-install-everything) first.
+New to Python or unsure what is installed? Follow the [Python install walkthrough](https://misiektoja.github.io/github_monitor/installation/#new-to-python-check-and-install) first.
 
 Install from PyPI:
 
@@ -35,10 +33,11 @@ Run the setup wizard:
 github_monitor --setup
 ```
 
-The wizard asks for the target, authentication, polling intervals and optional notifications. Review the settings before saving them. See [Setup & First Run](https://misiektoja.github.io/github_monitor/setup-and-first-run/) for the service-specific steps.
+The wizard asks for the target, the GitHub token and optional notifications. Review the settings before saving them. See [Setup & First Run](https://misiektoja.github.io/github_monitor/setup-and-first-run/) for how to create the GitHub personal access token.
 
 For the manual single-file method, dependencies and upgrade commands, see [Installation](https://misiektoja.github.io/github_monitor/installation/).
 
+<a id="features"></a>
 ## Features
 
 ### 🔍 Activity and Profile Tracking
@@ -67,52 +66,83 @@ For the manual single-file method, dependencies and upgrade commands, see [Insta
 * **Runtime controls**: Adjust the running monitor through supported signals.
 * **GitHub deployments**: Connect to public GitHub or GitHub Enterprise.
 
+<a id="common-commands"></a>
 ## Common Commands
 
-Use [Quick Install & Run](#-quick-install-run) for first-time setup. These examples use the PyPI command. See [Command Format by Installation Method](https://misiektoja.github.io/github_monitor/usage/#command-format) for manual-script equivalents.
+Use [Quick Install & Run](#-quick-install--run) above for first-time setup. The table uses PyPI commands. For the manual script equivalents, see [Run Individual Commands](https://misiektoja.github.io/github_monitor/setup-and-first-run/#run-individual-commands).
 
 Replace the target placeholders with a GitHub username or complete profile URL. Monitoring requires the [GitHub personal access token](https://misiektoja.github.io/github_monitor/setup-and-first-run/#github-personal-access-token) described in the setup guide.
 
 | I want to... | Run this |
 | --- | --- |
 | Configure the target, credentials and alerts | `github_monitor --setup` |
-| Start monitoring with saved credentials | `github_monitor <github_target>` |
-| Check setup before monitoring | `github_monitor --doctor <github_target>` |
-| Enter or replace credentials through hidden prompts | `github_monitor --set-github-token` |
-| Use a specific configuration and secrets file | `github_monitor --config-file github_monitor.conf --env-file .env <github_target>` |
+| Start monitoring with existing authentication | `github_monitor <github_target>` |
+| Check authentication, connectivity and one target | `github_monitor --doctor <github_target>` |
+| Enter or replace securely the GitHub personal access token | `github_monitor --set-github-token` |
+| Configure and test webhook alerts | Use the setup wizard or follow [Webhook Settings](https://misiektoja.github.io/github_monitor/configuration/#webhook-settings) |
+| Save an SMTP password for email alerts | `github_monitor --set-smtp-password` |
+| Send a test email | `github_monitor --send-test-email` |
+| Save a new webhook URL | `github_monitor --set-webhook-url` |
+| Send a test webhook | `github_monitor --send-test-webhook` |
 | List public repositories | `github_monitor <github_target> -r` |
-| List every supported command-line option | `github_monitor --help` |
+| List starred repositories | `github_monitor <github_target> -g` |
+| List followers and followings | `github_monitor <github_target> -f` |
+| List the ten most recent events | `github_monitor <github_target> -l -n 10` |
+| Write every change to a CSV file | `github_monitor <github_target> -b changes.csv` |
+| Use a specific configuration and secrets file | `github_monitor --config-file github_monitor.conf --env-file .env <github_target>` |
+| List every supported command-line flag | `github_monitor --help` |
 
-Monitoring runs until you press `Ctrl+C`. For email, Discord and ntfy alerts, CSV output and service-specific commands, see [Usage](https://misiektoja.github.io/github_monitor/usage/). If a run fails, start with [Doctor Preflight](https://misiektoja.github.io/github_monitor/troubleshooting/#doctor-preflight).
+Running the tool with no arguments offers the wizard if you have not saved a target. If a target is already saved, it starts monitoring that target.
 
+The tool runs until interrupted (`Ctrl+C`). Use `tmux` or `screen` for persistence and run multiple copies to monitor several targets.
+
+For the personal access token, saved targets and notification setup, see the [full Setup & First Run guide](https://misiektoja.github.io/github_monitor/setup-and-first-run/).
+
+For the events and repositories to monitor, TLS verification, email and webhook setup, see [Configuration](https://misiektoja.github.io/github_monitor/configuration/). For notification choices, listing commands and output files, see [Usage](https://misiektoja.github.io/github_monitor/usage/).
+
+If a run fails, start with [Doctor Preflight](https://misiektoja.github.io/github_monitor/troubleshooting/#doctor-preflight).
+
+<a id="documentation"></a>
 ## Documentation
+
+Full documentation is available at **[misiektoja.github.io/github_monitor](https://misiektoja.github.io/github_monitor/)**:
 
 | Page | What it covers |
 | --- | --- |
 | [Installation](https://misiektoja.github.io/github_monitor/installation/) | Python walkthrough, PyPI or manual installation, upgrades |
-| [Setup & First Run](https://misiektoja.github.io/github_monitor/setup-and-first-run/) | The guided wizard, the personal access token, the first monitoring run |
+| [Setup & First Run](https://misiektoja.github.io/github_monitor/setup-and-first-run/) | Setup wizard, the personal access token, the first monitoring run |
 | [Configuration](https://misiektoja.github.io/github_monitor/configuration/) | Config file, events and repositories to monitor, SMTP, webhooks, TLS verification, storing secrets, check intervals |
-| [Usage](https://misiektoja.github.io/github_monitor/usage/) | Monitoring mode, listing mode, notifications, CSV export, signals, terminal colours |
+| [Usage](https://misiektoja.github.io/github_monitor/usage/) | Monitoring mode, listing mode, notifications, CSV export, signals, terminal output |
 | [Troubleshooting](https://misiektoja.github.io/github_monitor/troubleshooting/) | `--doctor` preflight checks, what to do when something fails, `--verbose` and `--debug` output |
 | [Testing](https://misiektoja.github.io/github_monitor/testing/) | Running the offline suite, the linter and the docs build |
 | [About](https://misiektoja.github.io/github_monitor/about/) | Change log, contributing, security, license, support |
 
+<a id="change-log"></a>
 ## Change Log
 
 See [RELEASE_NOTES.md](https://github.com/misiektoja/github_monitor/blob/main/RELEASE_NOTES.md).
 
+<a id="contributing"></a>
 ## Contributing
 
 Bug reports, documentation fixes and code contributions are welcome. See [CONTRIBUTING.md](https://github.com/misiektoja/github_monitor/blob/main/CONTRIBUTING.md) for the development setup, the checks CI enforces and what a change needs before it is merged. Participation is covered by the [Code of Conduct](https://github.com/misiektoja/github_monitor/blob/main/CODE_OF_CONDUCT.md).
 
+<a id="security"></a>
 ## Security
 
 Report a suspected vulnerability privately through [GitHub security advisories](https://github.com/misiektoja/github_monitor/security/advisories/new), never as a public issue. [SECURITY.md](https://github.com/misiektoja/github_monitor/blob/main/SECURITY.md) covers the reporting process, the supported versions and the security posture of stored credentials and configuration loading.
 
+<a id="maintainers"></a>
+## Maintainers
+
+- **misiektoja** ([@misiektoja](https://github.com/misiektoja))
+
+<a id="license"></a>
 ## License
 
 Licensed under GPLv3. See [LICENSE](https://github.com/misiektoja/github_monitor/blob/main/LICENSE). Dependency licenses are listed in [THIRD_PARTY_NOTICES.md](https://github.com/misiektoja/github_monitor/blob/main/THIRD_PARTY_NOTICES.md).
 
+<a id="support"></a>
 ## Support
 
 Questions, bug reports and vulnerability reports each have a place, listed in [SUPPORT.md](https://github.com/misiektoja/github_monitor/blob/main/SUPPORT.md).

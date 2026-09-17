@@ -1,6 +1,6 @@
 # Usage
 
-<a id="command-format"></a>
+<a id="command-format-by-installation-method"></a>
 ## Command Format by Installation Method
 
 Examples use the PyPI command. For a downloaded script, run commands from the directory containing `github_monitor.py` and keep the same arguments:
@@ -17,6 +17,7 @@ Activate the tool's virtual environment before running these commands. For a dow
 
 For first-time configuration, follow [Setup & First Run](setup-and-first-run.md). Use [Doctor Preflight](troubleshooting.md#doctor-preflight) to check a setup before monitoring.
 
+<a id="monitoring-mode"></a>
 ## Monitoring Mode
 
 To monitor specific user activities and profile changes, simply enter the GitHub username as a command-line argument (`github_username` in the example below):
@@ -83,10 +84,45 @@ The tool runs until interrupted (`Ctrl+C`). Use `tmux` or `screen` for persisten
 
 You can monitor multiple GitHub users by running multiple instances of the script.
 
-The tool automatically saves its output to a `github_monitor_<username>.log` file. It can be changed in the settings via the `GITHUB_LOGFILE` configuration option or disabled completely via `DISABLE_LOGGING` / the `-d` flag.
+The tool automatically saves its output to a `github_monitor_<github_target>.log` file. It can be changed in the settings via the `GITHUB_LOGFILE` configuration option or disabled completely via `DISABLE_LOGGING` / the `-d` flag.
 
 Set `ASCII_LOG_SEPARATORS` to `"Auto"` (default) to use ASCII separator-only lines on Windows, `"On"` to use them on every operating system or `"Off"` to preserve Unicode separators in logs everywhere. Terminal separators stay Unicode. Log files and all other logged text remain UTF-8.
 
+<a id="terminal-output"></a>
+## Terminal Output
+
+Use `--help` for examples grouped by task and matched to your installation.
+
+Monitoring mode prints the settings that are actually in effect before the first check.
+
+Optional features appear once you switch them on.
+
+Use `--verbose` or `--debug` for the full startup summary, including output paths, notification settings, secret sources and runtime information.
+
+Use `--truncate N` or `TRUNCATE_CHARS` to limit screen line width. Set it to `999` to detect the terminal width automatically. Truncation does not change log files and is ignored when logging is disabled with `-d`.
+
+The tool clears the terminal when monitoring starts. Set `CLEAR_SCREEN` to `False` to keep whatever is already on the screen.
+
+The screen is never cleared when output is redirected to a file or a pipe, in debug mode, or for a command that prints a result and exits, such as `--doctor`, `--help` and the test senders.
+
+Two settings add detail to what a run prints. `VERBOSE_MODE` adds the decisions the run made and `DEBUG_MODE` adds timestamped technical traces. Both are off by default, both are independent of each other and both have a flag that wins over the file, `--verbose` and `--debug`. `DELIVERY_CONFIRMATIONS` is on by default and controls whether verbose mode confirms each delivered email and webhook alert. See [Verbose and Debug Output](troubleshooting.md#verbose-and-debug-output).
+
+<a id="coloured-terminal-output"></a>
+### Coloured Terminal Output
+
+GitHub Monitor colours live terminal output and help by default. Saved log files stay plain text.
+
+Turn colour off for one run with `--no-color` or permanently with `COLORED_OUTPUT = False`. Colour is also disabled for redirected output, `NO_COLOR` or an unsupported terminal. See [Terminal Colours](configuration.md#terminal-colours) for details and Windows support.
+
+Override individual colours with `COLOR_THEME`. It is merged over the built-in theme, so you only name the parts you want to change:
+
+```ini
+COLOR_THEME = { "repository": "bright_magenta bold", "username": "green" }
+```
+
+See [Terminal Colours](configuration.md#terminal-colours) for every theme key and the accepted colour and style names.
+
+<a id="listing-mode"></a>
 ## Listing Mode
 
 There is another mode of the tool that displays various requested information (`-r`, `-g`, `-f` and `-l` flags).
@@ -131,6 +167,7 @@ If you want to not only display, but also save the list of recent GitHub events 
 github_monitor github_username -l -n 10 -b github_username.csv
 ```
 
+<a id="email-notifications"></a>
 ## Email Notifications
 
 To enable email notifications for all user profile changes (e.g. changes in followers, followings, starred repositories, username, email, bio, location, blog URL and number of repositories):
@@ -205,6 +242,7 @@ Example email:
    <img src="https://raw.githubusercontent.com/misiektoja/github_monitor/refs/heads/main/assets/github_monitor_email_notifications.png" alt="github_monitor_email_notifications" width="90%"/>
 </p>
 
+<a id="webhook-notifications"></a>
 ## Webhook Notifications
 
 Webhook event controls mirror the email categories but work independently:
@@ -234,6 +272,7 @@ github_monitor github_username --webhook-provider ntfy --webhook-url "https://nt
 
 See [Webhook Settings](configuration.md#webhook-settings) for private URL setup, ntfy authentication and advanced payload customization.
 
+<a id="csv-export"></a>
 ## CSV Export
 
 If you want to save all GitHub user events, profile changes and repository updates to a CSV file, set `CSV_FILE` or use the `-b` flag:
@@ -244,9 +283,40 @@ github_monitor <github_target> -b github_username.csv
 
 The file will be automatically created if it does not exist.
 
+<a id="check-intervals"></a>
+## Check Intervals
+
+If you want to customize the polling interval, use the `-c` flag (or the `GITHUB_CHECK_INTERVAL` configuration option):
+
+```sh
+github_monitor <github_target> -c 900
+```
+
+It is generally not recommended to use values lower than 10 minutes as new events are very often delayed by the GitHub API.
+
+`NET_MAX_RETRIES` defaults to 5 and counts the first request as an attempt. `NET_BASE_BACKOFF_SEC` sets the base retry delay and defaults to 5 seconds. GitHub rate-limit headers can specify a different wait. If a monitored feed remains unavailable after its attempts, its previous snapshot is kept and monitoring tries again on the next check.
+
+`VERIFY_REPOSITORY_CLOSURES` defaults to `True`. Missing issues, pull requests and discussions require confirmation of their closed state, with a separate fixed limit of five extra HTTP requests per monitoring cycle across all repositories. These lookups do not use `NET_MAX_RETRIES` or follow redirects. Unverified items stay in the previous snapshot and are checked again on later cycles. Set `VERIFY_REPOSITORY_CLOSURES = False` to restore immediate disappearance-based alerts without verification requests. The verbose/debug startup summary shows the setting and shared budget. The budget shows `Inactive` when repository tracking or verification is disabled. See [Monitoring Mode](usage.md#monitoring-mode).
+
+An interval below 30 seconds invites the GitHub rate limiter, which stops the tool seeing anything. `--doctor` warns when the configured interval is that short.
+<a id="liveness-reminder"></a>
+### Liveness Reminder
+
+While nothing changes, the tool prints one reminder that it is still running:
+
+```
+* Monitoring healthy for <github_target>. No tracked change since the last check
+Liveness check, timestamp:	Mon 08 Sep 2026, 09:15:05
+```
+
+Set `LIVENESS_CHECK_INTERVAL` to change it (default: 86400, i.e. 24 hours), or to 0 to switch it off.
+
+Anything the tool prints about the target restarts the countdown, so a busy run stays quiet.
+
+<a id="signal-controls-macoslinuxunix"></a>
 ## Signal Controls (macOS/Linux/Unix)
 
-The tool has several signal handlers implemented which allow changing the behavior of the tool without a need to restart it with new configuration options / flags.
+The tool has several signal handlers implemented which allow to change behavior of the tool without a need to restart it with new configuration options / flags.
 
 List of supported signals:
 
@@ -269,72 +339,9 @@ Send signals with `kill` or `pkill`, e.g.:
 pkill -USR1 -f "github_monitor <github_target>"
 ```
 
-As Windows supports a limited number of signals, this functionality is available only on Linux/Unix/macOS.
+As Windows supports limited number of signals, this functionality is available only on Linux/Unix/macOS.
 
-## Terminal Colours
-
-`COLORED_OUTPUT` controls whether live terminal output is coloured. It defaults to `True` and is read before the startup banner is printed, so a configured value applies to the first line. `--no-color` disables colour for one run. Colour also switches itself off when output is redirected or piped, when `TERM` is unset or `dumb` and when the standard [`NO_COLOR`](https://no-color.org/) environment variable is set. Log files always remain plain text with ANSI escape sequences stripped.
-
-The `--help` screen is coloured too. Group headings, option names, the values those options take, the example commands and the comments above them each get their own colour, so the screen can be scanned instead of read.
-
-`COLOR_THEME` overrides individual colours. It is merged over the built-in theme, so name only the parts you want to change:
-
-The built-in colours apply unless you set `COLOR_THEME`. Older configurations may set every colour explicitly. Remove that block to use current defaults or edit individual values to keep a custom theme.
-
-```ini
-COLOR_THEME = { "repository": "bright_magenta bold", "username": "green" }
-```
-
-A value combines one colour with any number of style attributes separated by spaces or `+`. Examples include `"bright_cyan bold"`, `"red underline"` and `"bright_magenta bold underline"`. An empty string leaves that part uncoloured.
-
-| Colours | Styles |
-| --- | --- |
-| `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white` and the matching `bright_` variants such as `bright_red` | `bold`, `dim`, `underline`, `blink` |
-
-| Theme key | Colours |
-| --- | --- |
-| `header` | The startup banner plus Setup Wizard and Doctor headings |
-| `section` | Commands the wizard tells you to run and Doctor section names |
-| `username` | GitHub usernames, display names and user context values |
-| `id` | Event, review and commit identifiers |
-| `status_online` | Public, online, available and unblocked states, including `Public profile: Yes` and `Blocked by the user: No` |
-| `status_offline` | Private, blocked and offline states, including `Public profile: No` and `Blocked by the user: Yes` |
-| `status_other` | Unknown or any other reported status value |
-| `repository` | Repository names |
-| `event` | Event types plus release, issue and discussion titles |
-| `commit` | Commit messages |
-| `branch` | Branches, refs and target commitish values |
-| `duration` | Polling intervals and elapsed times |
-| `timestamp_label` | The `Timestamp:` label. Empty by default so the label stays plain |
-| `timestamp_value` | Timestamp values |
-| `info` | Informational lines, prompts and recovery actions |
-| `warning` | Warning lines and wizard validation notices |
-| `error` | Error lines and failed verdicts |
-| `signal` | Received-signal lines |
-| `email` | Email addresses and email delivery lines |
-| `webhook` | Webhook delivery lines |
-| `date` | Single dates and times |
-| `date_range` | Date and hour ranges |
-| `boolean_true` | `True`, `Enabled`, `On` and Doctor PASS values |
-| `boolean_false` | `False`, `Disabled`, `Off` and Doctor FAIL values |
-| `count_up` | Values in reported increases such as `from 10 to 12` and `(+2)` |
-| `count_down` | Values in reported decreases such as `from 12 to 10` and `(-2)` |
-| `link` | HTTP and HTTPS links |
-| `help_heading` | The `--help` group headings and example task names |
-| `help_usage` | The `usage:` label |
-| `help_option` | Option names such as `--doctor` |
-| `help_metavar` | The value each option takes, such as a path or a number of seconds |
-| `help_placeholder` | Values to replace in the help examples |
-| `help_command` | The commands in the help examples |
-| `help_comment` | The `#` comment above each help example |
-| `help_default` | The `(default: ...)` notes |
-
-Static counts stay plain. Only values that report a change receive `count_up` or `count_down`.
-
-`TRUNCATE_CHARS` limits visible terminal width without shortening log lines. `--truncate N` overrides it for one run. Use `999` to detect the current terminal width. Truncation is ignored when logging is disabled. Install the optional `wcwidth` package for correct display widths with wide Unicode characters.
-
-On Windows install the optional `colorama` package for the best results in classic Command Prompt. Windows Terminal needs no additional package.
-
+<a id="coloring-log-output-with-grc"></a>
 ## Coloring Log Output with GRC
 
 You can use [GRC](https://github.com/garabik/grc) to color logs.
@@ -354,5 +361,5 @@ Now copy the [conf.monitor_logs](https://raw.githubusercontent.com/misiektoja/gi
 Example:
 
 ```sh
-grc tail -F -n 100 github_monitor_<username>.log
+grc tail -F -n 100 github_monitor_<github_target>.log
 ```
