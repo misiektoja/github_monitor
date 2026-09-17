@@ -5379,7 +5379,7 @@ def format_body_block(content, indent="    "):
 
 # Returns the base web URL for GitHub or GHE (e.g. https://github.com or https://ghe.example.com)
 def github_web_base() -> str:
-    if "api.github.com" in GITHUB_API_URL:
+    if (urlsplit(GITHUB_API_URL).hostname or "").casefold() == "api.github.com":
         return "https://github.com"
     return GITHUB_API_URL.replace("/api/v3", "").rstrip("/")
 
