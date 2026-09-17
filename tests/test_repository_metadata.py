@@ -47,12 +47,12 @@ def test_citation_metadata_describes_this_project():
     assert author["given-names"] and author["family-names"] and author["alias"] == "misiektoja"
 
 
-# Confirms every user-visible declaration reports the same unreleased version
+# Confirms every user-visible declaration reports the same newest version
 def test_declared_versions_agree():
     docstring = re.search(r'^v([\d.]+)$', read_asset("github_monitor.py"), re.M)
     module = re.search(r'^VERSION = "([^"]+)"', read_asset("github_monitor.py"), re.M)
     packaged = re.search(r'^version = "([^"]+)"', read_asset("pyproject.toml"), re.M)
-    release_notes = re.search(r"^# Changes in ([\d.]+) \(TBD\)", read_asset("RELEASE_NOTES.md"), re.M)
+    release_notes = re.search(r"^# Changes in ([\d.]+) ", read_asset("RELEASE_NOTES.md"), re.M)
 
     assert docstring is not None and module is not None and packaged is not None and release_notes is not None
     assert {docstring.group(1), module.group(1), packaged.group(1), release_notes.group(1)} == {module.group(1)}
