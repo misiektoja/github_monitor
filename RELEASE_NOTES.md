@@ -2,7 +2,7 @@
 
 This is a high-level summary of the most important changes.
 
-# Changes in 2.7 (TBD)
+# Changes in 2.7 (18 Sep 2026)
 
 Version **2.7** adds **guided setup**, a read-only **Doctor preflight check** and **private SMTP password entry**. **Coloured output**, startup summaries and verbose/debug modes make monitoring easier to follow. It improves **contribution and repository-closure alerts**, preserves history during failed checks and protects configuration and credentials. Documentation is searchable and release downloads can be verified.
 
@@ -12,7 +12,6 @@ Version **2.7** adds **guided setup**, a read-only **Doctor preflight check** an
 - **NEW:** **Doctor preflight check** - `--doctor` checks configuration, GitHub access, monitoring feeds, notifications and output destinations with suggested fixes. It writes no files and sends test notifications only after confirmation
 - **NEW:** **Private SMTP password setup** - `--set-smtp-password` takes a hidden password and checks it with the mail server before saving. Guided setup also checks email credentials without sending a message
 - **NEW:** **Clearer output and diagnostics** - Coloured output and a short startup summary show the active settings. `--verbose` adds operational updates and `--debug` adds technical traces. Secrets are redacted and logs retain the full summary. Customize colours with `COLOR_THEME` or disable them with `--no-color`. Copy the updated `grc/conf.monitor_logs` to `~/.grc/` to use the live terminal colours in saved logs
-- **IMPROVE:** **Error alerts across monitoring feeds** - Temporary failures become eligible for alerts after five minutes, while rejected credentials alert immediately. Each channel receives one alert per outage. Failed deliveries retry with increasing delays. Optional detail lookups do not trigger outage alerts and a complete successful check resets the outage
 - **IMPROVE:** **Discord alerts match the email** - Discord now receives the same emphasis as the HTML email, with bold values and clickable links instead of plain text. ntfy keeps the plain body, since it would show the markers literally
 - **IMPROVE:** **Clearer errors and recovery** - Failures include repair guidance, periodic outage reminders and recovery notices. Liveness messages follow elapsed time and now default to 24 hours
 - **IMPROVE:** **Removal context** - Removal alerts distinguish unavailable accounts and repositories. Repositories that stop resolving are described as inaccessible because they may be private or no longer accessible to the token
