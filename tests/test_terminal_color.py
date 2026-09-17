@@ -535,8 +535,8 @@ def test_every_theme_part_is_used():
 
 # Verifies the published theme table lists every shipped key once
 def test_documented_theme_keys_match_the_built_in_theme():
-    usage = (Path(monitor.__file__).parent / "docs" / "usage.md").read_text(encoding="utf-8")
-    section = usage.split("## Terminal Colours", 1)[1].split("## Coloring Log Output with GRC", 1)[0]
+    page = (Path(monitor.__file__).parent / "docs" / "configuration.md").read_text(encoding="utf-8")
+    section = page.split("## Terminal Colours", 1)[1].split("\n## ", 1)[0]
     documented = re.findall(r"^\| `([a-z_]+)` \|", section, re.M)
     assert len(documented) == len(set(documented))
     assert set(documented) == set(monitor.DEFAULT_COLOR_THEME)

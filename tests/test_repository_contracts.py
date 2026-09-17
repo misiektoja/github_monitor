@@ -16,6 +16,9 @@ DOCS_DIRECTORY = PROJECT_ROOT / "docs"
 REPOSITORY_URL = "https://github.com/misiektoja/github_monitor"
 
 # The published page set. Splitting the README moved every section onto exactly one of these, so the list is pinned here
+# Navigation sections that close several pages by design, each pointing at the page that comes next
+SHARED_SECTIONS = frozenset({"Next Step"})
+
 DOCUMENTATION_PAGES = ("index.md", "installation.md", "setup-and-first-run.md", "configuration.md", "usage.md", "troubleshooting.md", "testing.md", "about.md")
 
 
@@ -286,7 +289,8 @@ class TestDocumentationSite:
             titles = [title for level, title in page_headings(DOCS_DIRECTORY / name) if level == 1]
             assert len(titles) == 1, f"{name} has {len(titles)} top-level titles: {titles}"
 
-    # The same section landing on two pages splits the reader's answer in half and both copies then drift
+    # The same section landing on two pages splits the reader's answer in half and both copies then drift,
+    # apart from the navigation sections that close several pages by design
     def test_no_section_appears_on_two_pages(self):
         seen = {}
         duplicated = []
@@ -294,7 +298,7 @@ class TestDocumentationSite:
             for level, title in page_headings(DOCS_DIRECTORY / name):
                 if level != 2:
                     continue
-                if title in seen:
+                if title in seen and title not in SHARED_SECTIONS:
                     duplicated.append(f"{title!r} on {seen[title]} and {name}")
                 seen[title] = name
 
