@@ -3614,16 +3614,38 @@ def mask_email_address(address):
     return f"{masked}@{domain}"
 
 
+# Returns whether a mail server is set rather than left empty or still holding the placeholder the sample configuration ships
+def smtp_server_configured():
+    return secret_is_set(SMTP_HOST) and bool(SMTP_PORT)
+
+
+# Returns whether an email alert has both a server to send through and an address to reach
+def email_channel_configured():
+    return smtp_server_configured() and secret_is_set(RECEIVER_EMAIL)
+
+
+# Returns whether a webhook alert has a destination to post to
+def webhook_channel_configured():
+    return bool(normalized_webhook_provider()) and secret_is_set(WEBHOOK_URL)
+
+
+# Rolls one channel's enabled alerts into the state its summary row reports, which is off while the channel has no destination
+def _startup_notification_state(categories, configured):
+    if not categories:
+        return "Off"
+    return "On (" + ", ".join(categories) + ")" if configured else "Off (not configured)"
+
+
 # Names the mail server this run would use, leaving out the account that signs in to it
 def startup_email_transport():
-    if not SMTP_HOST or not SMTP_PORT:
+    if not smtp_server_configured():
         return "Not configured"
     return f"{SMTP_HOST}:{SMTP_PORT} ({'STARTTLS' if SMTP_SSL else 'TLS off'})"
 
 
 # Names the configured webhook service and whether the channel is switched on, which are two separate settings
 def startup_webhook_provider():
-    if not normalized_webhook_provider() or not str(WEBHOOK_URL or "").strip():
+    if not webhook_channel_configured():
         return "Not configured"
     return f"{webhook_provider_display_name()} ({'enabled' if WEBHOOK_ENABLED else 'disabled'})"
 
@@ -3633,15 +3655,15 @@ def build_startup_summary(target, config_path, env_path, output_path):
     install_context = detect_install_context()
     email_categories = _startup_email_notification_categories()
     webhook_categories = _startup_webhook_notification_categories()
-    email_state = "On (" + ", ".join(email_categories) + ")" if email_categories else "Off"
-    webhook_state = "On (" + ", ".join(webhook_categories) + ")" if webhook_categories else "Off"
+    email_state = _startup_notification_state(email_categories, email_channel_configured())
+    webhook_state = _startup_notification_state(webhook_categories, webhook_channel_configured())
     from_dotenv, from_environment, from_config, from_command_line = startup_secret_buckets()
     return [
         StartupSummaryRow("Target", str(target), concise=True),
         StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
         StartupSummaryRow("Notifications (email)", email_state, concise=True),
         StartupSummaryRow("Email transport", startup_email_transport()),
-        StartupSummaryRow("Email recipient", mask_email_address(RECEIVER_EMAIL) if RECEIVER_EMAIL else "Not configured"),
+        StartupSummaryRow("Email recipient", mask_email_address(RECEIVER_EMAIL) if secret_is_set(RECEIVER_EMAIL) else "Not configured"),
         StartupSummaryRow("Notifications (webhook)", webhook_state, concise=True),
         StartupSummaryRow("Webhook provider", startup_webhook_provider()),
         StartupSummaryRow("Delivery confirmations", str(DELIVERY_CONFIRMATIONS)),
