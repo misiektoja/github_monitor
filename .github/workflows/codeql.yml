@@ -37,6 +37,8 @@ jobs:
           build-mode: none
           # The extended suite adds security queries that the default suite leaves out
           queries: security-extended
+          # The suppression query turns the in-code codeql[...] comments into suppressed alerts
+          packs: codeql/python-queries:AlertSuppression.ql
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
