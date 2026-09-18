@@ -1167,6 +1167,8 @@ def _colorize_count_change(match):
 # Applies the configured colour rules to one output line
 def _colorize_line(line):
     lowered = line.lower()
+    # Read before any highlight is inserted, since the label column has to be measured on the plain text
+    is_settings_row = is_startup_summary_row(line)
     notification_match = _NOTIFICATION_SUMMARY_STATE_RE.match(line)
     if notification_match:
         prefix, state, suffix = notification_match.groups()
@@ -1235,6 +1237,10 @@ def _colorize_line(line):
         line = _sub_outside_color(_QUOTED_CONTENT_RE, lambda match: _colorize_quoted_name(match), line)
     line = _sub_outside_color(_BOOLEAN_TRUE_RE, lambda match: colorize("boolean_true", match.group(0)), line)
     line = _sub_outside_color(_BOOLEAN_FALSE_RE, lambda match: colorize("boolean_false", match.group(0)), line)
+    # A summary row reports a setting, so a value that happens to read like a log keyword must not paint the whole row
+    if is_settings_row:
+        return line
+
     is_debug_line = bool(_DEBUG_LINE_RE.match(lowered))
     if lowered.startswith("to fix:"):
         line = _apply_style_nested(line, "info")
@@ -3708,11 +3714,23 @@ def build_startup_summary(target, config_path, env_path, output_path):
 # Rows that detail the channel named right above them, indented so the block reads as one setting with its details
 STARTUP_SUMMARY_NESTED_LABELS = ("Email transport", "Email recipient", "Email images", "Webhook provider", "ntfy images")
 
+# The column every summary value starts in, which also lets the colouriser recognize a summary row
+STARTUP_SUMMARY_VALUE_COLUMN = 32
+
+# Matches a summary row by that padded label column, since no log line puts a value there
+_STARTUP_SUMMARY_ROW_RE = re.compile(r"^\*(?: {1,3})[^:\s][^:]*: {2,}(?=\S)")
+
+
+# Returns whether a line is a startup summary row rather than ordinary output
+def is_startup_summary_row(line):
+    match = _STARTUP_SUMMARY_ROW_RE.match(line)
+    return bool(match) and match.end() == STARTUP_SUMMARY_VALUE_COLUMN
+
 
 # Formats one startup summary row with aligned plain ASCII columns
 def format_startup_summary_row(row):
     indent = "  " if row.label in STARTUP_SUMMARY_NESTED_LABELS else ""
-    prefix = f"* {indent}{(row.label + ':'):<{30 - len(indent)}}"
+    prefix = f"* {indent}{(row.label + ':'):<{STARTUP_SUMMARY_VALUE_COLUMN - 2 - len(indent)}}"
     if row.label in ("Notifications (email)", "Notifications (webhook)"):
         return textwrap.fill(row.value, width=100, initial_indent=prefix, subsequent_indent=" " * len(prefix), break_long_words=False, break_on_hyphens=False) + "\n"
     return f"{prefix}{row.value}\n"
