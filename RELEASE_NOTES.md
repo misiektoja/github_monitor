@@ -4,10 +4,12 @@ This is a high-level summary of the most important changes.
 
 # Changes in 2.7.1 (TBD)
 
-Version **2.7.1** reports an alert channel that still holds the values from the sample configuration as unset, instead of naming a mail server and a recipient no alert could reach.
+Version **2.7.1** reports a change over the window it was actually observed in, keeps the alert a failing check sends inside that check's report on screen and reports an alert channel that still holds the values from the sample configuration as unset.
 
 **Bug fixes**:
 
+- **BUGFIX:** **Reported changes name the window they were observed in** - The **`Check interval:`** line under a change always showed the configured polling interval and a date range built from it, so a change found after a failed check was reported over a window the tool had not been watching. It now measures from the previous successful check, which is the configured interval while checks run on schedule
+- **BUGFIX:** **Alert deliveries stay inside their report** - The hourly **`Monitoring degraded`** reminder closed its report before the error alert was sent, so **`Sending email notification to ...`** and its webhook equivalent landed under the separator and started a second, headless block. The reminder now closes below its delivery lines, keeping one check's report in one block
 - **BUGFIX:** **Unset alert channels are reported as unset** - The verbose startup summary read the values the sample configuration ships as a real destination, so a run that had never been given a mail server printed **`Email transport: your_smtp_server_ssl:587`**, a recipient of **`your_receiver_email`** and a webhook provider of **`Discord`**. Those rows now read **`Not configured`** and the channel rollup above them reads **`Off (not configured)`** rather than naming alert types nothing could deliver
 
 # Changes in 2.7 (18 Sep 2026)
