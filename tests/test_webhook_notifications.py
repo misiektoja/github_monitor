@@ -35,6 +35,15 @@ class FakeResponse:
         return self.payload
 
 
+# Gives both channels a destination, since the rollup rows report a channel with none as off whatever its alert types are
+def configure_channel_destinations(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(gm_module, "SMTP_PORT", 587)
+    monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "michal.k@example.com")
+    monkeypatch.setattr(gm_module, "WEBHOOK_PROVIDER", "discord")
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "https://discord.com/api/webhooks/123/private-token")
+
+
 # Enables one valid test webhook without affecting email settings
 def configure_webhook(gm_module, monkeypatch, provider="discord"):
     monkeypatch.setattr(gm_module, "WEBHOOK_ENABLED", True)
@@ -55,6 +64,7 @@ def test_startup_notification_summaries_use_compact_rollups(gm_module, monkeypat
     webhook_settings = {"WEBHOOK_ENABLED": True, "WEBHOOK_PROFILE_NOTIFICATION": True, "WEBHOOK_EVENT_NOTIFICATION": True, "WEBHOOK_REPO_NOTIFICATION": True, "WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION": True, "WEBHOOK_CONTRIB_NOTIFICATION": True, "WEBHOOK_ERROR_NOTIFICATION": True}
     for setting, value in {**email_settings, **webhook_settings}.items():
         monkeypatch.setattr(gm_module, setting, value)
+    configure_channel_destinations(gm_module, monkeypatch)
     rows = {row.label: row.value for row in gm_module.build_startup_summary("octocat", None, None, None)}
     assert rows["Notifications (email)"] == "On (profile, events, repositories, repository updates, contributions, errors)"
     assert rows["Notifications (webhook)"] == "On (profile, events, repositories, repository updates, contributions, errors)"
@@ -62,6 +72,7 @@ def test_startup_notification_summaries_use_compact_rollups(gm_module, monkeypat
 
 # Verifies webhook categories remain off while the master switch is disabled
 def test_startup_webhook_summary_respects_master_switch(gm_module, monkeypatch):
+    configure_channel_destinations(gm_module, monkeypatch)
     monkeypatch.setattr(gm_module, "WEBHOOK_ENABLED", False)
     monkeypatch.setattr(gm_module, "WEBHOOK_PROFILE_NOTIFICATION", True)
     monkeypatch.setattr(gm_module, "WEBHOOK_ERROR_NOTIFICATION", True)
