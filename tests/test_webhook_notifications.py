@@ -5,7 +5,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -55,11 +55,9 @@ def test_startup_notification_summaries_use_compact_rollups(gm_module, monkeypat
     webhook_settings = {"WEBHOOK_ENABLED": True, "WEBHOOK_PROFILE_NOTIFICATION": True, "WEBHOOK_EVENT_NOTIFICATION": True, "WEBHOOK_REPO_NOTIFICATION": True, "WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION": True, "WEBHOOK_CONTRIB_NOTIFICATION": True, "WEBHOOK_ERROR_NOTIFICATION": True}
     for setting, value in {**email_settings, **webhook_settings}.items():
         monkeypatch.setattr(gm_module, setting, value)
-    expected_email = "* Notifications (email):        On (profile, events, repositories, repository updates,\n                                contributions, errors)"
-    expected_webhook = "* Notifications (webhook):      On (profile, events, repositories, repository updates,\n                                contributions, errors)"
-    assert gm_module._startup_notification_summary_lines() == [expected_email, expected_webhook]
-    assert all(len(line) <= 100 for summary in (expected_email, expected_webhook) for line in summary.splitlines())
-    assert "\n*" not in expected_email + expected_webhook
+    rows = {row.label: row.value for row in gm_module.build_startup_summary("octocat", None, None, None)}
+    assert rows["Notifications (email)"] == "On (profile, events, repositories, repository updates, contributions, errors)"
+    assert rows["Notifications (webhook)"] == "On (profile, events, repositories, repository updates, contributions, errors)"
 
 
 # Verifies webhook categories remain off while the master switch is disabled
@@ -67,19 +65,31 @@ def test_startup_webhook_summary_respects_master_switch(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "WEBHOOK_ENABLED", False)
     monkeypatch.setattr(gm_module, "WEBHOOK_PROFILE_NOTIFICATION", True)
     monkeypatch.setattr(gm_module, "WEBHOOK_ERROR_NOTIFICATION", True)
-    assert gm_module._startup_notification_summary_lines()[1] == "* Notifications (webhook):      Off"
+    monkeypatch.setattr(gm_module, "PROFILE_NOTIFICATION", True)
+    for setting in ("EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"):
+        monkeypatch.setattr(gm_module, setting, False)
+
+    rows = {row.label: row.value for row in gm_module.build_startup_summary("octocat", None, None, None)}
+
+    assert rows["Notifications (webhook)"] == "Off"
+    # The two rows are read side by side, so the email row has to keep reporting its own channel
+    assert rows["Notifications (email)"] == "On (profile)"
 
 
 # Verifies SIGHUP schedules API client recreation and redetects an ntfy destination
-def test_sighup_reload_updates_auth_generation_and_webhook_provider(gm_module, monkeypatch):
+def test_sighup_reload_updates_auth_generation_and_webhook_provider(gm_module, monkeypatch, tmp_path):
     replacements = {"GITHUB_TOKEN": "new-github-token", "WEBHOOK_URL": "https://ntfy.sh/new-private-topic"}
-    monkeypatch.setattr(gm_module, "DOTENV_FILE", "test.env")
+    dotenv_path = tmp_path / "test.env"
+    dotenv_path.write_text("".join(key + "=" + repr(value) + "\n" for key, value in replacements.items()), encoding="utf-8")
+    monkeypatch.setattr(gm_module, "DOTENV_FILE", str(dotenv_path))
+    monkeypatch.setattr(gm_module, "DOTENV_RELOAD_STATE", {})
+    for key in replacements:
+        monkeypatch.setenv(key, "")
     monkeypatch.setattr(gm_module, "GITHUB_TOKEN", "old-github-token")
     monkeypatch.setattr(gm_module, "GITHUB_AUTH_REFRESH_VERSION", 6)
     monkeypatch.setattr(gm_module, "WEBHOOK_URL", "https://discord.com/api/webhooks/123/old-token")
     monkeypatch.setattr(gm_module, "WEBHOOK_PROVIDER", "discord")
-    with patch("dotenv.load_dotenv"), patch.object(gm_module.os, "getenv", side_effect=replacements.get):
-        gm_module.reload_secrets_signal_handler(gm_module.signal.SIGHUP, None)
+    gm_module.reload_secrets_signal_handler(gm_module.signal.SIGHUP, None)
     assert gm_module.GITHUB_TOKEN == "new-github-token"
     assert gm_module.GITHUB_AUTH_REFRESH_VERSION == 7
     assert gm_module.WEBHOOK_PROVIDER == "ntfy"
@@ -191,7 +201,7 @@ def test_notification_channels_are_independent(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "send_webhook", webhook_send)
     assert gm_module.send_notification_channels("profile", "Title", "Body", email_enabled=False) == (False, True)
     email_send.assert_not_called()
-    webhook_send.assert_called_once_with("Title", "Body", "profile", force=True)
+    webhook_send.assert_called_once_with("Title", "Body", "profile", force=True, discord_description="")
 
 
 # Verifies category CLI overrides enable webhooks while preserving an explicit error override
@@ -213,6 +223,8 @@ def test_webhook_cli_overrides_match_runtime_settings(gm_module, monkeypatch):
 # Verifies a known ntfy URL corrects a stale configured provider and sends native text
 def test_runtime_provider_detection_corrects_config_mismatch(gm_module, monkeypatch, capsys):
     configure_webhook(gm_module, monkeypatch)
+    # Only a provider the configuration actually sets is worth warning about, so the warning needs it named here
+    monkeypatch.setattr(gm_module, "CONFIGURED_SETTING_NAMES", {"WEBHOOK_PROVIDER"})
     args = SimpleNamespace(webhook_provider=None, webhook_url="https://ntfy.sh/private-topic", webhook_enabled=None, webhook_profile=None, webhook_events=None, webhook_repo_changes=None, webhook_repo_update_date=None, webhook_daily_contribs=None, webhook_errors=None)
     parser = Mock()
     gm_module.apply_webhook_cli_overrides(args, parser)
@@ -261,3 +273,102 @@ def test_command_help_lists_webhook_options():
     assert "--webhook-url URL" in result.stdout
     assert "--set-webhook-url" in result.stdout
     assert "--send-test-webhook" in result.stdout
+
+
+# Verifies every delivery carries the deadline and refuses a redirect, which could retarget the payload
+def test_webhook_delivery_is_bounded_and_does_not_follow_redirects(gm_module, monkeypatch):
+    configure_webhook(gm_module, monkeypatch)
+    webhook_post = Mock(return_value=FakeResponse())
+    monkeypatch.setattr(gm_module.WEBHOOK_SESSION, "post", webhook_post)
+
+    assert gm_module.send_webhook("Title", "Body", "profile") == 0
+    request = webhook_post.call_args
+    assert request.args == (gm_module.WEBHOOK_URL,)
+    assert request.kwargs["timeout"] == gm_module.WEBHOOK_TIMEOUT_SECONDS
+    assert request.kwargs["allow_redirects"] is False
+
+
+# Verifies a destination replaced mid-delivery is refused rather than posted to blindly
+def test_webhook_delivery_refuses_a_destination_that_stopped_validating(gm_module, monkeypatch):
+    configure_webhook(gm_module, monkeypatch)
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "http://example.test/hook")
+    webhook_post = Mock(return_value=FakeResponse())
+    monkeypatch.setattr(gm_module.WEBHOOK_SESSION, "post", webhook_post)
+
+    with pytest.raises(gm_module.req.exceptions.InvalidURL):
+        gm_module.post_webhook_request(json={"content": "body"})
+    webhook_post.assert_not_called()
+
+
+@pytest.mark.parametrize("flag, announcement", [("--send-test-email", "Sending test email notification"), ("--send-test-webhook", "Sending test webhook notification")])
+# Verifies a delivery test checks the settings before it announces an attempt it cannot make
+def test_a_delivery_test_checks_the_settings_before_it_announces(gm_module, monkeypatch, capsys, flag, announcement):
+    monkeypatch.setattr(gm_module, "check_internet", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gm_module, "clear_screen", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(gm_module, "SMTP_HOST", "not a host")
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "")
+    monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", flag, "--config-file", "none", "--env-file", "none"])
+
+    with pytest.raises(SystemExit) as exit_error:
+        gm_module.main()
+
+    output = capsys.readouterr().out
+    assert exit_error.value.code == 1
+    assert announcement not in output
+    assert "* Error: " in output
+    assert "To fix: " in output
+
+
+# Verifies both test commands carry the subject, title and body shared with the sibling monitors
+def test_the_test_messages_use_the_shared_wording(gm_module, monkeypatch):
+    email = Mock(return_value=0)
+    delivery = Mock(return_value=0)
+    monkeypatch.setattr(gm_module, "check_internet", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gm_module, "clear_screen", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gm_module, "send_email", email)
+    monkeypatch.setattr(gm_module, "send_webhook", delivery)
+    monkeypatch.setattr(gm_module, "validate_email_settings", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gm_module, "validate_webhook_url", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gm_module.signal, "signal", lambda *args: None)
+
+    for flag in ("--send-test-email", "--send-test-webhook"):
+        monkeypatch.setattr(gm_module.sys, "argv", ["github_monitor", flag, "--config-file", "none", "--env-file", "none"])
+        with pytest.raises(SystemExit) as exit_error:
+            gm_module.main()
+        assert exit_error.value.code == 0
+
+    assert email.call_args.args[:2] == ("GitHub Monitor test email", "This test email was sent by --send-test-email. Your SMTP settings work.")
+    assert delivery.call_args.args[:2] == ("GitHub Monitor test webhook", "This test notification was sent by --send-test-webhook. Your webhook settings work.")
+
+
+# Verifies a link whose text repeats its destination reaches Discord bare, because a masked link there prints as plain text
+def test_self_labeled_links_stay_bare_in_discord_markdown(gm_module):
+    body_html = (
+        "<html><head></head><body>"
+        "* Repo '<b>instagram_monitor</b>' update date changed<br>"
+        "* Repo URL: <a href=\"https://github.com/misiektoja/instagram_monitor\">https://github.com/misiektoja/instagram_monitor</a><br>"
+        "</body></html>"
+    )
+    markdown = gm_module.html_body_to_discord_markdown(body_html)
+    assert "* Repo URL: https://github.com/misiektoja/instagram_monitor" in markdown
+    assert "[https://" not in markdown
+
+
+# Verifies a link with its own text keeps the masked form Discord renders as a hyperlink
+def test_labeled_links_keep_the_masked_discord_form(gm_module):
+    assert gm_module.html_body_to_discord_markdown("Review by <a href=\"https://github.com/octocat\">@octocat</a>") == "Review by [@octocat](https://github.com/octocat)"
+    assert gm_module.html_body_to_discord_markdown("- <a href=\"https://github.com/a/b/issues/12\"><b>#12 Fix it</b></a><br>") == "- [**#12 Fix it**](https://github.com/a/b/issues/12)"
+
+
+# Verifies an image link becomes its alt text or a bare URL instead of an empty masked link
+def test_image_links_never_produce_an_empty_discord_label(gm_module):
+    with_alt = "<a href=\"https://example.com/i\"><img src=\"https://example.com/x.png\" alt=\"Screenshot\"></a>"
+    without_alt = "<a href=\"https://example.com/i\"><img src=\"https://example.com/x.png\"></a>"
+    assert gm_module.html_body_to_discord_markdown(with_alt) == "[Screenshot](https://example.com/i)"
+    assert gm_module.html_body_to_discord_markdown(without_alt) == "https://example.com/i"
+
+
+# Verifies an escaped query string reaches Discord as the real URL rather than as HTML entities
+def test_discord_markdown_unescapes_link_destinations(gm_module):
+    assert gm_module.html_body_to_discord_markdown("<a href=\"https://example.com/q?a=1&amp;b=2\">https://example.com/q?a=1&amp;b=2</a>") == "https://example.com/q?a=1&b=2"

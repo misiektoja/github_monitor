@@ -5,6 +5,19 @@ from unittest.mock import Mock
 import pytest
 
 
+# Confirms contribution ranges stop at the next midnight instead of extending two days ahead
+def test_daily_contribution_range_uses_next_midnight_boundary(gm_module, monkeypatch):
+    day = gm_module.dt.date(2026, 8, 22)
+    response = Mock()
+    response.json.return_value = {"data": {"user": {"contributionsCollection": {"contributionCalendar": {"weeks": [{"contributionDays": [{"date": day.isoformat(), "contributionCount": 18}]}]}}}}}
+    request = Mock(return_value=response)
+    monkeypatch.setattr(gm_module, "LOCAL_TIMEZONE", "Europe/Warsaw")
+    monkeypatch.setattr(gm_module.requests, "post", request)
+    assert gm_module.get_daily_contributions("misiektoja", day, day, "token") == {day.isoformat(): 18}
+    variables = request.call_args.kwargs["json"]["variables"]
+    assert variables == {"login": "misiektoja", "from": "2026-08-21T00:00:00+02:00", "to": "2026-08-23T00:00:00+02:00"}
+
+
 # Confirms single-day lookups use a wider calendar and select the exact requested date
 def test_daily_contribution_count_uses_wider_calendar_window(gm_module, monkeypatch):
     day = gm_module.dt.date(2026, 7, 30)

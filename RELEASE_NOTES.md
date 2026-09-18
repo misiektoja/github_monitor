@@ -2,6 +2,34 @@
 
 This is a high-level summary of the most important changes.
 
+# Changes in 2.7 (18 Sep 2026)
+
+Version **2.7** adds **guided setup**, a read-only **Doctor preflight check** and **private SMTP password entry**. **Coloured output**, startup summaries and verbose/debug modes make monitoring easier to follow. It improves **contribution and repository-closure alerts**, preserves history during failed checks and protects configuration and credentials. Documentation is searchable and release downloads can be verified.
+
+**Features and improvements**:
+
+- **NEW:** **Guided setup** - `--setup` wizard collects the target, intervals, credentials, notifications and output files. Review or edit answers before saving and confirm replacements. Reruns preserve saved settings and move retained credentials to the private dotenv file. Save the target to start without arguments
+- **NEW:** **Doctor preflight check** - `--doctor` checks configuration, GitHub access, monitoring feeds, notifications and output destinations with suggested fixes. It writes no files and sends test notifications only after confirmation
+- **NEW:** **Private SMTP password setup** - `--set-smtp-password` takes a hidden password and checks it with the mail server before saving. Guided setup also checks email credentials without sending a message
+- **NEW:** **Clearer output and diagnostics** - Coloured output and a short startup summary show the active settings. `--verbose` adds operational updates and `--debug` adds technical traces. Secrets are redacted and logs retain the full summary. Customize colours with `COLOR_THEME` or disable them with `--no-color`. Copy the updated `grc/conf.monitor_logs` to `~/.grc/` to use the live terminal colours in saved logs
+- **IMPROVE:** **Discord alerts match the email** - Discord now receives the same emphasis as the HTML email, with bold values and clickable links instead of plain text. ntfy keeps the plain body, since it would show the markers literally
+- **IMPROVE:** **Clearer errors and recovery** - Failures include repair guidance, periodic outage reminders and recovery notices. Liveness messages follow elapsed time and now default to 24 hours
+- **IMPROVE:** **Removal context** - Removal alerts distinguish unavailable accounts and repositories. Repositories that stop resolving are described as inaccessible because they may be private or no longer accessible to the token
+- **IMPROVE:** **Updated dependencies** - Requires `requests >= 2.33.0`, `urllib3 >= 2.7.0` and `python-dotenv >= 1.2.2`. Update older dependency pins before upgrading
+- **IMPROVE:** **Notification output** - Subjects omit program-name prefixes. Set `DELIVERY_CONFIRMATIONS = False` to hide delivery confirmations while keeping verbose diagnostics
+- **IMPROVE:** **Documentation and verifiable downloads** - A [searchable guide](https://misiektoja.github.io/github_monitor/) covers setup, usage and troubleshooting. Releases include checksums and signed build attestations
+
+**Bug fixes**:
+
+- **BUGFIX:** **Verified repository closures** - Missing issues, pull requests and discussions require confirmation before closure alerts, using at most five extra requests per check across all repositories. Unverified items remain saved for later checks. Set `VERIFY_REPOSITORY_CLOSURES = False` to restore disappearance-based alerts
+- **BUGFIX:** **Reliable contributions and feed recovery** - Corrected daily boundaries prevent false contribution changes. Unavailable feeds and repository details retain their snapshots and retry without stopping monitoring
+- **BUGFIX:** **Safer configuration loading** - Configuration files are read as settings instead of executed as Python. Plain values and references to other settings still work. Replace imports, function calls and calculations with plain settings
+- **BUGFIX:** **Safer configuration and secret updates** - `--generate-config FILE` confirms replacement and creates a backup. Non-interactive replacement requires `--force`. Shell redirection with `>` bypasses these protections. Exported secrets work without a dotenv file. Command-line credentials and nonempty startup exports retain priority after `SIGHUP`. Change those values and restart to replace them. Reloads apply changed or removed file-owned secrets
+- **BUGFIX:** **Safer alerts and connections** - Webhook retries keep their original destination and credentials. Discord templates cannot enable mentions and invalid templates are rejected before delivery. Error messages redact credentials, including SMTP rejection replies. Webhooks refuse redirects. `VERIFY_SSL` now covers email and other outbound connections. Emails accepted by the mail server no longer become false failures if closing the connection fails, avoiding duplicate retries
+- **BUGFIX:** **Reliable startup and captured output** - Invalid settings name what to fix, configured connectivity and screen settings apply and redirected output avoids terminal-clearing errors
+
+Smaller fixes and development changes are listed in the [full change history](https://github.com/misiektoja/github_monitor/compare/v2.6.3...v2.7).
+
 # Changes in 2.6.3 (04 Aug 2026)
 
 **Bug fixes**:

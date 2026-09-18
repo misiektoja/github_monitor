@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.6.3
+v2.7
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -12,17 +12,23 @@ PyGithub
 requests
 python-dateutil
 pytz
-tzlocal (optional)
-python-dotenv (optional)
+tzlocal
+python-dotenv
+colorama (optional, improves classic Windows Command Prompt colour support)
+wcwidth (optional, measures wide characters correctly when TRUNCATE_CHARS is set)
 """
 
-VERSION = "2.6.3"
+VERSION = "2.7"
 
 # ---------------------------
 # CONFIGURATION SECTION START
 # ---------------------------
 
 CONFIG_BLOCK = """
+# Optional saved target used when no positional GitHub username is supplied
+# A positional target always overrides this value
+TARGET_GITHUB_USERNAME = ""
+
 # Create or review your GitHub personal access tokens at:
 # https://github.com/settings/tokens
 #
@@ -115,9 +121,11 @@ WEBHOOK_PROVIDER = "discord"
 WEBHOOK_URL = "your_webhook_url"
 
 # Discord display name (leave empty to use the webhook default)
+# Applies only when WEBHOOK_PROVIDER is "discord" (ignored by the ntfy provider)
 WEBHOOK_USERNAME = "GitHub Monitor"
 
 # Discord avatar URL (leave empty to use the webhook default)
+# Applies only when WEBHOOK_PROVIDER is "discord" (ignored by the ntfy provider)
 WEBHOOK_AVATAR_URL = ""
 
 # Whether to send a webhook notification when the user's profile changes
@@ -151,11 +159,18 @@ WEBHOOK_ERROR_NOTIFICATION = True
 # Values support the same placeholders as WEBHOOK_TEMPLATE
 WEBHOOK_HEADERS = {}
 
+# Optional ntfy access token for Bearer authentication
+# Prefer an environment variable or dotenv file instead of storing this token here
+NTFY_ACCESS_TOKEN = ""
+
 # ----------------------------
 # Advanced Webhook Settings
 # ----------------------------
 
 # Discord-format webhook request payload template
+# Applies only when WEBHOOK_PROVIDER is "discord". The "ntfy" provider needs no template and ignores this
+# value: it sends the alert body as a native ntfy message with the subject as its title. Use WEBHOOK_HEADERS
+# to add ntfy options such as priority or tags
 # Supported placeholders include title, description, version, image_url, fields, fields_str, color, timestamp,
 # username and avatar_url
 WEBHOOK_TEMPLATE = {
@@ -185,10 +200,6 @@ WEBHOOK_TEMPLATE = {
 #       ("description", "strip"),
 #   ]
 WEBHOOK_TRANSFORMS = []
-
-# Optional ntfy access token for Bearer authentication
-# Prefer an environment variable or dotenv file instead of storing this token here
-NTFY_ACCESS_TOKEN = ""
 
 # How often to check for user profile changes / activities; in seconds
 # Can also be set using the -c flag
@@ -231,6 +242,11 @@ EVENTS_NUMBER = 30  # 1 page
 # Can also be enabled using the -j flag
 TRACK_REPOS_CHANGES = False
 
+# Verify missing issues, PRs and discussions before reporting them as closed
+# Shares five extra requests per check across repositories, with pending items checked later
+# Set to False to report disappearances immediately without extra verification requests
+VERIFY_REPOSITORY_CLOSURES = True
+
 # Repositories to monitor when TRACK_REPOS_CHANGES is enabled
 # Use 'ALL' to monitor all repositories (default behavior)
 # Use 'user/repo_name' format to monitor specific repositories for specific users
@@ -259,13 +275,18 @@ TRACK_CONTRIB_CHANGES = False
 
 # How often to print a "liveness check" message to the output; in seconds
 # Set to 0 to disable
-LIVENESS_CHECK_INTERVAL = 43200  # 12 hours
+LIVENESS_CHECK_INTERVAL = 86400  # 24 hours
 
 # URL used to verify internet connectivity at startup
 CHECK_INTERNET_URL = GITHUB_API_URL
 
 # Timeout used when checking initial internet connectivity; in seconds
 CHECK_INTERNET_TIMEOUT = 5
+
+# Whether to verify TLS certificates on every outbound connection, email delivery included
+# Only set this to False on a network that intercepts TLS with its own certificate authority
+# Switching it off removes the protection against an intercepted connection
+VERIFY_SSL = True
 
 # CSV file to write new events & profile changes
 # Can also be set using the -b flag
@@ -291,6 +312,13 @@ DISABLE_LOGGING = False
 #   "Off"  - preserve Unicode separators in logs
 ASCII_LOG_SEPARATORS = "Auto"
 
+# Max characters per line when printing to screen to avoid line wrapping
+# Does not affect log file output
+# Set to 999 to auto-detect terminal width
+# Applies only when DISABLE_LOGGING is False
+# Can also be set via the --truncate flag
+TRUNCATE_CHARS = 0
+
 # Width of main horizontal line
 HORIZONTAL_LINE1 = 105
 
@@ -299,6 +327,80 @@ HORIZONTAL_LINE2 = 80
 
 # Whether to clear the terminal screen after starting the tool
 CLEAR_SCREEN = True
+
+# Whether to use coloured output in the terminal (auto-disabled if the terminal
+# does not appear to support colours or when output is redirected to a file)
+# Can also be disabled via the --no-color flag
+COLORED_OUTPUT = True
+
+# Colour theme used for different parts of the output
+# Keys are logical names used by the tool, values are colour/style strings
+# You can combine multiple attributes with spaces or '+', for example:
+#   "bright_cyan bold", "yellow", "red underline", "bright_magenta bold underline", "red bold blink"
+# Valid colour names: black, red, green, yellow, blue, magenta, cyan, white,
+# and their bright_ variants (bright_red, bright_green, ...).
+# The defaults below are what the tool uses while this block stays commented out. Uncomment it to override
+# them and keep only the lines you want to change, so the rest keep following the tool's own defaults.
+# COLOR_THEME = {
+#     # Headings and commands the wizard tells you to run
+#     "header": "bright_cyan",
+#     "section": "bright_white",
+#     # Identity
+#     "username": "bright_cyan underline",
+#     "id": "bright_magenta",
+#     # Presence and visibility status values
+#     "status_online": "green",
+#     "status_offline": "red",
+#     "status_other": "white",
+#     # GitHub objects
+#     "repository": "green",
+#     "event": "bright_green",
+#     "commit": "bright_yellow",
+#     "branch": "bright_magenta",
+#     "duration": "green",
+#     # Misc
+#     "timestamp_label": "",
+#     "timestamp_value": "cyan",
+#     "info": "cyan",
+#     "warning": "yellow",
+#     "error": "red",
+#     "signal": "yellow",
+#     "email": "bright_cyan",
+#     "webhook": "bright_blue",
+#     # Dates
+#     "date": "magenta",
+#     "date_range": "magenta",
+#     # Boolean values
+#     "boolean_true": "green",
+#     "boolean_false": "red",
+#     # Counters and differences
+#     "count_up": "green",
+#     "count_down": "red",
+#     "link": "blue underline",
+#     # Help screen
+#     "help_heading": "bright_cyan bold",
+#     "help_usage": "bright_white bold",
+#     "help_option": "bright_green",
+#     "help_metavar": "yellow",
+#     "help_placeholder": "bright_magenta",
+#     "help_command": "bright_white",
+#     "help_comment": "bright_black",
+#     "help_default": "bright_black",
+# }
+
+# Whether output includes user-facing decisions, degraded features and complete startup settings
+# Independent of DEBUG_MODE, so enable both to see everything
+# Can also be enabled via --verbose, which turns it on regardless of this setting
+VERBOSE_MODE = False
+
+# Whether output includes sanitized operations, requests, files, retries and poll timing
+# Independent of VERBOSE_MODE, so enable both to see everything
+# Can also be enabled via --debug, which turns it on regardless of this setting
+DEBUG_MODE = False
+
+# Whether verbose output confirms each delivered email and webhook alert
+# Applies only when VERBOSE_MODE is enabled
+DELIVERY_CONFIRMATIONS = True
 
 # Maximum number of times to retry a failed GitHub API/network call
 NET_MAX_RETRIES = 5
@@ -316,6 +418,7 @@ GITHUB_CHECK_SIGNAL_VALUE = 60  # 1 minute
 
 # Default dummy values so linters shut up
 # Do not change values below - modify them in the configuration section or config file instead
+TARGET_GITHUB_USERNAME = ""
 GITHUB_TOKEN = ""
 GITHUB_API_URL = ""
 GITHUB_HTML_URL = ""
@@ -344,14 +447,18 @@ WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION = False
 WEBHOOK_CONTRIB_NOTIFICATION = False
 WEBHOOK_ERROR_NOTIFICATION = False
 WEBHOOK_HEADERS = {}
+NTFY_ACCESS_TOKEN = ""
 WEBHOOK_TEMPLATE = {}
 WEBHOOK_TRANSFORMS = []
-NTFY_ACCESS_TOKEN = ""
 GITHUB_CHECK_INTERVAL = 0
 LOCAL_TIMEZONE = ""
+
+# How LOCAL_TIMEZONE was arrived at, which decides the row doctor prints for it
+LOCAL_TIMEZONE_STATE = "config"
 EVENTS_TO_MONITOR = []
 EVENTS_NUMBER = 0
 TRACK_REPOS_CHANGES = False
+VERIFY_REPOSITORY_CLOSURES = True
 REPOS_TO_MONITOR = []
 DO_NOT_MONITOR_GITHUB_EVENTS = False
 GET_ALL_REPOS = False
@@ -360,14 +467,39 @@ TRACK_CONTRIB_CHANGES = False
 LIVENESS_CHECK_INTERVAL = 0
 CHECK_INTERNET_URL = ""
 CHECK_INTERNET_TIMEOUT = 0
+VERIFY_SSL = True
 CSV_FILE = ""
 DOTENV_FILE = ""
 GITHUB_LOGFILE = ""
 DISABLE_LOGGING = False
 ASCII_LOG_SEPARATORS = "Auto"
+TRUNCATE_CHARS = 0
 HORIZONTAL_LINE1 = 0
 HORIZONTAL_LINE2 = 0
+# Counts the reports printed so far, so a check can tell whether it said anything before the banner claims it was quiet
+REPORTS_PRINTED = 0
 CLEAR_SCREEN = False
+COLORED_OUTPUT = False
+COLOR_THEME: dict = {}
+
+# True once monitoring has printed its header, so a verbose notice after that closes its own block
+MONITORING_ACTIVE = False
+
+# True while a verbose line is waiting for the timestamp trailer that closes its block
+PENDING_NOTICE_BLOCK = False
+
+# Features already reported unavailable, mapped to the alert they block, so a lasting outage is reported once
+DEGRADED_FEATURES: dict = {}
+
+# Features reported unavailable during the check in progress, so the rest can be reported as recovered
+DEGRADED_FEATURES_SEEN: set = set()
+
+# Failures from the current check, retained until all enabled monitoring paths have finished
+MONITOR_CHECK_FAILURES: dict = {}
+
+VERBOSE_MODE = False
+DEBUG_MODE = False
+DELIVERY_CONFIRMATIONS = True
 NET_MAX_RETRIES = 0
 NET_BASE_BACKOFF_SEC = 0
 GITHUB_CHECK_SIGNAL_VALUE = 0
@@ -380,15 +512,59 @@ DEFAULT_CONFIG_FILENAME = "github_monitor.conf"
 # List of secret keys to load from env/config
 SECRET_KEYS = ("GITHUB_TOKEN", "SMTP_PASSWORD", "WEBHOOK_URL", "NTFY_ACCESS_TOKEN")
 
+# Effective source name for each configured secret without storing another copy of its value
+SECRET_SOURCES = {}
+
+# Every layer that can supply a secret, so a source outside the set is a typo rather than a new layer
+SECRET_SOURCE_ORDER = ("built-in configuration", "configuration file", "dotenv file", "dotenv file reload", "environment", "command line")
+
+# Documentation the tool links to from errors, doctor rows and the welcome screen
+PROJECT_URL = "https://github.com/misiektoja/github_monitor"
+DOCS_BASE_URL = "https://misiektoja.github.io/github_monitor"
+QUICK_START_GUIDE_URL = f"{DOCS_BASE_URL}/setup-and-first-run/"
+CONFIG_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#configuration-file"
+INSTALLATION_GUIDE_URL = f"{DOCS_BASE_URL}/installation/"
+CSV_GUIDE_URL = f"{DOCS_BASE_URL}/usage/#csv-export"
+INTERVALS_GUIDE_URL = f"{DOCS_BASE_URL}/usage/#check-intervals"
+AUTH_GUIDE_URL = f"{DOCS_BASE_URL}/setup-and-first-run/#github-personal-access-token"
+GITHUB_TOKEN_SETTINGS_URL = "https://github.com/settings/tokens"
+SECRETS_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#storing-secrets"
+SMTP_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#smtp-settings"
+WEBHOOK_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#webhook-settings"
+DIAGNOSTICS_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#verbose-and-debug-output"
+TLS_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#tls-verification"
+SUPPORT_GUIDE_URL = f"{DOCS_BASE_URL}/about/#support"
+DOCTOR_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#doctor-preflight"
+
+# Shared doctor labels for the two delivery channels, kept identical to the sibling monitors
+SMTP_READY_CHECK_LABEL = "SMTP connection and login succeeded"
+WEBHOOK_READY_CHECK_LABEL = "Webhook URL, headers and alert choices look valid"
+
+# The label every sibling monitor uses when email alerts are on but the settings they would use cannot deliver
+EMAIL_UNUSABLE_CHECK_LABEL = "Email alerts are enabled but unusable"
+
 # Version incremented when SIGHUP reloads the GitHub token
 GITHUB_AUTH_REFRESH_VERSION = 0
 
-LIVENESS_CHECK_COUNTER = LIVENESS_CHECK_INTERVAL / GITHUB_CHECK_INTERVAL
+# Seconds rather than checks, because a failing run usually retries on a different interval than a healthy one
+LIVENESS_REMINDER_SECONDS = LIVENESS_CHECK_INTERVAL if LIVENESS_CHECK_INTERVAL > 0 else 0
+# How long a failure the tool can retry away must last before it is alerted, a failure it cannot is alerted at once
+ERROR_ALERT_AFTER_SECONDS = 300  # 5 minutes
+# How long a channel that could not deliver an error alert waits before the next attempt, doubled on every further failure up to the cap
+ERROR_ALERT_RETRY_SECONDS = 300  # 5 minutes
+ERROR_ALERT_RETRY_MAX_SECONDS = 3600  # 1 hour
+
 
 stdout_bck = None
 csvfieldnames = ['Date', 'Type', 'Name', 'Old', 'New']
 
 CLI_CONFIG_PATH = None
+
+# Set when --config-file none switches discovery off, so no later lookup can find a file the run rejected
+CONFIG_DISCOVERY_DISABLED = False
+
+# The settings a configuration file actually assigned, so a built-in default is never mistaken for a choice
+CONFIGURED_SETTING_NAMES = set()
 
 # Maximum length for event body text (issue bodies, comment bodies, etc.) before truncation
 # Text longer than this will be truncated with safe HTML tag closing
@@ -397,20 +573,119 @@ MAX_EVENT_BODY_LENGTH = 3500
 # to solve the issue: 'SyntaxError: f-string expression part cannot include a backslash'
 nl_ch = "\n"
 
+STARTUP_BANNER = r"""
+ .---------------.     ____ _ _   _   _       _
+|     /\_/\      |    / ___(_) |_| | | |_   _| |__
+|    ( o.o )     |   | |  _| | __| |_| | | | | '_ \
+|     > ^ <      |   | |_| | | |_|  _  | |_| | |_) |
+|    /     \     |    \____|_|\__|_| |_|\__,_|_.__/
+ '---------------'
+                      __  __             _ _
+                     |  \/  | ___  _ __ (_) |_ ___  _ __
+                     | |\/| |/ _ \| '_ \| | __/ _ \| '__|
+                     | |  | | (_) | | | | | || (_) | |
+                     |_|  |_|\___/|_| |_|_|\__\___/|_|"""
+
 
 import sys
+import contextvars
+import functools
+import importlib.util
+import shlex
+import platform
 
-if sys.version_info < (3, 10):
-    print("* Error: Python version 3.10 or higher required !")
+# Declared once so the startup gate, the packaging metadata and the doctor environment check cannot disagree
+MINIMUM_PYTHON_VERSION = (3, 10)
+MINIMUM_PYTHON_VERSION_TEXT = ".".join(str(part) for part in MINIMUM_PYTHON_VERSION)
+
+
+# Writes the uncoloured startup banner for bootstrap failures
+def _write_plain_startup_banner(destination):
+    destination.write(STARTUP_BANNER + "\n")
+    destination.write(f"{'':21}v{VERSION}\n\n")
+
+
+# Renders an environment-only doctor report when Python cannot run the full module
+def bootstrap_doctor_python_report(stream=None):
+    if sys.version_info >= MINIMUM_PYTHON_VERSION:
+        return None
+    destination = sys.stdout if stream is None else stream
+    version = ".".join(str(part) for part in sys.version_info[:3])
+    install_command = f"Install Python {MINIMUM_PYTHON_VERSION_TEXT} or newer"
+    _write_plain_startup_banner(destination)
+    destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
+    destination.write(f"Doctor\n\nEnvironment\n[FAIL] Python {version} is unsupported\n  Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}\n  To fix: {install_command}\n")
+    destination.write(f"\nSummary\n  1 check(s) failed, 0 warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
+    destination.flush()
+    return 1
+
+
+if sys.version_info < MINIMUM_PYTHON_VERSION:
+    if "--doctor" in sys.argv:
+        sys.exit(bootstrap_doctor_python_report())
+    print(f"* Error: Python version {MINIMUM_PYTHON_VERSION_TEXT} or higher required !")
     sys.exit(1)
 
+
+# Renders an environment-only doctor report when required imports prevent full startup
+def bootstrap_doctor_dependency_report(module_finder=None, stream=None):
+    finder = importlib.util.find_spec if module_finder is None else module_finder
+    required = (("requests", "requests"), ("urllib3", "urllib3"), ("python-dateutil", "dateutil"), ("pytz", "pytz"), ("PyGithub", "github"))
+    optional = (("python-dotenv", "dotenv", "dotenv discovery and loading"), ("tzlocal", "tzlocal", "automatic timezone detection"))
+    # The classic Command Prompt is the only place this library changes anything, so a machine it cannot affect is not warned about a package it does not need
+    if platform.system() == "Windows":
+        optional += (("colorama", "colorama", "coloured output in the classic Windows Command Prompt"),)
+    availability = {}
+    for package_name, module_name in required:
+        try:
+            availability[package_name] = finder(module_name) is not None
+        except (ImportError, AttributeError, ValueError):
+            availability[package_name] = False
+    if all(availability.values()):
+        return None
+    destination = sys.stdout if stream is None else stream
+    _write_plain_startup_banner(destination)
+    destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
+    destination.write("Doctor\n\nEnvironment\n")
+    version = ".".join(str(part) for part in sys.version_info[:3])
+    destination.write(f"[PASS] Python {version} is supported\n  Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}\n")
+    failures = 0
+    warnings = 0
+    for package_name, _ in required:
+        if availability[package_name]:
+            destination.write(f"[PASS] Required dependency {package_name} is installed\n")
+        else:
+            failures += 1
+            install_command = shlex.join([("python" if platform.system() == "Windows" else "python3"), "-m", "pip", "install", package_name])
+            destination.write(f"[FAIL] Required dependency {package_name} is missing\n  The full preflight cannot continue without this package\n  To fix: Install it with: {install_command}\n")
+    for package_name, module_name, feature in optional:
+        try:
+            available = finder(module_name) is not None
+        except (ImportError, AttributeError, ValueError):
+            available = False
+        if available:
+            destination.write(f"[PASS] Optional dependency {package_name} is installed\n  Used only for {feature}\n")
+        else:
+            warnings += 1
+            install_command = shlex.join([("python" if platform.system() == "Windows" else "python3"), "-m", "pip", "install", package_name])
+            destination.write(f"[WARN] Optional dependency {package_name} is not installed\n  {feature[:1].upper() + feature[1:]} will not work while other features remain available\n  To fix: Install it with: {install_command}\n")
+    destination.write(f"\nSummary\n  {failures} check(s) failed, {warnings} warning(s). Fix the failures above before relying on the tool.\n\nGuide: {DOCTOR_GUIDE_URL}\n")
+    destination.flush()
+    return 1
+
+
+if "--doctor" in sys.argv and not any(flag in sys.argv for flag in ("--help", "-h", "--version")):
+    bootstrap_doctor_exit = bootstrap_doctor_dependency_report()
+    if bootstrap_doctor_exit is not None:
+        sys.exit(bootstrap_doctor_exit)
+
 import time
-import string
 import os
 from datetime import datetime, timezone, date
 from dateutil import relativedelta
 from dateutil.parser import isoparse
 import calendar
+import math
 import requests as req
 import signal
 import smtplib
@@ -419,9 +694,14 @@ from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import argparse
+import ast
 import csv
+import json
+from dataclasses import dataclass, field
+from collections import deque
 import getpass
-import shlex
+import subprocess
+import tempfile
 try:
     import pytz
 except ModuleNotFoundError:
@@ -430,8 +710,11 @@ try:
     from tzlocal import get_localzone
 except ImportError:
     get_localzone = None
-import platform
 import re
+try:
+    from colorama import init as colorama_init
+except ImportError:
+    colorama_init = None
 import ipaddress
 import html
 try:
@@ -451,7 +734,7 @@ from typing import Optional
 import datetime as dt
 import requests
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 NET_ERRORS = (
     req.exceptions.RequestException,
@@ -471,9 +754,54 @@ WEBHOOK_EMBED_TITLE_LIMIT = 256
 WEBHOOK_EMBED_DESCRIPTION_LIMIT = 4096
 NTFY_MESSAGE_LIMIT_BYTES = 4095
 NTFY_TRUNCATION_SUFFIX = "\n\n[Notification truncated to fit ntfy's 4 KB message limit]"
+PYGITHUB_TIMEOUT_SECONDS = 15
+
+# Extra closure checks share one request allowance across repositories in each monitoring cycle
+REPOSITORY_CLOSURE_REQUEST_BUDGET = 5
 
 # Calendar days requested to stabilize one-day contribution count lookups
 DAILY_CONTRIBUTION_LOOKBACK_DAYS = 30
+
+# Shortest secret replaced by plain substring search. Sanitizing runs over normal monitoring output, so a
+# short value such as a simple SMTP password would otherwise redact ordinary words like repository names.
+# Every credential this tool handles is far longer, and shorter ones stay covered by the shape patterns
+# in sanitize_error_text that match the assignment and header forms an error can actually expose.
+MIN_REDACTABLE_SECRET_LENGTH = 12
+
+
+# Tracks the error alert per channel: what was delivered, and how long a channel that failed waits before the next attempt
+class ErrorAlertState:
+    # Starts with nothing delivered and no channel on hold
+    def __init__(self) -> None:
+        self.email_sent = False
+        self.webhook_sent = False
+        self.email_failures = 0
+        self.webhook_failures = 0
+        self.email_retry_at = 0
+        self.webhook_retry_at = 0
+
+    # Forgets the delivered alert and any hold, so the next failure earns each channel a new one
+    def reset(self) -> None:
+        self.__init__()
+
+    # Tells whether a channel still owes the alert and its wait after a failed attempt, if any, has passed
+    def pending(self, channel: str, enabled, now: int) -> bool:
+        return bool(enabled) and not getattr(self, f"{channel}_sent") and now >= getattr(self, f"{channel}_retry_at")
+
+    # Records one attempt, holding a channel that failed for a growing wait so a broken server is not dialled on every check
+    def record(self, channel: str, attempted: bool, delivered: bool, now: int) -> None:
+        if not attempted:
+            return
+        if delivered:
+            setattr(self, f"{channel}_sent", True)
+            setattr(self, f"{channel}_failures", 0)
+            setattr(self, f"{channel}_retry_at", 0)
+            return
+        failures = getattr(self, f"{channel}_failures") + 1
+        delay = min(ERROR_ALERT_RETRY_SECONDS * 2 ** (failures - 1), ERROR_ALERT_RETRY_MAX_SECONDS)
+        setattr(self, f"{channel}_failures", failures)
+        setattr(self, f"{channel}_retry_at", now + delay)
+        print(f"* The {channel} alert is on hold for {display_time(delay)} after {failures} {'attempt' if failures == 1 else 'attempts'}, then tried again")
 
 
 # Reports whether separator-only log lines should use ASCII on this system
@@ -491,21 +819,709 @@ def normalize_log_separators(message):
     return re.sub(r"(?m)^─+$", lambda match: match.group(0).replace("─", "-"), message)
 
 
+# Truncates each line to a display width, expanding tabs and counting double-width characters correctly
+def truncate_string_per_line(message, truncate_width, tabsize=8):
+    try:
+        from wcwidth import wcwidth
+    except ImportError:
+        # Without wcwidth every character costs one column, so truncation still applies and only wide characters are measured short
+        wcwidth = len
+    truncated_lines = []
+    for line in message.split("\n"):
+        expanded_line = line.expandtabs(tabsize)
+        current_width = 0
+        truncated = []
+        position = 0
+        style_open = False
+        while position < len(expanded_line):
+            # A colour sequence is copied through free of charge, so styling never eats into the visible width
+            escape = SGR_SEQUENCE_RE.match(expanded_line, position)
+            if escape:
+                truncated.append(escape.group(0))
+                style_open = escape.group(0) not in ("\x1b[0m", "\x1b[m")
+                position = escape.end()
+                continue
+            char = expanded_line[position]
+            char_width = wcwidth(char)
+            if char_width is None or char_width < 0:
+                char_width = 0
+            if current_width + char_width > truncate_width:
+                # The cut may have dropped the reset, which would leave the colour running into every later line
+                if style_open:
+                    truncated.append(ANSI_RESET)
+                break
+            truncated.append(char)
+            current_width += char_width
+            position += 1
+        truncated_lines.append("".join(truncated))
+    return "\n".join(truncated_lines)
+
+
+# Resolves CLI and configured truncation settings while expanding the terminal-width sentinel
+def resolve_truncate_chars(cli_value, configured_value, logging_disabled):
+    truncate_chars = configured_value if cli_value is None else cli_value
+    if logging_disabled:
+        return 0
+    if truncate_chars == 999:
+        terminal_size = shutil.get_terminal_size()
+        print(f"The detected terminal screen width is: {terminal_size.columns} characters\n")
+        return terminal_size.columns
+    return truncate_chars
+
+
+# Matches any ANSI escape sequence for terminal sanitizing and plain log output
+ANSI_ESCAPE_RE = re.compile(r"\x1B[@-_][0-?]*[ -/]*[@-~]")
+
+# Matches the SGR sequences emitted and preserved by the colour layer
+SGR_SEQUENCE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# Drops every remaining control character except tab and newline
+TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+# Removes terminal controls while preserving SGR colours and ordinary layout
+def sanitize_terminal_text(message):
+    if not isinstance(message, str) or not message:
+        return message
+    parts = []
+    position = 0
+    for match in SGR_SEQUENCE_RE.finditer(message):
+        parts.append(TERMINAL_CONTROL_RE.sub("", message[position:match.start()]))
+        parts.append(match.group(0))
+        position = match.end()
+    parts.append(TERMINAL_CONTROL_RE.sub("", message[position:]))
+    return "".join(parts)
+
+
+COLOR_ENABLED = False
+_COLOR_STYLES: dict = {}
+
+# Default built-in colour theme. Values can be overridden via COLOR_THEME in config
+DEFAULT_COLOR_THEME = {
+    # Headings and commands the wizard tells you to run
+    "header": "bright_cyan",
+    "section": "bright_white",
+    # Identity
+    "username": "bright_cyan underline",
+    "id": "bright_magenta",
+    # Presence and visibility status values
+    "status_online": "green",
+    "status_offline": "red",
+    "status_other": "white",
+    # GitHub objects
+    "repository": "green",
+    "event": "bright_green",
+    "commit": "bright_yellow",
+    "branch": "bright_magenta",
+    "duration": "green",
+    # Misc
+    "timestamp_label": "",
+    "timestamp_value": "cyan",
+    "info": "cyan",
+    "warning": "yellow",
+    "error": "red",
+    "signal": "yellow",
+    "email": "bright_cyan",
+    "webhook": "bright_blue",
+    # Dates
+    "date": "magenta",
+    "date_range": "magenta",
+    # Boolean values
+    "boolean_true": "green",
+    "boolean_false": "red",
+    # Counters and differences
+    "count_up": "green",
+    "count_down": "red",
+    "link": "blue underline",
+    # Help screen
+    "help_heading": "bright_cyan bold",
+    "help_usage": "bright_white bold",
+    "help_option": "bright_green",
+    "help_metavar": "yellow",
+    "help_placeholder": "bright_magenta",
+    "help_command": "bright_white",
+    "help_comment": "bright_black",
+    "help_default": "bright_black",
+}
+
+# COLOR_THEME key names used by older releases, still honoured so an existing config keeps working
+_THEME_KEY_ALIASES = {"url": "link", "timestamp": "timestamp_value"}
+
+ANSI_RESET = "\033[0m"
+
+_STYLE_CODES = {
+    "bold": "1",
+    "dim": "2",
+    "underline": "4",
+    "blink": "5",
+    "black": "30",
+    "red": "31",
+    "green": "32",
+    "yellow": "33",
+    "blue": "34",
+    "magenta": "35",
+    "cyan": "36",
+    "white": "37",
+    "bright_black": "90",
+    "bright_red": "91",
+    "bright_green": "92",
+    "bright_yellow": "93",
+    "bright_blue": "94",
+    "bright_magenta": "95",
+    "bright_cyan": "96",
+    "bright_white": "97",
+}
+
+_LABEL_STYLES = (
+    (("Target:", "Username:", "Token belongs to:", "Event actor login:", "Event actor name:", "Published by:", "Commit author:", "Author:", "Issue author:", "Comment author:", "Discussion comment by:", "Member added:", "Assignee:", "Requested reviewer:"), "username"),
+    (("Event ID:", "Review ID:", "Commit SHA:", "Commit SHA reviewed:"), "id"),
+    (("Repo name:", "Forked to repo:"), "repository"),
+    (("Event type:", "Release name:", "Release tag name:", "Issue title:", "Discussion title:"), "event"),
+    (("Commit message:",), "commit"),
+    (("Object name:", "Target commitish:", "Branch (default):"), "branch"),
+    (("Email:",), "email"),
+)
+
+_FROM_TO_COUNT_RE = re.compile(r"(from\s+)(\d+)(\s+to\s+)(\d+)")
+_DIFF_COUNT_UP_RE = re.compile(r"(\(\+\d+\))")
+_DIFF_COUNT_DOWN_RE = re.compile(r"(\(-\d+\))")
+# The separator is a space in prose and an equals sign in the key=value diagnostic fields.
+# A bare "user" needs a colon or an equals sign and a login is never followed by a colon, so labels
+# such as "user lists:" and "fetch user details:" stay uncoloured
+_USER_TAG_RE = re.compile(r"((?:GitHub|for|by|of|fetch)[\t ]+user:?|\buser[:=])([\t ]+|(?<==))([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?![A-Za-z0-9:-])")
+_QUOTED_CONTEXT_RE = re.compile(r"\b(repo|user)\s+$", re.IGNORECASE)
+_DURATION_RE = re.compile(r"~?\b[0-9]{1,20}[ \t]{1,20}(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b", re.IGNORECASE)
+_LONG_DATE_RE = re.compile(r"\b(?:\w{3}\s+)?\d{1,2}\s+\w{3}(?:\s+\d{2,4})?[\s,]*\d{2}:\d{2}(:\d{2})?(\s*[AP]M)?\b", re.IGNORECASE)
+_TIME_ONLY_RE = re.compile(r"(?<![\w:])(~?(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[AP]M)?)(?![\w:])", re.IGNORECASE)
+_SHORT_RANGE_DATE_RE = re.compile(r"\(\w{3}\s+\d{1,2}\s+\w{3}\s+\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\)", re.IGNORECASE)
+_DATE_RANGE_RE = re.compile(r"\b\w{3}\s+\d{1,2}\s+\w{3}\s+\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\b", re.IGNORECASE)
+_HOUR_RANGE_RE = re.compile(r"\b\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\b", re.IGNORECASE)
+_URL_RE = re.compile(r"(https?://[^\s\]]+)")
+_BOOLEAN_TRUE_RE = re.compile(r"\bTrue\b|\bEnabled\b")
+_BOOLEAN_FALSE_RE = re.compile(r"\bFalse\b|\bDisabled\b")
+# The TLS row reports a word rather than a boolean, and its off state is the one setting that weakens
+# a security property, so the state word is coloured like a boolean
+_TLS_STATE_RE = re.compile(r"^(\* TLS verification:\s+)(On|Off)(.*)$")
+_NOTIFICATION_SUMMARY_STATE_RE = re.compile(r"^(\* Notifications \((?:email|webhook)\):\s+)(On|Off)(.*)$")
+_PROFILE_VISIBILITY_CHANGE_RE = re.compile(r"(profile visibility to )(')(public|private)(')", re.IGNORECASE)
+_BLOCK_CHANGE_RE = re.compile(r"(?<= has )(blocked|unblocked)(?= you!)", re.IGNORECASE)
+_REPOSITORY_PUBLIC_RE = re.compile(r"(?<=Repository is now )(public)\b", re.IGNORECASE)
+_DEBUG_LINE_RE = re.compile(r"^\[debug \d{2}:\d{2}:\d{2}\]")
+_DOCTOR_MARK_RE = re.compile(r"^\[(PASS|WARN|FAIL|SKIP)\]")
+_DOCTOR_MARK_STYLES = {"PASS": "boolean_true", "WARN": "warning", "FAIL": "error", "SKIP": "info"}
+_QUOTED_CONTENT_RE = re.compile(r"(')([^'\n]*\w[^'\n]*)(')")
+_QUOTED_FILE_LIKE_RE = re.compile(r"^[~.]?[\\/]|^[A-Za-z]:[\\/]|\.[A-Za-z0-9]{1,8}$")
+_REPOSITORY_LIST_RE = re.compile(r"^(🔸\s+)(\S+?)(\s+\(fork\))?\s*$")
+_LINKED_LIST_ITEM_RE = re.compile(r"^(-\s+)([^\s\[]+)(\s+\[\s*)(https?://[^\s\]]+)(\s*\])$")
+_USER_LIST_RE = re.compile(r"^(-\s+)([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\s+\([^)\n]+\))?)$")
+_ERROR_LINE_RE = re.compile(r"^(?:\*\s*)?(?:error\b|cannot\b|critical:|failure\b)", re.IGNORECASE)
+_WARNING_LINE_RE = re.compile(r"^(?:\*\s*)?warning\b|^caution:", re.IGNORECASE)
+
+
+# Builds one ANSI SGR sequence from a style description
+def _build_ansi_sequence(style_str):
+    if not isinstance(style_str, str) or not style_str:
+        return ""
+    codes = []
+    for part in re.split(r"[+ ]+", style_str.strip().lower()):
+        code = _STYLE_CODES.get(part)
+        if code:
+            codes.append(code)
+    return f"\033[{';'.join(codes)}m" if codes else ""
+
+
+# Detects whether one output stream supports ANSI colours
+def _stream_supports_color(stream):
+    try:
+        interactive = hasattr(stream, "isatty") and bool(stream.isatty())
+    except (OSError, ValueError):
+        interactive = False
+    if not interactive:
+        return False
+    if os.getenv("NO_COLOR"):
+        return False
+    if not (colorama_init and platform.system() == "Windows"):
+        term = os.getenv("TERM", "")
+        if term.lower() in ("", "dumb", "unknown"):
+            return False
+    if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
+        return False
+    return True
+
+
+# Initializes colour output from configuration and terminal capabilities
+def init_color_output(stream):
+    global COLOR_ENABLED, _COLOR_STYLES
+    if colorama_init and platform.system() == "Windows":
+        try:
+            colorama_init(autoreset=False)
+        except (AttributeError, OSError, RuntimeError, ValueError):
+            pass
+    COLOR_ENABLED = bool(globals().get("COLORED_OUTPUT", False)) and _stream_supports_color(stream)
+    if not COLOR_ENABLED:
+        _COLOR_STYLES = {}
+        return
+    user_theme = globals().get("COLOR_THEME") if isinstance(globals().get("COLOR_THEME"), dict) else {}
+    theme = {**DEFAULT_COLOR_THEME, **(user_theme or {})}
+    # A config written against an older key name still wins over the default, unless it also sets the current name
+    for legacy_name, current_name in _THEME_KEY_ALIASES.items():
+        if user_theme and legacy_name in user_theme and current_name not in user_theme:
+            theme[current_name] = user_theme[legacy_name]
+    _COLOR_STYLES = {name: sequence for name, value in theme.items() if (sequence := _build_ansi_sequence(value))}
+
+
+# Applies one configured logical colour style to text
+def colorize(part, text):
+    if not COLOR_ENABLED:
+        return text
+    start = _COLOR_STYLES.get(part)
+    return f"{start}{text}{ANSI_RESET}" if start else text
+
+
+# Colours one textual presence or visibility status
+def colorize_status(status_text):
+    status = (status_text or "").strip().lower()
+    if status in ("active", "online", "available", "public", "unblocked", "yes"):
+        key = "status_online"
+    elif status in ("inactive", "offline", "invisible", "private", "blocked", "no"):
+        key = "status_offline"
+    else:
+        key = "status_other"
+    return colorize(key, status_text)
+
+
+# Splits a recognized output label from its value without backtracking
+def _split_output_label(value, labels):
+    body = value.rstrip("\n")
+    cursor = len(body) - len(body.lstrip())
+    # Detail lines are bulleted with either marker, so the label sits behind one of them
+    if body[cursor:cursor + 1] in ("*", "-") and body[cursor + 1:cursor + 2].isspace():
+        cursor += 1
+        cursor += len(body[cursor:]) - len(body[cursor:].lstrip())
+    for label in labels:
+        if not body.startswith(label, cursor):
+            continue
+        value_start = cursor + len(label)
+        value_start += len(body[value_start:]) - len(body[value_start:].lstrip())
+        if value_start == cursor + len(label):
+            return None
+        return body[:value_start], body[value_start:]
+    return None
+
+
+# Applies a block style while preserving internal highlights
+def _apply_style_nested(line, style_name):
+    start_style = _COLOR_STYLES.get(style_name)
+    if not start_style:
+        return line
+    line = f"{start_style}{line}{ANSI_RESET}"
+    line = line.replace(ANSI_RESET, f"{ANSI_RESET}{start_style}")
+    if line.endswith(f"{ANSI_RESET}{start_style}"):
+        line = line[:-len(start_style)]
+    return line
+
+
+# Applies one substitution only outside existing colour spans
+def _sub_outside_color(pattern, replacement, line):
+    if ANSI_RESET not in line:
+        return pattern.sub(replacement, line)
+    parts = []
+    position = 0
+    inside = False
+    for match in SGR_SEQUENCE_RE.finditer(line):
+        segment = line[position:match.start()]
+        parts.append(segment if inside else pattern.sub(replacement, segment))
+        parts.append(match.group(0))
+        inside = match.group(0) != ANSI_RESET
+        position = match.end()
+    trailing = line[position:]
+    parts.append(trailing if inside else pattern.sub(replacement, trailing))
+    return "".join(parts)
+
+
+# Colours one quoted noun value unless it is shaped like a file or path
+def _colorize_quoted_name(match, style_name=None):
+    name = match.group(2)
+    if _QUOTED_FILE_LIKE_RE.search(name):
+        return match.group(0)
+    context_match = _QUOTED_CONTEXT_RE.search(match.string[:match.start()])
+    if context_match:
+        noun = context_match.group(1).casefold()
+        style_name = {"user": "username", "repo": "repository"}[noun]
+    if not style_name:
+        return match.group(0)
+    return f"{match.group(1)}{colorize(style_name, name)}{match.group(3)}"
+
+
+# Colors a count transition using decimal text comparison without unbounded integer conversion
+def _colorize_count_change(match):
+    before, after = ("".join(str(int(digit)) for digit in match.group(index)).lstrip("0") or "0" for index in (2, 4))
+    style = "count_up" if (len(after), after) >= (len(before), before) else "count_down"
+    return f"{match.group(1)}{colorize(style, match.group(2))}{match.group(3)}{colorize(style, match.group(4))}"
+
+
+# Applies the configured colour rules to one output line
+def _colorize_line(line):
+    lowered = line.lower()
+    notification_match = _NOTIFICATION_SUMMARY_STATE_RE.match(line)
+    if notification_match:
+        prefix, state, suffix = notification_match.groups()
+        return f"{prefix}{colorize('boolean_true' if state == 'On' else 'boolean_false', state)}{suffix}"
+    tls_match = _TLS_STATE_RE.match(line)
+    if tls_match:
+        prefix, state, suffix = tls_match.groups()
+        return f"{prefix}{colorize('boolean_true' if state == 'On' else 'boolean_false', state)}{suffix}"
+    doctor_match = _DOCTOR_MARK_RE.match(line)
+    if doctor_match:
+        return colorize(_DOCTOR_MARK_STYLES[doctor_match.group(1)], doctor_match.group(0)) + line[doctor_match.end():]
+    repository_list_match = _REPOSITORY_LIST_RE.match(line)
+    if repository_list_match:
+        suffix = repository_list_match.group(3) or ""
+        return f"{repository_list_match.group(1)}{colorize('repository', repository_list_match.group(2))}{suffix}"
+    linked_list_match = _LINKED_LIST_ITEM_RE.match(line)
+    if linked_list_match:
+        item = linked_list_match.group(2)
+        url_parts = [part for part in urlsplit(linked_list_match.group(4)).path.split("/") if part]
+        item_style = "repository" if "/" in item or len(url_parts) >= 2 else "username"
+        return f"{linked_list_match.group(1)}{colorize(item_style, item)}{linked_list_match.group(3)}{colorize('link', linked_list_match.group(4))}{linked_list_match.group(5)}"
+    user_list_match = _USER_LIST_RE.match(line)
+    if user_list_match:
+        return f"{user_list_match.group(1)}{colorize('username', user_list_match.group(2))}"
+    labeled_value = _split_output_label(line, ("Timestamp:", "Liveness check, timestamp:"))
+    if labeled_value:
+        label, rest = labeled_value
+        colored = f"{colorize('timestamp_label', label)}{colorize('timestamp_value', rest)}"
+        return colored + ("\n" if line.endswith("\n") else "")
+    labeled_value = _split_output_label(line, ("Public profile:",))
+    if labeled_value:
+        label, status = labeled_value
+        status_style = "status_online" if status.strip().casefold() == "yes" else "status_offline"
+        colored = f"{label}{colorize(status_style, status)}"
+        return colored + ("\n" if line.endswith("\n") else "")
+    labeled_value = _split_output_label(line, ("Blocked by the user:",))
+    if labeled_value:
+        label, status = labeled_value
+        normalized_status = status.strip().casefold()
+        status_style = "status_offline" if normalized_status == "yes" else "status_online" if normalized_status == "no" else "status_other"
+        colored = f"{label}{colorize(status_style, status)}"
+        return colored + ("\n" if line.endswith("\n") else "")
+    if " URL:" in line or _split_output_label(line, ("URL:",)):
+        return _sub_outside_color(_URL_RE, lambda match: colorize("link", match.group(0)), line)
+    for labels, style_name in _LABEL_STYLES:
+        labeled_value = _split_output_label(line, labels)
+        if labeled_value:
+            label, rest = labeled_value
+            colored = f"{label}{colorize(style_name, rest)}"
+            return colored + ("\n" if line.endswith("\n") else "")
+    line = _sub_outside_color(_USER_TAG_RE, lambda match: f"{match.group(1)}{match.group(2)}{colorize('username', match.group(3))}", line)
+    line = _sub_outside_color(_FROM_TO_COUNT_RE, _colorize_count_change, line)
+    line = _sub_outside_color(_DIFF_COUNT_UP_RE, lambda match: colorize("count_up", match.group(0)), line)
+    line = _sub_outside_color(_DIFF_COUNT_DOWN_RE, lambda match: colorize("count_down", match.group(0)), line)
+    line = _sub_outside_color(_DURATION_RE, lambda match: colorize("duration", match.group(0)), line)
+    line = _sub_outside_color(_SHORT_RANGE_DATE_RE, lambda match: colorize("date_range", match.group(0)), line)
+    line = _sub_outside_color(_DATE_RANGE_RE, lambda match: colorize("date_range", match.group(0)), line)
+    line = _sub_outside_color(_HOUR_RANGE_RE, lambda match: colorize("date_range", match.group(0)), line)
+    line = _sub_outside_color(_LONG_DATE_RE, lambda match: colorize("date", match.group(0)), line)
+    line = _sub_outside_color(_TIME_ONLY_RE, lambda match: colorize("date", match.group(0)), line)
+    line = _sub_outside_color(_URL_RE, lambda match: colorize("link", match.group(0)), line)
+    line = _sub_outside_color(_PROFILE_VISIBILITY_CHANGE_RE, lambda match: f"{match.group(1)}{match.group(2)}{colorize_status(match.group(3))}{match.group(4)}", line)
+    line = _sub_outside_color(_BLOCK_CHANGE_RE, lambda match: colorize_status(match.group(0)), line)
+    line = _sub_outside_color(_REPOSITORY_PUBLIC_RE, lambda match: colorize_status(match.group(0)), line)
+    if not line.lstrip().startswith("'"):
+        line = _sub_outside_color(_QUOTED_CONTENT_RE, lambda match: _colorize_quoted_name(match), line)
+    line = _sub_outside_color(_BOOLEAN_TRUE_RE, lambda match: colorize("boolean_true", match.group(0)), line)
+    line = _sub_outside_color(_BOOLEAN_FALSE_RE, lambda match: colorize("boolean_false", match.group(0)), line)
+    is_debug_line = bool(_DEBUG_LINE_RE.match(lowered))
+    if lowered.startswith("to fix:"):
+        line = _apply_style_nested(line, "info")
+    elif not is_debug_line and _ERROR_LINE_RE.match(lowered):
+        line = _apply_style_nested(line, "error")
+    elif _WARNING_LINE_RE.match(lowered):
+        line = _apply_style_nested(line, "warning")
+    elif "* signal" in lowered and "received" in lowered:
+        line = _apply_style_nested(line, "signal")
+    elif "sending email" in lowered:
+        line = _apply_style_nested(line, "email")
+    elif "sending webhook" in lowered:
+        line = _apply_style_nested(line, "webhook")
+    elif "* info:" in lowered:
+        line = _apply_style_nested(line, "info")
+    return line
+
+
+# Applies colour rules to multi-line text while preserving line breaks
+def apply_color_to_text(text):
+    if not COLOR_ENABLED or not isinstance(text, str):
+        return text
+    parts = []
+    for chunk in text.splitlines(keepends=True):
+        if chunk.endswith(("\n", "\r")):
+            stripped = chunk.rstrip("\r\n")
+            newline = chunk[len(stripped):]
+            parts.append(_colorize_line(stripped) + newline)
+        else:
+            parts.append(_colorize_line(chunk))
+    return "".join(parts)
+
+
+# Colours every link in a line, for the screens printed before the output stream colouriser is installed
+def colorize_links(text):
+    return _sub_outside_color(_URL_RE, lambda mo: colorize("link", mo.group(0)), text)
+
+
+# Colours one line of a fix block the way the output stream colours it, keeping its guide line a link
+def colorize_fix_line(line):
+    return colorize_links(line) if line.lstrip().startswith("Guide: ") else colorize("info", line)
+
+
+# Writes the startup name line by line with a separately styled version line
+def _write_startup_banner(destination):
+    destination.write("\n".join(colorize("header", line) if line else line for line in STARTUP_BANNER.splitlines()) + "\n")
+    destination.write(colorize("info", f"{'':21}v{VERSION}") + "\n\n")
+
+
+# Prints the startup banner through a sanitize-only terminal stream
+def print_startup_banner():
+    _write_startup_banner(terminal_surface_stream(sys.stdout))
+
+
+# Returns the real terminal behind any number of sanitizing wrappers
+def unwrap_terminal_stream(stream):
+    while isinstance(stream, TerminalStream):
+        stream = stream.terminal
+    return stream
+
+
+# Sanitizes and colours stdout before logging policy is resolved
+class TerminalStream(object):
+    # Stores the wrapped terminal stream
+    def __init__(self, stream, color_output=True):
+        self.terminal = stream
+        self.color_output = color_output
+
+    # Writes one sanitized and coloured message
+    def write(self, message):
+        safe_message = sanitize_terminal_text(message)
+        # Every caller redacts secrets before printing and the scanner reports this shared stream instead
+        # codeql[py/clear-text-logging-sensitive-data]
+        self.terminal.write(apply_color_to_text(safe_message) if self.color_output else safe_message)
+        self.terminal.flush()
+
+    # Writes one terminal-only message
+    def terminal_only(self, message):
+        self.write(message)
+
+    # Discards log-only output while logging is disabled
+    def log_only(self, message):
+        return
+
+    # Flushes the wrapped terminal
+    def flush(self):
+        self.terminal.flush()
+
+    # Forwards other stream attributes
+    def __getattr__(self, name):
+        return getattr(self.terminal, name)
+
+
+# Help screen parts. argparse measures its column layout on the plain text, so the palette is applied to the
+# finished help screen rather than to the pieces argparse assembles and the layout stays identical
+_HELP_USAGE_LABEL = "usage:"
+_HELP_HEADING_RE = re.compile(r"^\S.*:$")
+# The character after the leading dashes excludes a dash itself, so the dash count and the name that follows
+# cannot both claim the same character. Without that the repeated alternative backtracks exponentially
+_HELP_OPTION_ROW_RE = re.compile(r"^( {2,})(-{1,2}[^\s,-][^\s,]*(?:, *-{1,2}[^\s,-][^\s,]*)*)(.*)$")
+_HELP_POSITIONAL_ROW_RE = re.compile(r"^( {2,})([A-Z][A-Z0-9_]*)( {2,}.*)$")
+_HELP_COLUMN_GAP_RE = re.compile(r" {2,}")
+# A value placeholder is an upper-case metavar, a choice list or an angle-bracket name, including a
+# colon-joined pair of them
+_HELP_METAVAR_RE = re.compile(r"\{[^}]*\}|<[^>]+>|\b[A-Z][A-Z0-9_]*(?::[A-Z][A-Z0-9_]*)*\b")
+_HELP_OPTION_RE = re.compile(r"(?<![\w-])(--?[A-Za-z][\w-]*)")
+_HELP_PLACEHOLDER_RE = re.compile(r"<[^>]+>")
+_HELP_DEFAULT_RE = re.compile(r"\(default:[^)]*\)")
+
+
+# Colours the links and the default notes inside one line of help prose
+def _colorize_help_prose(line):
+    line = _URL_RE.sub(lambda match: colorize("link", match.group(1)), line)
+    return _HELP_DEFAULT_RE.sub(lambda match: colorize("help_default", match.group(0)), line)
+
+
+# Colours the option names and the value placeholders of one usage line or option column
+def _colorize_help_signature(text):
+    text = _HELP_METAVAR_RE.sub(lambda match: colorize("help_metavar", match.group(0)), text)
+    return _sub_outside_color(_HELP_OPTION_RE, lambda match: colorize("help_option", match.group(1)), text)
+
+
+# Colours the usage block, the group headings and the option rows of the help screen
+def _colorize_help_body(text):
+    lines = []
+    in_usage = False
+    for line in text.split("\n"):
+        if line.startswith(_HELP_USAGE_LABEL):
+            in_usage = True
+            lines.append(colorize("help_usage", _HELP_USAGE_LABEL) + _colorize_help_signature(line[len(_HELP_USAGE_LABEL):]))
+            continue
+        if in_usage:
+            if line.strip():
+                lines.append(_colorize_help_signature(line))
+                continue
+            in_usage = False
+        if _HELP_HEADING_RE.match(line):
+            lines.append(colorize("help_heading", line))
+            continue
+        option_row = _HELP_OPTION_ROW_RE.match(line)
+        if option_row:
+            indent, names, remainder = option_row.groups()
+            gap = _HELP_COLUMN_GAP_RE.search(remainder)
+            metavars, description = (remainder[:gap.start()], remainder[gap.start():]) if gap else (remainder, "")
+            lines.append(indent + _colorize_help_signature(names + metavars) + _colorize_help_prose(description))
+            continue
+        positional_row = _HELP_POSITIONAL_ROW_RE.match(line)
+        if positional_row:
+            indent, name, description = positional_row.groups()
+            lines.append(indent + colorize("help_metavar", name) + _colorize_help_prose(description))
+            continue
+        lines.append(_colorize_help_prose(line))
+    return "\n".join(lines)
+
+
+# Colours the examples of the help epilog: the task headings, the comments and the commands to run
+def _colorize_help_epilog(text):
+    lines = []
+    for line in text.split("\n"):
+        if _HELP_HEADING_RE.match(line):
+            lines.append(colorize("help_heading", line))
+            continue
+        if not line.strip() or not line.startswith(" "):
+            lines.append(_colorize_help_prose(line))
+            continue
+        if line.lstrip().startswith("#"):
+            comment = _apply_style_nested(_colorize_help_prose(line), "help_comment")
+            lines.append(comment)
+            continue
+        placeholders = _HELP_PLACEHOLDER_RE.sub(lambda match: colorize("help_placeholder", match.group(0)), line)
+        command = _apply_style_nested(placeholders, "help_command")
+        lines.append(command)
+    return "\n".join(lines)
+
+
+# Colours one finished help screen, leaving its column layout untouched
+def colorize_help_text(text, epilog=None):
+    if not COLOR_ENABLED or not isinstance(text, str) or not text:
+        return text
+    examples = (epilog or "").strip("\n")
+    start = text.rfind(examples) if examples else -1
+    if start == -1:
+        return _colorize_help_body(text)
+    return _colorize_help_body(text[:start]) + _colorize_help_epilog(text[start:])
+
+
+# Parser that colours its own help screen and writes it past the output colouriser, which would otherwise
+# repaint the finished help with the rules meant for monitoring output
+class ColoredHelpParser(argparse.ArgumentParser):
+    # Returns the help screen with the help palette already applied
+    def format_help(self) -> str:
+        return colorize_help_text(super().format_help(), self.epilog)
+
+    # Writes one parser message straight to the terminal behind any colouring wrapper
+    def _print_message(self, message, file=None) -> None:
+        if not message:
+            return
+        stream = sys.stderr if file is None else file
+        target = unwrap_terminal_stream(stream)
+        target.write(sanitize_terminal_text(message))
+        flush = getattr(target, "flush", None)
+        if callable(flush):
+            flush()
+
+
+# Returns a sanitize-only stream for surfaces that apply explicit semantic styles
+def terminal_surface_stream(stream):
+    if isinstance(stream, TerminalStream) and not stream.color_output:
+        return stream
+    while isinstance(stream, (Logger, TerminalStream)):
+        stream = stream.terminal
+    return TerminalStream(stream, color_output=False)
+
+
 # Logger class to output messages to stdout and log file
 class Logger(object):
+    # Opens one line-buffered UTF-8 log while preserving the real terminal stream
     def __init__(self, filename):
-        self.terminal = sys.stdout
-        self.logfile = open(filename, "a", buffering=1, encoding="utf-8")
+        self.terminal = unwrap_terminal_stream(sys.stdout)
+        debug_print("Opening output log for append", path=filename)
+        try:
+            self.logfile = open(filename, "a", buffering=1, encoding="utf-8")
+        except Exception as exc:
+            debug_print("Opening output log", path=filename, outcome="failed", error=f"{type(exc).__name__}: {exc}")
+            raise
+        debug_print("Output log opened", path=filename)
 
+    # Writes sanitized output to both the terminal and log
     def write(self, message):
-        self.terminal.write(message)
-        # Expand tabs in file output so aligned columns render consistently across viewers
-        self.logfile.write(normalize_log_separators(message.expandtabs(8)))
+        safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        # The scanner does not treat the sanitizer as a barrier, so it reports the masked line as a leak
+        # codeql[py/clear-text-storage-sensitive-data]
+        self.logfile.write(normalize_log_separators(ANSI_ESCAPE_RE.sub("", safe_message).expandtabs(8)))
+        terminal_message = self._truncate_terminal(safe_message)
+        self.terminal.write(apply_color_to_text(terminal_message))
         self.terminal.flush()
         self.logfile.flush()
 
+    # Flushes both destinations through their line-buffered writes
     def flush(self):
-        pass
+        self.terminal.flush()
+        self.logfile.flush()
+
+    # Writes sanitized output only to the terminal
+    def terminal_only(self, message):
+        safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        terminal_message = self._truncate_terminal(safe_message)
+        self.terminal.write(apply_color_to_text(terminal_message))
+        self.terminal.flush()
+
+    # Writes sanitized normalized output only to the log
+    def log_only(self, message):
+        safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        self.logfile.write(normalize_log_separators(ANSI_ESCAPE_RE.sub("", safe_message).expandtabs(8)))
+        self.logfile.flush()
+
+    # Limits the terminal line across separate writes while leaving the log complete
+    def _truncate_terminal(self, message):
+        # The limit is fixed once at startup, so with truncation off there is no column to keep track of
+        if not TRUNCATE_CHARS:
+            return message
+        try:
+            from wcwidth import wcwidth
+        except ImportError:
+            wcwidth = len
+        column = getattr(self, "_terminal_column", 0)
+        clipped = getattr(self, "_terminal_clipped", False)
+        output = []
+        position = 0
+        while position < len(message):
+            escape = ANSI_ESCAPE_RE.match(message, position)
+            if escape:
+                output.append(escape.group(0))
+                position = escape.end()
+                continue
+            char = message[position]
+            position += 1
+            if char in ("\n", "\r"):
+                output.append(char)
+                column, clipped = 0, False
+                continue
+            width = 8 - column % 8 if char == "\t" else max(0, wcwidth(char))
+            if char == "\t" and TRUNCATE_CHARS:
+                width = min(width, max(0, TRUNCATE_CHARS - column))
+            if TRUNCATE_CHARS and (clipped or column + width > TRUNCATE_CHARS):
+                clipped = True
+                continue
+            output.append(" " * width if char == "\t" and TRUNCATE_CHARS else char)
+            column += width
+        self._terminal_column, self._terminal_clipped = column, clipped
+        return "".join(output)
 
 
 # Signal handler when user presses Ctrl+C
@@ -515,13 +1531,61 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 
-# Checks internet connectivity
-def check_internet(url=CHECK_INTERNET_URL, timeout=CHECK_INTERNET_TIMEOUT):
+# Reads one answer with Python's default Ctrl+C behavior, so the prompt reports the outcome instead of the signal handler
+def read_interactively(reader, *args, **kwargs):
     try:
-        _ = req.get(url, timeout=timeout)
+        previous_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    except (ValueError, OSError):
+        # Handlers can only be replaced from the main thread, which is where every prompt runs
+        return reader(*args, **kwargs)
+    try:
+        return reader(*args, **kwargs)
+    finally:
+        try:
+            signal.signal(signal.SIGINT, previous_handler)
+        except (ValueError, OSError):
+            pass
+
+
+# Silences the repeated certificate warning once verification is off, so the choice is reported by the summary and the doctor instead of on every request
+def apply_tls_verification_setting():
+    if not VERIFY_SSL:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+# Returns the TLS context SMTP uses, unverified while VERIFY_SSL is off so email follows the same switch as every other connection
+def smtp_ssl_context():
+    context = ssl.create_default_context()
+    if not VERIFY_SSL:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+# The last connectivity failure, so a quiet caller can classify it instead of the check printing it
+LAST_CONNECTIVITY_ERROR = None
+
+
+# Checks internet connectivity using the effective runtime URL and timeout
+def check_internet(url=None, timeout=None, quiet=False, operation="startup connectivity", request_get=None):
+    global LAST_CONNECTIVITY_ERROR
+    selected_url = CHECK_INTERNET_URL if url is None else url
+    selected_timeout = CHECK_INTERNET_TIMEOUT if timeout is None else timeout
+    get_request = req.get if request_get is None else request_get
+    LAST_CONNECTIVITY_ERROR = None
+    try:
+        debug_http_request("GET", selected_url, operation, selected_timeout)
+        response = get_request(selected_url, timeout=selected_timeout, verify=VERIFY_SSL)
+        # Any answer proves the network path works, so the status code is left to the checks that call the API
+        debug_http_response("GET", selected_url, operation, getattr(response, "status_code", "unknown"))
         return True
     except req.RequestException as e:
-        print(f"* No connectivity, please check your network:\n\n{e}")
+        LAST_CONNECTIVITY_ERROR = e
+        debug_swallowed_exception(f"{operation[:1].upper() + operation[1:]} request", e)
+        # Quiet callers render the failure themselves, which doctor needs so nothing lands on its progress line
+        if not quiet:
+            print_recovery_error(e, "connectivity")
         return False
 
 
@@ -529,13 +1593,26 @@ def check_internet(url=CHECK_INTERNET_URL, timeout=CHECK_INTERNET_TIMEOUT):
 def clear_screen(enabled=True):
     if not enabled:
         return
+    # Don't clear screen if stdout is redirected (not a TTY)
+    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+        return
     try:
         if platform.system() == 'Windows':
             os.system('cls')
         else:
             os.system('clear')
-    except Exception:
+    except Exception as exc:
+        debug_swallowed_exception("Terminal screen clear", exc)
         print("* Cannot clear the screen contents")
+
+
+# Commands that print a one-shot result and exit, so the screen keeps whatever is already on it
+KEEP_HISTORY_FLAGS = ("--set-github-token", "--set-smtp-password", "--set-webhook-url", "--doctor", "--send-test-email", "--send-test-webhook", "--help", "-h")
+
+
+# Returns True when the running command is a one-shot whose output has to stay scrollable
+def keep_terminal_history() -> bool:
+    return any(flag in sys.argv for flag in KEEP_HISTORY_FLAGS)
 
 
 # Converts absolute value of seconds to human readable format
@@ -574,7 +1651,8 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
     if isinstance(timestamp1, str):
         try:
             timestamp1 = isoparse(timestamp1)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("First timespan timestamp parsing", exc)
             return ""
 
     if isinstance(timestamp1, int):
@@ -595,7 +1673,8 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
     if isinstance(timestamp2, str):
         try:
             timestamp2 = isoparse(timestamp2)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("Second timespan timestamp parsing", exc)
             return ""
 
     if isinstance(timestamp2, int):
@@ -648,146 +1727,6 @@ def calculate_timespan(timestamp1, timestamp2, show_weeks=True, show_hours=True,
         return ', '.join(result[:granularity])
     else:
         return '0 seconds'
-
-
-# Sanitizes HTML content, preserving safe tags while removing dangerous ones
-def sanitize_and_preserve_html(text, convert_line_breaks=True, repo_url=None):
-    if not text:
-        return ""
-
-    safe_tags = {
-        'details': ['open'],
-        'summary': [],
-        'ul': [],
-        'ol': [],
-        'li': [],
-        'a': ['href', 'title'],
-        'code': [],
-        'pre': [],
-        'p': [],
-        'br': [],
-        'strong': [],
-        'b': [],
-        'em': [],
-        'i': [],
-        's': [],
-        'strike': [],
-        'del': [],
-        'img': ['src', 'alt', 'title'],
-        'blockquote': [],
-        'hr': [],
-    }
-
-    code_blocks = []
-    code_block_pattern = r'```([\s\S]*?)```'
-    code_block_counter = 0
-
-    def replace_code_block(match):
-        nonlocal code_block_counter
-        code_content = match.group(1)
-        placeholder = f"__CODE_BLOCK_{code_block_counter}__"
-        code_blocks.append(('<pre><code>' + html.escape(code_content) + '</code></pre>', placeholder))
-        code_block_counter += 1
-        return placeholder
-
-    text = re.sub(code_block_pattern, replace_code_block, text)
-
-    # Pattern to match HTML tags including multiline (use [\s\S]*? to match any char including newlines)
-    tag_pattern = r'<(/)?([a-z][a-z0-9]*)([\s\S]*?)>'
-
-    def sanitize_tag(match):
-        closing = match.group(1) == '/'
-        tag_name = match.group(2).lower()
-        attrs_str = match.group(3) if match.group(3) else ''
-
-        if closing:
-            return f'</{tag_name}>' if tag_name in safe_tags else ''
-
-        if tag_name not in safe_tags:
-            return ''
-
-        allowed_attrs = safe_tags[tag_name]
-        if not allowed_attrs and attrs_str:
-            return f'<{tag_name}>'
-
-        attr_pattern = r'(\w+)=["\']([^"\']*)["\']'
-        safe_attrs = []
-        for attr_match in re.finditer(attr_pattern, attrs_str):
-            attr_name = attr_match.group(1).lower()
-            attr_value = attr_match.group(2)
-
-            if attr_name in allowed_attrs:
-                if attr_name == 'href' or attr_name == 'src':
-                    if attr_value.startswith(('http://', 'https://', 'mailto:', '#')):
-                        safe_attrs.append(f'{attr_name}="{html.escape(attr_value)}"')
-                else:
-                    safe_attrs.append(f'{attr_name}="{html.escape(attr_value)}"')
-
-        if safe_attrs:
-            return f'<{tag_name} {" ".join(safe_attrs)}>'
-        else:
-            return f'<{tag_name}>'
-
-    sanitized = re.sub(tag_pattern, sanitize_tag, text, flags=re.IGNORECASE)
-
-    temp_markers = []
-    for idx, (code_html, placeholder) in enumerate(code_blocks):
-        temp_marker = f"__TEMP_CODE_{idx}__"
-        temp_markers.append((temp_marker, code_html))
-        sanitized = sanitized.replace(placeholder, temp_marker)
-
-    protected_tags = []
-    tag_counter = 0
-
-    valid_tag_pattern = r'</?[a-z][a-z0-9]*(?:\s+[^>]*)?>'
-
-    def protect_tag(match):
-        nonlocal tag_counter
-        protected_tags.append(match.group(0))
-        result = f"__PROTECTED_TAG_{tag_counter}__"
-        tag_counter += 1
-        return result
-
-    sanitized = re.sub(valid_tag_pattern, protect_tag, sanitized, flags=re.IGNORECASE)
-
-    sanitized = sanitized.replace('<', '&lt;').replace('>', '&gt;')
-
-    for idx, tag in enumerate(protected_tags):
-        sanitized = sanitized.replace(f"__PROTECTED_TAG_{idx}__", tag)
-
-    for temp_marker, code_html in temp_markers:
-        sanitized = sanitized.replace(temp_marker, code_html)
-
-    if convert_line_breaks:
-        lines = sanitized.split('\n')
-        result_lines = []
-        prev_was_block = False
-        prev_was_empty = False
-
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            is_block = bool(re.search(r'<(details|summary|ul|ol|li|pre|blockquote|hr|p)[\s>]', stripped, re.IGNORECASE))
-
-            if not stripped:
-                if not prev_was_empty and not prev_was_block:
-                    result_lines.append('<br>')
-                prev_was_empty = True
-                prev_was_block = False
-            else:
-                if is_block:
-                    result_lines.append(line)
-                    prev_was_block = True
-                    prev_was_empty = False
-                else:
-                    if not prev_was_block and result_lines and not prev_was_empty:
-                        result_lines.append('<br>')
-                    result_lines.append(line)
-                    prev_was_block = False
-                    prev_was_empty = False
-
-        sanitized = ''.join(result_lines)
-
-    return sanitized
 
 
 # Sanitizes a single HTML tag
@@ -1240,7 +2179,6 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
         prev_type = None  # 'text' or 'html'
         prev_html_tag = None  # last HTML tag name (e.g., 'ul', 'details', 'a')
         prev_html_had_image = False  # whether previous HTML line contained an <img>
-        prev_text_line = None  # stripped previous text line
         pending_blank = False
 
         for line in lines:
@@ -1292,7 +2230,6 @@ def markdown_to_html(text, convert_line_breaks=True, repo_url=None):
                             result_lines.append('<br>')
                 result_lines.append(line)
                 prev_type = 'text'
-                prev_text_line = stripped
                 pending_blank = False
 
         html_text = ''.join(result_lines)
@@ -1388,79 +2325,6 @@ def convert_commit_hashes_to_links(text, repo_url=None):
                 parts[i] = re.sub(commit_pattern, replace_hash, part)
 
     return ''.join(parts)
-
-
-# Converts issue/PR list items to HTML with clickable titles
-def convert_issue_pr_items_to_html(text, already_escaped=False):
-    if not text:
-        return text
-
-    pattern = r'(- )?#(\d+)\s+([^(]+?)\s+\(([^)]+)\)\s+(?:\[\s*)?(https?://[^\s\]]+)(?:\s*\])?'
-
-    def replace_item(match):
-        prefix = match.group(1) or ""
-        number = match.group(2)
-        title = match.group(3).strip()
-        user = match.group(4)
-        url = match.group(5)
-
-        if already_escaped:
-            escaped_title = title
-            escaped_user = user
-            escaped_url = url
-        else:
-            escaped_title = html.escape(title)
-            escaped_user = html.escape(user)
-            escaped_url = html.escape(url)
-
-        return f'{prefix}<a href="{escaped_url}"><b>#{number} {escaped_title}</b></a> ({escaped_user})'
-
-    return re.sub(pattern, replace_item, text)
-
-
-# Converts plain text to HTML, preserving line breaks and formatting
-def text_to_html(text, preserve_newlines=True, convert_urls=True, convert_issue_pr=True, repo_url=None):
-    if not text:
-        return ""
-
-    html_text = html.escape(text)
-
-    if convert_issue_pr:
-        html_text = convert_issue_pr_items_to_html(html_text, already_escaped=True)
-
-    if convert_urls:
-        html_text = convert_urls_to_links(html_text)
-
-    if repo_url:
-        html_text = convert_commit_hashes_to_links(html_text, repo_url)
-
-    html_text = convert_github_mentions_to_links(html_text)
-
-    if preserve_newlines:
-        html_text = html_text.replace('\n', '<br>')
-
-    return html_text
-
-
-# Formats email body text to HTML
-def format_email_body_html(body_text, bold_keys=None, repo_url=None):
-    if not body_text:
-        return ""
-
-    html_text = text_to_html(body_text, preserve_newlines=True, repo_url=repo_url)
-
-    if bold_keys:
-        for key in bold_keys:
-            if key:
-                escaped_key = html.escape(key)
-                html_text = re.sub(
-                    re.escape(escaped_key),
-                    lambda m: f'<b>{m.group(0)}</b>',
-                    html_text,
-                    flags=re.IGNORECASE
-                )
-
-    return html_text
 
 
 # Converts event text to HTML, handling markdown in specific fields
@@ -1852,50 +2716,86 @@ def event_text_to_html(event_text, event_type=None, event_payload=None):
     return result
 
 
-# Sends email notification
-def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
+# Reports the first unusable email setting as a doctor detail and an action that names the same settings
+def email_settings_problem():
     fqdn_re = re.compile(r'(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}\.?$)')
     email_re = re.compile(r'[^@]+@[^@]+\.[^@]+')
-
     try:
         ipaddress.ip_address(str(SMTP_HOST))
     except ValueError:
         if not fqdn_re.search(str(SMTP_HOST)):
-            print("Error sending email - SMTP settings are incorrect (invalid IP address/FQDN in SMTP_HOST)")
-            return 1
-
+            return ("SMTP_HOST is not a valid IP address or hostname", "Correct SMTP_HOST or turn the email alerts off")
     try:
         port = int(SMTP_PORT)
         if not (1 <= port <= 65535):
             raise ValueError
-    except ValueError:
-        print("Error sending email - SMTP settings are incorrect (invalid port number in SMTP_PORT)")
-        return 1
-
+    except (TypeError, ValueError, OverflowError):
+        return ("SMTP_PORT is not a port number between 1 and 65535", "Correct SMTP_PORT or turn the email alerts off")
     if not email_re.search(str(SENDER_EMAIL)) or not email_re.search(str(RECEIVER_EMAIL)):
-        print("Error sending email - SMTP settings are incorrect (invalid email in SENDER_EMAIL or RECEIVER_EMAIL)")
-        return 1
-
+        return ("SENDER_EMAIL or RECEIVER_EMAIL is not an email address", "Correct SENDER_EMAIL and RECEIVER_EMAIL or turn the email alerts off")
     if not SMTP_USER or not isinstance(SMTP_USER, str) or SMTP_USER == "your_smtp_user" or not SMTP_PASSWORD or not isinstance(SMTP_PASSWORD, str) or SMTP_PASSWORD == "your_smtp_password":
-        print("Error sending email - SMTP settings are incorrect (check SMTP_USER & SMTP_PASSWORD variables)")
-        return 1
+        return ("SMTP_USER or SMTP_PASSWORD is empty or still set to its placeholder", "Set SMTP_USER and SMTP_PASSWORD or turn the email alerts off")
+    return None
 
+
+# Validates the shared SMTP destination, credentials and message fields
+def validate_email_settings(subject="Doctor test", body="Doctor test", body_html=""):
+    problem = email_settings_problem()
+    if problem is not None:
+        return problem[0]
     if not subject or not isinstance(subject, str):
-        print("Error sending email - SMTP settings are incorrect (subject is not a string or is empty)")
-        return 1
-
+        return "The email subject must be a non-empty string"
     if not body and not body_html:
-        print("Error sending email - SMTP settings are incorrect (body and body_html cannot be empty at the same time)")
-        return 1
+        return "The email body and HTML body cannot both be empty"
+    return None
 
+
+# Closes an SMTP session without changing the result of an accepted or failed message
+def smtp_quit_quietly(smtp_object):
+    if smtp_object is None:
+        return
+    try:
+        smtp_object.quit()
+    except Exception as quit_error:
+        debug_print("SMTP quit", outcome="failed", error=f"{type(quit_error).__name__}: {quit_error}")
+        try:
+            smtp_object.close()
+        except Exception as close_error:
+            debug_print("SMTP close", outcome="failed", error=f"{type(close_error).__name__}: {close_error}")
+
+
+# Opens one authenticated SMTP session and leaves closing it to the caller
+def smtp_connect_and_login(use_ssl, smtp_timeout=15):
+    debug_print("SMTP delivery", attempt="1/1", host=SMTP_HOST, port=SMTP_PORT, timeout=f"{smtp_timeout}s", tls=bool(use_ssl), user=mask_secret(SMTP_USER), password=mask_secret(SMTP_PASSWORD))
+    smtp_object = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
     try:
         if use_ssl:
-            ssl_context = ssl.create_default_context()
-            smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
-            smtpObj.starttls(context=ssl_context)
-        else:
-            smtpObj = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=smtp_timeout)
-        smtpObj.login(SMTP_USER, SMTP_PASSWORD)
+            smtp_object.starttls(context=smtp_ssl_context())
+        debug_print("SMTP connection established", host=SMTP_HOST, port=SMTP_PORT)
+        smtp_login(smtp_object, SMTP_USER, SMTP_PASSWORD)
+        debug_print("SMTP authentication succeeded", host=SMTP_HOST)
+        return smtp_object
+    except Exception as connect_error:
+        debug_print("SMTP session setup", host=SMTP_HOST, outcome="failed", error=f"{type(connect_error).__name__}: {connect_error}")
+        smtp_quit_quietly(smtp_object)
+        raise
+
+
+# Returns the advice for an SMTP setting or message field that makes a delivery impossible
+def email_settings_advice(validation_error, install_context=None):
+    return make_recovery_advice("smtp.invalid", f"The SMTP settings are incorrect: {validation_error}", recovery_fix_with_guide(f"Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SENDER_EMAIL and RECEIVER_EMAIL then run: {render_command(['--send-test-email'], install_context=install_context)}", SMTP_GUIDE_URL), False)
+
+
+# Sends email notification
+def send_email(subject, body, body_html, use_ssl, smtp_timeout=15, report_delivery=True):
+    validation_error = validate_email_settings(subject, body, body_html)
+    if validation_error is not None:
+        print_recovery_advice(email_settings_advice(validation_error))
+        return 1
+
+    smtpObj = None
+    try:
+        smtpObj = smtp_connect_and_login(use_ssl, smtp_timeout=smtp_timeout)
         email_msg = MIMEMultipart('alternative')
         email_msg["From"] = SENDER_EMAIL
         email_msg["To"] = RECEIVER_EMAIL
@@ -1912,40 +2812,656 @@ def send_email(subject, body, body_html, use_ssl, smtp_timeout=15):
             email_msg.attach(part2)
 
         smtpObj.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, email_msg.as_string())
-        smtpObj.quit()
+        debug_print("SMTP delivery", outcome="OK", host=SMTP_HOST, attempt="1/1")
+        if report_delivery:
+            verbose_delivery_print(f"Email sent to {RECEIVER_EMAIL}")
     except Exception as e:
-        print(f"Error sending email: {e}")
+        debug_print("SMTP delivery", outcome="failed", host=SMTP_HOST, attempt="1/1", error=f"{type(e).__name__}: {e}")
+        print_recovery_error(e, "email")
         return 1
+    finally:
+        smtp_quit_quietly(smtpObj)
     return 0
 
 
-# Returns all private webhook values currently known to the process
-def known_webhook_secret_values():
+# Returns all private values currently known to the process
+def known_secret_values():
     values = []
     for key in SECRET_KEYS:
         value = globals().get(key)
-        if isinstance(value, str) and value and not value.startswith("your_"):
+        if isinstance(value, str) and len(value) >= MIN_REDACTABLE_SECRET_LENGTH and not value.startswith("your_"):
             values.append(value)
     if isinstance(WEBHOOK_HEADERS, dict):
         for name, value in WEBHOOK_HEADERS.items():
-            if isinstance(name, str) and name.casefold() == "authorization" and isinstance(value, str) and value:
+            if isinstance(name, str) and name.casefold() == "authorization" and isinstance(value, str) and len(value) >= MIN_REDACTABLE_SECRET_LENGTH:
                 values.append(value)
-    return values
+    return sorted(set(values) | set(_DELIVERY_SECRET_VALUES.get()), key=len, reverse=True)
 
 
-# Redacts webhook destinations and authentication values from arbitrary text
-def sanitize_webhook_text(value):
+# Returns a fixed marker for every configured secret without exposing any characters
+def mask_secret(value, visible=3):
+    if not str(value or ""):
+        return "<not set>"
+    return "<redacted>"
+
+
+# Redacts known values and common credential shapes from arbitrary error text
+def sanitize_error_text(value, extra_secrets=()):
     text = str(value or "")
-    for secret in known_webhook_secret_values():
+    # A value being checked before it is saved is held by the caller and by no global, so it is passed in instead
+    entered = [secret for secret in extra_secrets if isinstance(secret, str) and len(secret) >= MIN_REDACTABLE_SECRET_LENGTH]
+    for secret in sorted(known_secret_values() + entered, key=len, reverse=True):
         text = text.replace(secret, "<redacted>")
     patterns = (
         (r"(?m)(\b(?:GITHUB_TOKEN|SMTP_PASSWORD|WEBHOOK_URL|NTFY_ACCESS_TOKEN)\b\s*=\s*).*$", r"\1<redacted>"),
         (r"(?i)(authorization['\"]?\s*[:=]\s*['\"]?(?:bearer|basic)\s+)[^\s,;'\"}]+", r"\1<redacted>"),
         (r"(?i)(['\"]?(?:github_token|smtp_password|webhook_url|ntfy_access_token)['\"]?\s*[:=]\s*['\"]?)[^\s,;'\"}]+", r"\1<redacted>"),
+        (r"(?i)\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+\b", "<redacted>"),
+        (r"(?i)https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api(?:/v[0-9]+)?/webhooks/[0-9]+/[^\s'\"<>]+", "<redacted>"),
+        (r"(?i)([?&](?:access_token|auth|token)=)[^&#\s]+", r"\1<redacted>"),
     )
     for pattern, replacement in patterns:
         text = re.sub(pattern, replacement, text)
     return text
+
+
+# Preserves the original webhook sanitizer name for existing callers
+def sanitize_webhook_text(value):
+    return sanitize_error_text(value)
+
+
+# Prints one sanitized user-facing decision only when verbose mode is enabled
+def verbose_print(message):
+    if VERBOSE_MODE:
+        print(f"* {sanitize_error_text(message)}")
+
+
+# Prints one delivery confirmation in verbose mode unless DELIVERY_CONFIRMATIONS turns them off
+def verbose_delivery_print(message):
+    if DELIVERY_CONFIRMATIONS:
+        verbose_print(message)
+
+
+# Prints verbose-only notices as one block, so a standalone line is not left without the timestamp trailer
+def verbose_notice(*messages):
+    if not VERBOSE_MODE or not messages:
+        return
+    for message in messages:
+        verbose_print(message)
+    # Before monitoring starts the notice belongs to the startup screen, which the monitoring header closes
+    if MONITORING_ACTIVE:
+        print_cur_ts("Timestamp:\t\t\t")
+
+
+# Marks the point where output stops being the startup screen, so later notices close their own block
+def mark_monitoring_started():
+    global MONITORING_ACTIVE
+    MONITORING_ACTIVE = True
+
+
+# Closes the block of verbose lines a check printed on its own, so they are never left without a timestamp
+def close_pending_notice_block():
+    if PENDING_NOTICE_BLOCK:
+        print_cur_ts("Timestamp:\t\t\t")
+
+
+# Returns whether a configured value is a real value rather than an unedited placeholder
+def secret_is_set(value):
+    return isinstance(value, str) and bool(value.strip()) and not value.strip().startswith("your_")
+
+
+# Returns the diagnostic fields describing one secret, reporting presence alone since GitHub issues no secret at a fixed length
+def secret_fields(value):
+    return {"value": "set" if secret_is_set(value) else "not set"}
+
+
+# Renders one diagnostic line as an operation followed by comma-separated key=value fields, dropping unset ones
+def format_diagnostic_line(operation, fields):
+    rendered = ", ".join(f"{key}={value}" for key, value in fields.items() if value is not None)
+    return f"{operation}: {rendered}" if rendered else str(operation)
+
+
+# Prints one timestamped sanitized operation only when debug mode is enabled
+def debug_print(_operation, **fields):
+    if DEBUG_MODE:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        message = format_diagnostic_line(_operation, fields)
+        # The scanner does not treat the sanitizer as a barrier, so it reports the masked line as a leak
+        # codeql[py/clear-text-logging-sensitive-data]
+        print(f"[DEBUG {timestamp}] {sanitize_error_text(message)}")
+
+
+# Redacts credential-bearing request headers before diagnostic output
+def sanitize_debug_headers(headers):
+    if not isinstance(headers, dict):
+        return headers
+    sensitive_names = {"authorization", "cookie", "proxy-authorization", "x-api-key"}
+    return {name: mask_secret(value) if str(name).casefold() in sensitive_names else sanitize_error_text(value) for name, value in headers.items()}
+
+
+# Redacts credential-bearing request parameters before diagnostic output
+def sanitize_debug_params(params):
+    if not isinstance(params, dict):
+        return params
+    sensitive_names = {"access_token", "auth", "key", "password", "refresh_token", "token"}
+    return {name: mask_secret(value) if str(name).casefold() in sensitive_names else sanitize_error_text(value) for name, value in params.items()}
+
+
+# Returns a diagnostic URL with credentials and optionally its private path removed
+def diagnostic_endpoint(url, host_only=False):
+    try:
+        parsed = urlsplit(str(url or "").strip())
+        selected_port = parsed.port
+    except ValueError as exc:
+        debug_print("Could not parse diagnostic endpoint", outcome="failed", error=f"{type(exc).__name__}: {exc}")
+        return "<invalid endpoint>"
+    if not parsed.scheme or not parsed.hostname:
+        return sanitize_error_text(url)
+    port = f":{selected_port}" if selected_port else ""
+    endpoint = f"{parsed.scheme}://{parsed.hostname}{port}"
+    if not host_only:
+        endpoint += parsed.path or ""
+    return sanitize_error_text(endpoint)
+
+
+# Logs one outbound HTTP request without exposing private request values
+def debug_http_request(method, url, operation, timeout, headers=None, params=None, token=None, host_only=False):
+    debug_print(f"HTTP {str(method).upper()}", url=diagnostic_endpoint(url, host_only=host_only), operation=operation, timeout=f"{timeout}s", headers=sanitize_debug_headers(headers) if headers else None, params=sanitize_debug_params(params) if params else None, token=mask_secret(token) if token is not None else None)
+
+
+# Logs one HTTP response status for a named operation
+def debug_http_response(method, url, operation, status):
+    debug_print(f"HTTP {str(method).upper()}", url=diagnostic_endpoint(url), operation=operation, status=status)
+
+
+# Stops the run when this process is out of file descriptors, since every fallback below it would hit the same limit
+def exit_if_out_of_file_descriptors(error):
+    if not is_too_many_open_files(error):
+        return
+    print_recovery_advice(classify_recovery_error(error))
+    raise SystemExit(1)
+
+
+# Logs one swallowed exception and the feature that degraded because of it, first stopping the run if the cause was a local descriptor limit
+def debug_swallowed_exception(operation, error):
+    exit_if_out_of_file_descriptors(error)
+    debug_print(operation, outcome="degraded", error=f"{type(error).__name__}: {error}")
+
+
+# Reports a tracked feature that cannot produce its alert, once per outage rather than on every check
+def verbose_degraded_feature(feature, alert, error=None, enrichment=False):
+    global PENDING_NOTICE_BLOCK
+    if error is not None:
+        debug_swallowed_exception(feature, error)
+    else:
+        debug_print(feature, outcome="degraded", alert=alert)
+    if MONITORING_ACTIVE:
+        # Enrichment adds detail to an alert that still goes out, so it is reported without opening an
+        # outage. Only data a check needs to detect changes decides whether that check failed
+        if not enrichment and (error is not None or feature not in MONITOR_CHECK_FAILURES):
+            MONITOR_CHECK_FAILURES[feature] = error
+        DEGRADED_FEATURES_SEEN.add(feature)
+        # An outage that lasts is news once, so the repeats are left to debug until the feature works again
+        if DEGRADED_FEATURES.get(feature) == alert:
+            return
+        DEGRADED_FEATURES[feature] = alert
+    verbose_print(f"{feature} is unavailable, so {alert} cannot fire")
+    # A degraded feature can be reported from inside a report, so the check closes the block instead of this line
+    if VERBOSE_MODE and MONITORING_ACTIVE:
+        PENDING_NOTICE_BLOCK = True
+
+
+# Forgets every tracked outage, so the checks that follow report the state they find rather than an older one
+def reset_degraded_features():
+    DEGRADED_FEATURES.clear()
+    DEGRADED_FEATURES_SEEN.clear()
+    MONITOR_CHECK_FAILURES.clear()
+
+
+# Reports every feature that was unavailable before this check and worked during it
+def report_recovered_features():
+    global PENDING_NOTICE_BLOCK
+    recovered = [(feature, alert) for feature, alert in DEGRADED_FEATURES.items() if feature not in DEGRADED_FEATURES_SEEN]
+    for feature, alert in recovered:
+        del DEGRADED_FEATURES[feature]
+        verbose_print(f"{feature} is available again, so {alert} can fire again")
+    DEGRADED_FEATURES_SEEN.clear()
+    if recovered and VERBOSE_MODE and MONITORING_ACTIVE:
+        PENDING_NOTICE_BLOCK = True
+
+
+# Logs the start of one monitoring poll and returns its monotonic start time
+def debug_monitor_check_start(check_number, user):
+    debug_print("Starting monitoring check", check=f"#{check_number}", user=user)
+    return time.monotonic()
+
+
+# Logs one completed monitoring poll with its duration and schedule
+def debug_monitor_check_timing(check_number, user, started_at, interval, outcome="OK"):
+    duration = max(0.0, time.monotonic() - started_at)
+    next_check = datetime.now() + dt.timedelta(seconds=interval)
+    debug_print("Completed monitoring check", check=f"#{check_number}", user=user, outcome=outcome, duration=f"{duration:.3f}s", next=next_check.astimezone().isoformat(), interval=display_time(interval))
+
+
+# Logs one scheduled wait with its reason and next timestamp
+def debug_monitor_wait_timing(reason, interval):
+    next_check = datetime.now() + dt.timedelta(seconds=interval)
+    debug_print("Waiting", interval=display_time(interval), reason=reason, next=next_check.astimezone().isoformat())
+
+
+@dataclass(frozen=True)
+class InstallContext:
+    install_method: str
+    operating_system: str
+    command_prefix: tuple[str, ...]
+
+
+# Detects whether the current invocation uses the PyPI command or downloaded script
+def detect_install_context(argv0=None, module_path=None, operating_system=None):
+    invocation = str(sys.argv[0] if argv0 is None else argv0)
+    source_path = str(Path(__file__ if module_path is None else module_path).resolve())
+    selected_system = platform.system() if operating_system is None else str(operating_system)
+    manual = Path(invocation).suffix.casefold() == ".py"
+    prefix = (sys.executable, source_path) if manual else (sys.executable, "-m", "github_monitor")
+    return InstallContext("manual" if manual else "pip", selected_system, prefix)
+
+
+# Returns a readable name for the detected install method
+def install_method_display_name(method=None):
+    selected = detect_install_context().install_method if method is None else str(method)
+    return {"pip": "PyPI install", "manual": "downloaded script"}.get(selected, selected)
+
+
+# True when a command writes the dotenv file itself, so it refuses an --env-file that switches dotenv loading off
+def command_writes_dotenv(arguments=()):
+    return any(str(argument) == "--setup" or str(argument).startswith("--set-") for argument in arguments)
+
+
+# True when a command writes the config file itself, so it refuses a --config-file that switches discovery off
+def command_writes_config(arguments=()):
+    return any(str(argument) == "--setup" for argument in arguments)
+
+
+# Returns the --config-file and --env-file arguments this run was given, skipping any the caller already passed
+def active_path_arguments(arguments=()):
+    given = {str(argument) for argument in arguments}
+    paths = []
+    active_config = CLI_CONFIG_PATH or ("none" if CONFIG_DISCOVERY_DISABLED else None)
+    # The "none" sentinel is carried so the printed command checks the setup this run checked, except into a
+    # command that writes the config file, since those refuse the sentinel at their own argument gate
+    if active_config and "--config-file" not in given and not (str(active_config).casefold() == "none" and command_writes_config(arguments)):
+        paths.extend(("--config-file", str(active_config)))
+    # The "none" sentinel is carried so the printed command checks the setup this run checked, except into a
+    # command that writes the dotenv file, since those refuse the sentinel at their own argument gate
+    if DOTENV_FILE and "--env-file" not in given and not (str(DOTENV_FILE).casefold() == "none" and command_writes_dotenv(arguments)):
+        paths.extend(("--env-file", str(DOTENV_FILE)))
+    return paths
+
+
+# The documentation placeholders a printed command carries unquoted, because the reader replaces them before running it
+COMMAND_PLACEHOLDERS = frozenset(("<github_target>",))
+
+
+# Renders one command argument for the shell, leaving a <placeholder> as documentation for the reader to replace
+def quote_command_argument(argument, windows=False):
+    text = str(argument)
+    # Matched exactly rather than by shape, since any other angle-bracket value is user-derived and would otherwise reach the shell unquoted
+    if text in COMMAND_PLACEHOLDERS:
+        return text
+    return subprocess.list2cmdline([text]) if windows else shlex.quote(text)
+
+
+# Reads only the persisted target from a config file, so a printed command can omit a positional the config already supplies
+def config_file_target(config_path):
+    if not config_path or str(config_path).casefold() == "none":
+        return ""
+    namespace = {}
+    if not load_config_file(config_path, namespace=namespace, report_errors=False):
+        return ""
+    return str(namespace.get("TARGET_GITHUB_USERNAME") or "")
+
+
+# Returns the config a printed command should name, so a run started with discovery off cannot point the reader
+# at a file it deliberately ignored
+def resolved_command_config(config_path=None):
+    # A path the caller was given is what the command names, so a stale discovery flag cannot override it
+    if config_path is not None:
+        return "none" if str(config_path).casefold() == "none" else config_path
+    return "none" if CONFIG_DISCOVERY_DISABLED else find_config_file()
+
+
+# Returns the targets for the printed doctor and monitoring commands, dropping one the effective config already supplies
+def command_targets(explicit_target=None, saved_target=None, placeholder="<github_target>"):
+    saved = str(saved_target or "")
+    known = str(explicit_target or "") or saved
+    if not known:
+        # Monitoring cannot run without a target, so it keeps the placeholder while the doctor reports the gap itself
+        return None, placeholder
+    printed = None if known == saved else known
+    return printed, printed
+
+
+# Renders one install-aware command with platform quoting, carrying the paths this run was given
+def render_command(arguments=None, include_paths=True, *, install_context=None):
+    context = detect_install_context() if install_context is None else install_context
+    executable = "python" if context.operating_system.casefold() == "windows" else "python3"
+    prefix = (executable, "github_monitor.py") if context.install_method == "manual" else ("github_monitor",)
+    selected = [str(argument) for argument in (arguments or ())]
+    parts = [*prefix, *selected]
+    if include_paths:
+        parts.extend(active_path_arguments(selected))
+    windows = context.operating_system.casefold() == "windows"
+    return " ".join(quote_command_argument(part, windows) for part in parts)
+
+
+# One sentence for every surface that reports the startup connectivity check
+CONNECTIVITY_ENDPOINT_FIX = "Check network, DNS, proxy and CHECK_INTERNET_URL settings"
+
+
+RECOVERY_CODES = frozenset({
+    "auth.github_token_invalid",
+    "auth.github_token_missing",
+    "config.insecure",
+    "config.invalid",
+    "config.missing",
+    "config.value_invalid",
+    "dependency.missing",
+    "dotenv.missing",
+    "file.exists",
+    "file.unreadable",
+    "file.unwritable",
+    "github.api_error",
+    "github.forbidden",
+    "github.not_found",
+    "github.rate_limited",
+    "network.timeout",
+    "resource.exhausted",
+    "network.unavailable",
+    "secret.entry",
+    "smtp.authentication",
+    "smtp.connection",
+    "smtp.delivery",
+    "smtp.invalid",
+    "target.missing",
+    "target.not_found",
+    "timezone.invalid",
+    "webhook.connection",
+    "webhook.invalid",
+    "webhook.rate_limited",
+    "webhook.rejected",
+    "unknown",
+})
+
+
+@dataclass(frozen=True)
+class RecoveryAdvice:
+    code: str
+    summary: str
+    fix: str
+    retryable: bool
+    detail: str = ""
+
+
+class RecoveryError(Exception):
+    # Stores structured recovery advice with the original exception when available
+    def __init__(self, advice, cause=None):
+        self.advice = advice
+        self.cause = cause
+        super().__init__(advice.summary)
+
+
+# Constructs validated recovery advice with every user-facing field sanitized
+def make_recovery_advice(code, summary, fix, retryable=False, detail=""):
+    if code not in RECOVERY_CODES:
+        raise ValueError(f"Unsupported recovery code: {code}")
+    return RecoveryAdvice(code, sanitize_error_text(summary), sanitize_error_text(fix), bool(retryable), sanitize_error_text(detail))
+
+
+# Adds a directly relevant documentation link on its own line
+def recovery_fix_with_guide(fix, guide_url):
+    return f"{fix}\nGuide: {guide_url}"
+
+
+# Escapes text for an HTML email body and keeps its line breaks, which HTML would otherwise collapse into spaces
+def html_text(text):
+    return html.escape(text).replace("\n", "<br>")
+
+
+# Returns the advice a cancelled secret entry reports, worded the same way by every one-shot secret command
+def secret_entry_cancelled_advice(subject, flag, guide_url):
+    return make_recovery_advice("secret.entry", f"{subject[:1].upper()}{subject[1:]} setup was cancelled and the dotenv file was not changed", recovery_fix_with_guide(f"Run {flag} again when you have the value ready", guide_url), False)
+
+
+# Returns the advice a declined secret replacement reports, worded the same way by every one-shot secret command
+def secret_replacement_declined_advice(subject, flag, guide_url, plural=False):
+    kept = "were left as they are" if plural else "was left as it is"
+    return make_recovery_advice("secret.entry", f"The saved {subject} {kept} and the dotenv file was not changed", recovery_fix_with_guide(f"Run {flag} again and answer y to replace the saved value", guide_url), False)
+
+
+# Renders recovery advice according to the effective diagnostic modes
+def render_recovery_advice(advice, debug=None, retry_note="", with_fix=True, label="Error"):
+    debug_enabled = DEBUG_MODE if debug is None else bool(debug)
+    lines = [f"* {label}: {sanitize_error_text(advice.summary)}" + (f" ({retry_note})" if retry_note else "")]
+    if not with_fix:
+        return lines[0]
+    lines.append(f"To fix: {sanitize_error_text(advice.fix)}")
+    # A detail that only repeats the summary spends a line saying nothing
+    if debug_enabled and advice.detail and advice.detail != advice.summary:
+        lines.append(f"Technical detail: {sanitize_error_text(advice.detail)}")
+    return "\n".join(lines)
+
+
+# Prints one built advice through the shared recovery block and returns it
+def print_recovery_advice(advice, debug=None, retry_note="", with_fix=True, label="Error", tracker=None):
+    print(render_recovery_advice(advice, debug, retry_note, with_fix and (tracker is None or tracker.should_render(advice)), label))
+    return advice
+
+
+# Classifies one failure and renders it through the shared recovery block
+def render_recovery_error(error=None, context="runtime", debug=None, detail="", retry_note="", with_fix=True, label="Error", install_context=None):
+    return render_recovery_advice(classify_recovery_error(error, context, detail, install_context), debug, retry_note, with_fix, label)
+
+
+# Classifies one failure, prints it through the shared recovery block and returns its stable advice
+def print_recovery_error(error=None, context="runtime", debug=None, detail="", retry_note="", with_fix=True, label="Error", tracker=None, install_context=None):
+    return print_recovery_advice(classify_recovery_error(error, context, detail, install_context), debug, retry_note, with_fix, label, tracker)
+
+
+# Suppresses a repeated fix paragraph until the failure category changes or a check succeeds
+class RecoveryHintTracker:
+    # Starts with no category recorded, so the first failure is always reported in full
+    def __init__(self):
+        self.last_code = None
+
+    # Reports whether this category is new and therefore worth printing the fix for again
+    def should_render(self, advice):
+        if advice.code == self.last_code:
+            return False
+        self.last_code = advice.code
+        return True
+
+    # Clears the suppression after a successful check
+    def reset(self):
+        self.last_code = None
+
+
+# Decides how a lasting failure is reported: in full when it is new, then on the liveness cadence while it lasts
+# How long a reported failure may go on before the run reminds about it, whatever the liveness banner is set to
+OUTAGE_REMINDER_SECONDS = 3600  # 1 hour
+
+
+# Returns the family a failure code belongs to, so the DNS and timeout failures of one internet outage count as one
+def outage_family(code):
+    return "network" if str(code or "").startswith("network.") else str(code or "")
+
+
+class OutageReporter:
+    # Starts with no failure recorded and reports a new retryable failure once confirm_checks checks in a row failed
+    def __init__(self, confirm_checks=1):
+        self.confirm_checks = max(1, confirm_checks)
+        self.code = None
+        self.since = 0
+        self.reported_at = 0
+        self.failures = 0
+        self.reported = False
+
+    # Records one failed check and returns "full" when the failure is to be reported in full, "changed" when a
+    # reported outage moved to another failure family, "reminder" once OUTAGE_REMINDER_SECONDS passed since the
+    # last report or "" while nothing new is to be said
+    def failed(self, advice):
+        now = int(time.time())
+        if not self.code:
+            self.since = now
+        self.failures += 1
+        changed = self.code is not None and outage_family(advice.code) != outage_family(self.code)
+        self.code = advice.code
+        if not self.reported:
+            # A failure the tool cannot retry away is reported at once, one it can waits for the next check to confirm it
+            if advice.retryable and self.failures < self.confirm_checks:
+                return ""
+            self.reported = True
+            self.reported_at = now
+            return "full"
+        if changed:
+            self.reported_at = now
+            return "changed" if advice.retryable else "full"
+        # Timed rather than counted, because a failing run usually retries on a different interval than a healthy one
+        if now - self.reported_at >= OUTAGE_REMINDER_SECONDS:
+            self.reported_at = now
+            return "reminder"
+        return ""
+
+    # Clears the failure after a successful check and returns how long it lasted, or None when nothing was reported
+    def recovered(self):
+        lasted = int(time.time()) - self.since if self.code and self.reported else None
+        self.code = None
+        self.since = 0
+        self.reported_at = 0
+        self.failures = 0
+        self.reported = False
+        return lasted
+
+
+# Reports that nothing changed, so a quiet run still says it is alive on the liveness cadence
+def print_liveness_banner(message):
+    print(f"* {sanitize_error_text(message)}")
+    print_cur_ts("Liveness check, timestamp:\t")
+
+
+# Reminds about a lasting failure once an hour, so a broken run still says it is alive without repeating itself
+def print_outage_liveness(target, advice, since, failures=0):
+    count = f", {failures} failed {'check' if failures == 1 else 'checks'}" if failures else ""
+    print(f"* Monitoring degraded for {target}. {advice.summary} since {get_date_from_ts(since)}{count}")
+    print_cur_ts("Liveness check, timestamp:\t")
+
+
+# Notes that a reported outage now fails differently, in one line rather than a second full report
+def print_outage_change(target, advice):
+    print(f"* Monitoring failure changed for {target}. {advice.summary}")
+
+
+# Reports that a failure cleared, since a throttled failure no longer stops printing when it is over
+def print_outage_recovery(target, lasted):
+    print(f"* Monitoring recovered for {target} after {display_time(max(1, lasted))}")
+    print_cur_ts("Timestamp:\t\t\t")
+
+
+# Yields the exception and each cause or context up to max_depth, to walk an exception chain
+def iter_exc_chain(error, max_depth=8):
+    current = error
+    for _ in range(max_depth):
+        if current is None:
+            return
+        yield current
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+
+
+# Reports whether this process hit the local file descriptor limit rather than a remote failure
+def is_too_many_open_files(error):
+    for current in iter_exc_chain(error):
+        if isinstance(current, OSError) and getattr(current, "errno", None) == 24:
+            return True
+        # A server controls the wording of its own reply, so its text never proves a local limit here
+        if getattr(current, "response", None) is not None:
+            continue
+        message = str(current).lower()
+        if "too many open files" in message or re.search(r"\berrno 24\b", message):
+            return True
+    return False
+
+
+# Returns the next step for a failure no rule recognized, since a run already printing the technical cause cannot be told to re-run for it
+def unknown_failure_fix(debug_command):
+    return "Open an issue with this output if the failure continues" if DEBUG_MODE else f"Run the command again with {debug_command} to see the technical cause"
+
+
+# Maps one exception and operation context to stable recovery advice
+def classify_recovery_error(error, context="runtime", detail="", install_context=None):
+    if isinstance(error, RecoveryError):
+        return error.advice
+    selected_context = str(context or "unknown").casefold()
+    # The caller knows which step failed, the exception only knows how, so its own text wins when it has one
+    detail = str(detail) if detail else f"{type(error).__name__}: {error}"
+    token_command = render_command(["--set-github-token"], install_context=install_context)
+    webhook_command = render_command(["--set-webhook-url"], install_context=install_context)
+    config_command = render_command(["--generate-config", "github_monitor.conf"], install_context=install_context, include_paths=False)
+    debug_command = render_command(["--debug"], install_context=install_context)
+    # Checked ahead of every context, since a local descriptor limit is not a failure of whatever call hit it
+    if error is not None and is_too_many_open_files(error):
+        return make_recovery_advice("resource.exhausted", "This process ran out of file descriptors, which is a local limit and not a GitHub problem", recovery_fix_with_guide("Raise the file descriptor limit, for example with 'ulimit -n 4096', or set LimitNOFILE= if you run under systemd, then restart the tool", DIAGNOSTICS_GUIDE_URL), False, detail)
+    if selected_context == "connectivity":
+        # Classified from the error, because a failed endpoint check has one answer whatever the exception was
+        timed_out = isinstance(error, (req.Timeout, TimeoutError, socket.timeout))
+        summary = "The connectivity endpoint did not answer in time" if timed_out else "The connectivity endpoint could not be reached"
+        # No guide, because no page covers this check and the doctor report already ends with the troubleshooting link
+        return make_recovery_advice("network.timeout" if timed_out else "network.unavailable", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail)
+    if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
+        return make_recovery_advice("network.timeout", "The network request timed out", recovery_fix_with_guide("Check connectivity and increase the configured timeout before trying again", DIAGNOSTICS_GUIDE_URL), True, detail)
+    if isinstance(error, (req.ConnectionError, socket.gaierror)):
+        return make_recovery_advice("network.unavailable", "The configured service could not be reached", recovery_fix_with_guide("Check the network and configured service URL then try again", DIAGNOSTICS_GUIDE_URL), True, detail)
+    if isinstance(error, req.RequestException):
+        return make_recovery_advice("network.unavailable", "The configured service request failed", recovery_fix_with_guide("Check the network and configured service URL then try again", DIAGNOSTICS_GUIDE_URL), True, detail)
+    if isinstance(error, BadCredentialsException):
+        return make_recovery_advice("auth.github_token_invalid", "GitHub rejected the configured token", recovery_fix_with_guide(f"Create or review the token then run: {token_command}", AUTH_GUIDE_URL), False, detail)
+    if isinstance(error, RateLimitExceededException):
+        return make_recovery_advice("github.rate_limited", "GitHub API rate limiting paused the request", recovery_fix_with_guide("Wait for the reported reset time before trying again", DIAGNOSTICS_GUIDE_URL), True, detail)
+    if isinstance(error, UnknownObjectException):
+        code = "target.not_found" if selected_context == "target" else "github.not_found"
+        return make_recovery_advice(code, "GitHub could not find the requested resource", recovery_fix_with_guide("Check the target name and token access then try again", DIAGNOSTICS_GUIDE_URL), False, detail)
+    if isinstance(error, GithubException):
+        status = getattr(error, "status", None)
+        if status == 403:
+            return make_recovery_advice("github.forbidden", "GitHub refused access to the requested resource", recovery_fix_with_guide("Check token permissions and resource visibility", AUTH_GUIDE_URL), False, detail)
+        retryable = status is None or (isinstance(status, int) and status >= 500)
+        return make_recovery_advice("github.api_error", "GitHub returned an API error", recovery_fix_with_guide(f"Try again or run {debug_command} for sanitized technical detail", DIAGNOSTICS_GUIDE_URL), retryable, detail)
+    if isinstance(error, smtplib.SMTPAuthenticationError):
+        return make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", recovery_fix_with_guide("Check SMTP_USER and replace SMTP_PASSWORD before sending another test", SMTP_GUIDE_URL), False, detail)
+    if isinstance(error, PermissionError):
+        return make_recovery_advice("file.unwritable", "A required file could not be written", recovery_fix_with_guide("Check the destination path and file permissions", CONFIG_GUIDE_URL), False, detail)
+    if isinstance(error, FileNotFoundError):
+        code = "config.missing" if selected_context == "config" else "dotenv.missing" if selected_context == "dotenv" else "file.unreadable"
+        return make_recovery_advice(code, "A required file could not be found", recovery_fix_with_guide("Check the configured path and try again", CONFIG_GUIDE_URL), False, detail)
+    if selected_context == "github_token":
+        return make_recovery_advice("auth.github_token_invalid", "GitHub token setup could not be completed", recovery_fix_with_guide(f"Correct the problem then run: {token_command}", AUTH_GUIDE_URL), False, detail)
+    if selected_context == "webhook":
+        return make_recovery_advice("webhook.invalid", "Webhook setup could not be completed", recovery_fix_with_guide(f"Check the HTTPS destination then run: {webhook_command}", WEBHOOK_GUIDE_URL), False, detail)
+    if selected_context == "email":
+        # A settings problem is reported as itself. Only a failure that actually reached the network is
+        # described as one, so an unconfigured mail server is not reported as an unreachable host
+        # A server that refused the message is not a server that could not be reached, so the fix names the addresses
+        if isinstance(error, (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError)):
+            return make_recovery_advice("smtp.delivery", "The mail server refused the message", recovery_fix_with_guide("Check SENDER_EMAIL and RECEIVER_EMAIL, then confirm the server accepts mail from this sender", SMTP_GUIDE_URL), False, detail)
+        if isinstance(error, MailConfigurationError):
+            return make_recovery_advice("smtp.invalid", sanitize_error_text(error), recovery_fix_with_guide("Set the named settings in the config file, or run --setup, then run the command again", SMTP_GUIDE_URL), False, detail)
+        return make_recovery_advice("smtp.connection", "The SMTP server could not be reached", recovery_fix_with_guide("Check SMTP_HOST, SMTP_PORT and SMTP_SSL, then confirm the host is reachable from this machine", SMTP_GUIDE_URL), True, detail)
+    if selected_context == "config":
+        # The parser already names the line and setting, so the summary carries it instead of only --debug
+        reason = sanitize_error_text(error)
+        summary = f"The selected configuration is invalid: {reason}" if reason else "The selected configuration is invalid"
+        return make_recovery_advice("config.invalid", summary, recovery_fix_with_guide(f"Correct the reported setting, or generate a fresh configuration with: {config_command}", CONFIG_GUIDE_URL), False, detail)
+    if selected_context == "timezone":
+        return make_recovery_advice("timezone.invalid", "The configured timezone is invalid", recovery_fix_with_guide("Install tzlocal for automatic detection or set a valid pytz timezone", CONFIG_GUIDE_URL), False, detail)
+    return make_recovery_advice("unknown", "An unexpected error stopped the requested action", recovery_fix_with_guide(unknown_failure_fix(debug_command), SUPPORT_GUIDE_URL), False, detail)
 
 
 # Returns whether a webhook URL is a complete private HTTPS link
@@ -1955,6 +3471,8 @@ def validate_webhook_url(url: Any = None) -> bool:
         return False
     try:
         parsed = urlsplit(selected_url.strip())
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            return False
     except ValueError:
         return False
     return parsed.scheme.casefold() == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password and bool(parsed.path.strip("/"))
@@ -2007,18 +3525,190 @@ def _startup_webhook_notification_categories():
     return [label for enabled, label in settings if WEBHOOK_ENABLED and enabled]
 
 
-# Formats one notification row with unstarred continuation lines when needed
-def _format_startup_notification_line(label, categories):
-    prefix = f"* {label:<30}"
-    state = "On (" + ", ".join(categories) + ")" if categories else "Off"
-    return textwrap.fill(state, width=100, initial_indent=prefix, subsequent_indent=" " * len(prefix), break_long_words=False, break_on_hyphens=False)
+@dataclass(frozen=True)
+class StartupSummaryRow:
+    label: str
+    value: str
+    concise: bool = False
+    full: bool = True
 
 
-# Builds compact startup notification lines for both delivery channels
-def _startup_notification_summary_lines():
-    enabled_email = _startup_email_notification_categories()
-    enabled_webhook = _startup_webhook_notification_categories()
-    return [_format_startup_notification_line("Notifications (email):", enabled_email), _format_startup_notification_line("Notifications (webhook):", enabled_webhook)]
+# Records where one secret resolved from and traces it, so a later layer overwrites the earlier answer instead of adding to it
+def record_secret_source(name, source, value=None):
+    if source == "command line" and DOTENV_RELOAD_STATE:
+        DOTENV_RELOAD_STATE["base"][name] = globals().get(name) if value is None else value
+        DOTENV_RELOAD_STATE.setdefault("base_sources", {})[name] = source
+    if source not in SECRET_SOURCE_ORDER:
+        raise ValueError(f"Unsupported secret source: {source}")
+    resolved = globals().get(name) if value is None else value
+    # A placeholder is not a value, so it earns neither a source nor a row
+    if not secret_is_set(resolved):
+        SECRET_SOURCES.pop(name, None)
+        return
+    SECRET_SOURCES[name] = source
+    debug_print("Secret resolution", name=name, source=source, **secret_fields(resolved))
+
+
+# Groups every resolved secret name into the four buckets the summary prints, one per source that can supply one
+def startup_secret_buckets():
+    from_dotenv, from_environment, from_config, from_command_line = [], [], [], []
+    for name, source in sorted(SECRET_SOURCES.items()):
+        if not secret_is_set(globals().get(name)):
+            continue
+        if str(source).startswith("dotenv file"):
+            from_dotenv.append(name)
+        elif source == "environment":
+            from_environment.append(name)
+        elif source == "command line":
+            from_command_line.append(name)
+        else:
+            from_config.append(name)
+    return from_dotenv, from_environment, from_config, from_command_line
+
+
+# Renders the --help examples: one heading per task, then a comment and the command it describes
+def render_help_examples(groups, guide_url):
+    blocks = []
+    for title, entries in groups:
+        block = [f"{title}:"]
+        for comment, command in entries:
+            if len(block) > 1:
+                block.append("")
+            block.extend(f"  # {line}" for line in comment.split("\n"))
+            if command:
+                block.append(f"  {command}")
+        blocks.append("\n".join(block))
+    return "Examples:\n\n" + "\n\n".join(blocks) + f"\n\nGuide: {guide_url}\n"
+
+
+# Returns the --help epilog, listing the commands worth knowing rather than every command there is
+def help_examples():
+    prefix = render_command([], include_paths=False)
+    groups = (
+        ("Getting started", (
+            ("Guided setup, recommended for the first run", f"{prefix} --setup"),
+            ("Or save a GitHub token through a hidden prompt", f"{prefix} --set-github-token"),
+            ("Check the setup before relying on it", f"{prefix} --doctor <github_target>"),
+            ("Start monitoring", f"{prefix} <github_target>"),
+        )),
+        ("Notifications", (
+            ("Email on profile changes and new events", f"{prefix} <github_target> -p -s"),
+            ("Send one test email", f"{prefix} --send-test-email"),
+            ("Send one test webhook", f"{prefix} --send-test-webhook"),
+        )),
+        ("Information and diagnostics", (
+            ("List the user's repositories with stats", f"{prefix} -r <github_target>"),
+            ("Trace what the tool is doing", f"{prefix} <github_target> --debug"),
+        )),
+    )
+    return render_help_examples(groups, QUICK_START_GUIDE_URL)
+
+
+# Hides the middle of an address's local part, so a log can be shared while the reader can still spot a typo
+def mask_email_address(address):
+    text = str(address or "").strip()
+    local, at_sign, domain = text.partition("@")
+    if not at_sign or not local or not domain:
+        return text
+    masked = f"{local[0]}{'*' * (len(local) - 2)}{local[-1]}" if len(local) > 2 else f"{local[0]}{'*' * (len(local) - 1)}"
+    return f"{masked}@{domain}"
+
+
+# Names the mail server this run would use, leaving out the account that signs in to it
+def startup_email_transport():
+    if not SMTP_HOST or not SMTP_PORT:
+        return "Not configured"
+    return f"{SMTP_HOST}:{SMTP_PORT} ({'STARTTLS' if SMTP_SSL else 'TLS off'})"
+
+
+# Names the configured webhook service and whether the channel is switched on, which are two separate settings
+def startup_webhook_provider():
+    if not normalized_webhook_provider() or not str(WEBHOOK_URL or "").strip():
+        return "Not configured"
+    return f"{webhook_provider_display_name()} ({'enabled' if WEBHOOK_ENABLED else 'disabled'})"
+
+
+# Builds concise and complete startup rows without exposing private values
+def build_startup_summary(target, config_path, env_path, output_path):
+    install_context = detect_install_context()
+    email_categories = _startup_email_notification_categories()
+    webhook_categories = _startup_webhook_notification_categories()
+    email_state = "On (" + ", ".join(email_categories) + ")" if email_categories else "Off"
+    webhook_state = "On (" + ", ".join(webhook_categories) + ")" if webhook_categories else "Off"
+    from_dotenv, from_environment, from_config, from_command_line = startup_secret_buckets()
+    return [
+        StartupSummaryRow("Target", str(target), concise=True),
+        StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
+        StartupSummaryRow("Notifications (email)", email_state, concise=True),
+        StartupSummaryRow("Email transport", startup_email_transport()),
+        StartupSummaryRow("Email recipient", mask_email_address(RECEIVER_EMAIL) if RECEIVER_EMAIL else "Not configured"),
+        StartupSummaryRow("Notifications (webhook)", webhook_state, concise=True),
+        StartupSummaryRow("Webhook provider", startup_webhook_provider()),
+        StartupSummaryRow("Delivery confirmations", str(DELIVERY_CONFIRMATIONS)),
+        StartupSummaryRow("Output", str(output_path) if output_path else "Terminal only (logging disabled)", concise=True, full=False),
+        StartupSummaryRow("Output logging", str(output_path) if output_path else "Disabled"),
+        StartupSummaryRow("Config", str(config_path) if config_path else ("Discovery disabled" if CONFIG_DISCOVERY_DISABLED else "None"), concise=True),
+        StartupSummaryRow("Dotenv", str(env_path) if env_path else "None", concise=True),
+        StartupSummaryRow("GitHub API URL", str(GITHUB_API_URL)),
+        StartupSummaryRow("Track repository changes", str(TRACK_REPOS_CHANGES)),
+        StartupSummaryRow("Verify repository closures", str(VERIFY_REPOSITORY_CLOSURES)),
+        StartupSummaryRow("Closure verification budget", f"{REPOSITORY_CLOSURE_REQUEST_BUDGET} requests/check (shared)" if TRACK_REPOS_CHANGES and VERIFY_REPOSITORY_CLOSURES else "Inactive"),
+        StartupSummaryRow("Track contribution changes", str(TRACK_CONTRIB_CHANGES)),
+        StartupSummaryRow("Monitor GitHub events", str(not DO_NOT_MONITOR_GITHUB_EVENTS)),
+        StartupSummaryRow("Owned repositories only", str(not GET_ALL_REPOS)),
+        StartupSummaryRow("Liveness output", display_time(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_INTERVAL else "Disabled", concise=bool(LIVENESS_CHECK_INTERVAL)),
+        StartupSummaryRow("CSV output", str(CSV_FILE) if CSV_FILE else "Disabled", concise=bool(CSV_FILE)),
+        StartupSummaryRow("Terminal truncation", f"{TRUNCATE_CHARS} chars" if TRUNCATE_CHARS else "Disabled", concise=bool(TRUNCATE_CHARS)),
+        StartupSummaryRow("Process id", str(os.getpid())),
+        StartupSummaryRow("Python version", platform.python_version()),
+        StartupSummaryRow("Operating system", f"{platform.platform(terse=True)} ({platform.machine()})"),
+        StartupSummaryRow("Local timezone", str(LOCAL_TIMEZONE)),
+        StartupSummaryRow("Install method", install_method_display_name(install_context.install_method)),
+        StartupSummaryRow("Secrets from dotenv", ", ".join(from_dotenv) if from_dotenv else "None"),
+        StartupSummaryRow("Secrets from environment", ", ".join(from_environment) if from_environment else "None"),
+        StartupSummaryRow("Secrets from config file", ", ".join(from_config) if from_config else "None"),
+        StartupSummaryRow("Secrets from command line", ", ".join(from_command_line) if from_command_line else "None"),
+        StartupSummaryRow("TLS verification", "On" if VERIFY_SSL else "Off, server certificates are not checked", concise=not VERIFY_SSL),
+        StartupSummaryRow("ASCII log separators", f"{ascii_log_separators_enabled()} (mode: {ASCII_LOG_SEPARATORS})"),
+        StartupSummaryRow("Coloured output", f"{COLOR_ENABLED} (setting: {COLORED_OUTPUT})"),
+        StartupSummaryRow("Verbose mode", str(VERBOSE_MODE), concise=bool(VERBOSE_MODE)),
+        StartupSummaryRow("Debug mode", str(DEBUG_MODE), concise=bool(DEBUG_MODE)),
+        StartupSummaryRow("More details", "use --verbose or --debug", concise=True, full=False),
+    ]
+
+
+# Rows that detail the channel named right above them, indented so the block reads as one setting with its details
+STARTUP_SUMMARY_NESTED_LABELS = ("Email transport", "Email recipient", "Email images", "Webhook provider", "ntfy images")
+
+
+# Formats one startup summary row with aligned plain ASCII columns
+def format_startup_summary_row(row):
+    indent = "  " if row.label in STARTUP_SUMMARY_NESTED_LABELS else ""
+    prefix = f"* {indent}{(row.label + ':'):<{30 - len(indent)}}"
+    if row.label in ("Notifications (email)", "Notifications (webhook)"):
+        return textwrap.fill(row.value, width=100, initial_indent=prefix, subsequent_indent=" " * len(prefix), break_long_words=False, break_on_hyphens=False) + "\n"
+    return f"{prefix}{row.value}\n"
+
+
+# Routes concise or complete startup rows independently to terminal and log destinations
+def emit_startup_summary(rows, show_full, stream=None):
+    destination = sys.stdout if stream is None else stream
+    log_only = getattr(destination, "log_only", None)
+    terminal_only = getattr(destination, "terminal_only", None)
+    # A stream that does not split its output has no log file to hold the full view, so those writes go nowhere
+    routed = log_only is not None and terminal_only is not None
+    write_log = log_only or (lambda line: None)
+    write_terminal = terminal_only or destination.write
+    for row in rows:
+        line = format_startup_summary_row(row)
+        if row.full:
+            write_log(line)
+        if row.full if show_full else row.concise:
+            write_terminal(line)
+    write_log("\n")
+    write_terminal("\n")
+    if not routed:
+        destination.flush()
 
 
 # Detects Discord and public ntfy webhook providers from distinctive URL shapes
@@ -2050,12 +3740,6 @@ def webhook_event_enabled(notification_type: str) -> bool:
     return bool(WEBHOOK_ENABLED and settings.get(notification_type, False))
 
 
-# Returns whether at least one webhook alert category is enabled
-def webhook_notifications_enabled() -> bool:
-    categories = (WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_ERROR_NOTIFICATION)
-    return bool(WEBHOOK_ENABLED and any(categories))
-
-
 # Parses a webhook rate-limit delay and caps untrusted server values to a short wait
 def webhook_retry_after_seconds(response: Any) -> float:
     candidates = []
@@ -2064,7 +3748,8 @@ def webhook_retry_after_seconds(response: Any) -> float:
         candidates.append(headers.get("Retry-After"))
     try:
         payload = response.json()
-    except Exception:
+    except Exception as exc:
+        debug_swallowed_exception("Webhook retry response parsing", exc)
         payload = None
     if isinstance(payload, dict):
         candidates.append(payload.get("retry_after"))
@@ -2077,7 +3762,8 @@ def webhook_retry_after_seconds(response: Any) -> float:
             try:
                 retry_at = parsedate_to_datetime(str(candidate))
                 seconds = (retry_at - datetime.now(retry_at.tzinfo)).total_seconds()
-            except Exception:
+            except Exception as exc:
+                debug_swallowed_exception("Webhook retry timestamp parsing", exc)
                 continue
         return max(0.0, min(seconds, WEBHOOK_MAX_RETRY_AFTER_SECONDS))
     return WEBHOOK_FALLBACK_RETRY_SECONDS
@@ -2098,9 +3784,28 @@ def format_payload(template: Any, payload: dict) -> Any:
             return payload.get("color", 0x2F81F7)
         try:
             return template.format(**payload)
-        except KeyError:
-            return template
+        # A placeholder the payload cannot fill, such as {title[9]} or the positional {0}, is a setting
+        # to correct rather than a delivery failure, so it names the template text that could not render
+        except Exception as exc:
+            raise ValueError(f"WEBHOOK_TEMPLATE cannot render '{template}': {type(exc).__name__}: {exc}. Use plain placeholders such as {{title}} and {{description}}") from exc
     return template
+
+
+# Parses legacy and current Discord templates before validating their object shape
+def render_discord_template(template, values):
+    if isinstance(template, str):
+        try:
+            template = json.loads(template)
+        except json.JSONDecodeError:
+            try:
+                # Legacy templates doubled JSON braces for str.format, while quoted values remain templates
+                unescaped = re.sub(r'("(?:\\.|[^"\\])*")|(\{\{|\}\})', lambda match: match.group(1) if match.group(1) is not None else match.group(2)[0], template)
+                template = json.loads(unescaped)
+            except json.JSONDecodeError as exc:
+                raise ValueError("WEBHOOK_TEMPLATE must be a dictionary or a JSON object string") from exc
+    if not isinstance(template, dict):
+        raise ValueError("WEBHOOK_TEMPLATE must be a dictionary or a JSON object string")
+    return format_payload(template, values)
 
 
 # Returns a configuration error for unsafe or unsupported webhook customization
@@ -2113,8 +3818,8 @@ def validate_webhook_customization(provider: Any = None) -> Optional[str]:
             return "WEBHOOK_AVATAR_URL must be a string"
         if WEBHOOK_AVATAR_URL.strip() and not validate_webhook_url(WEBHOOK_AVATAR_URL):
             return "WEBHOOK_AVATAR_URL must contain a complete HTTPS link without embedded credentials"
-        if not isinstance(WEBHOOK_TEMPLATE, (dict, list, str)):
-            return "WEBHOOK_TEMPLATE must be a dictionary, list or string"
+        if not isinstance(WEBHOOK_TEMPLATE, (dict, str)):
+            return "WEBHOOK_TEMPLATE must be a dictionary or a JSON object string"
     if not isinstance(WEBHOOK_TRANSFORMS, (list, tuple)):
         return "WEBHOOK_TRANSFORMS must be a list or tuple"
     for index, transform in enumerate(WEBHOOK_TRANSFORMS):
@@ -2122,6 +3827,14 @@ def validate_webhook_customization(provider: Any = None) -> Optional[str]:
             return f"WEBHOOK_TRANSFORMS entry {index + 1} must contain a field name and string method name"
         if transform[1].startswith("_") or not callable(getattr("", transform[1], None)):
             return f"WEBHOOK_TRANSFORMS entry {index + 1} uses an unsupported string method"
+    if selected_provider == "discord":
+        try:
+            render_discord_template(WEBHOOK_TEMPLATE, {"title": "", "description": "", "username": "", "avatar_url": "", "image_url": "", "fields_str": "", "fields": [], "color": 0, "timestamp": "", "version": VERSION})
+        # The rendering error names the placeholder to correct, which the shape message cannot
+        except ValueError as exc:
+            return str(exc)
+        except TypeError:
+            return "WEBHOOK_TEMPLATE must be a dictionary or a JSON object string"
     return None
 
 
@@ -2155,15 +3868,19 @@ def build_webhook_values(title: str, description: str, notification_type: str, i
 def build_webhook_payload(title: str, description: str, notification_type: str, image_url: str = "", payload_values: Optional[dict] = None) -> Any:
     values = build_webhook_values(title, description, notification_type, image_url) if payload_values is None else payload_values
     try:
-        payload = format_payload(WEBHOOK_TEMPLATE, values)
+        payload = render_discord_template(WEBHOOK_TEMPLATE, values)
+    # The named placeholder error is the one a user can act on, so it reaches the caller unchanged
+    except ValueError:
+        raise
     except Exception as exc:
         raise ValueError("WEBHOOK_TEMPLATE could not be formatted with the supported placeholders") from exc
-    if isinstance(payload, dict):
-        if payload.get("username") == "":
-            payload.pop("username")
-        if payload.get("avatar_url") == "":
-            payload.pop("avatar_url")
-        payload["allowed_mentions"] = {"parse": []}
+    if not isinstance(payload, dict):
+        raise ValueError("WEBHOOK_TEMPLATE must be a JSON object or a dictionary")
+    if payload.get("username") == "":
+        payload.pop("username")
+    if payload.get("avatar_url") == "":
+        payload.pop("avatar_url")
+    payload["allowed_mentions"] = {"parse": []}
     return payload
 
 
@@ -2176,6 +3893,30 @@ def truncate_utf8_bytes(text: str, max_bytes: int, suffix: str = "") -> str:
     if len(encoded_suffix) >= max_bytes:
         return encoded_suffix[:max_bytes].decode("utf-8", errors="ignore")
     return encoded[:max_bytes - len(encoded_suffix)].decode("utf-8", errors="ignore") + suffix
+
+
+# Converts one HTML anchor to Discord markdown, leaving a self-labeled link bare so Discord turns it into a link itself
+def anchor_to_discord_markdown(url: str, inner_html: str) -> str:
+    target = html.unescape(str(url or "")).strip()
+    # An image has no markdown equivalent in a Discord embed body, so its alt text stands in as the link label
+    inner = re.sub(r"(?is)<img\s[^>]*?alt=[\"']([^\"']*)[\"'][^>]*>", r"\1", str(inner_html or ""))
+    label = " ".join(html.unescape(re.sub(r"(?s)<[^>]+>", "", inner)).split())
+    # Discord prints a masked link as plain text when its label repeats the destination, while a bare URL always links
+    if not target or not label or label == target:
+        return target or label
+    return f"[{inner}]({target})"
+
+
+# Converts one HTML email body to the Discord markdown subset, so a Discord alert reads like the email
+def html_body_to_discord_markdown(body_html: str) -> str:
+    text = re.sub(r"(?is)</?(?:html|head|body)\s*>", "", str(body_html or ""))
+    text = re.sub(r"(?is)<a\s[^>]*?href=[\"']([^\"']*)[\"'][^>]*>(.*?)</a>", lambda m: anchor_to_discord_markdown(m.group(1), m.group(2)), text)
+    text = re.sub(r"(?is)<b\s*>(.*?)</b\s*>", lambda m: f"**{m.group(1)}**" if m.group(1).strip() else m.group(1), text)
+    text = re.sub(r"(?is)<i\s*>(.*?)</i\s*>", lambda m: f"*{m.group(1)}*" if m.group(1).strip() else m.group(1), text)
+    text = re.sub(r"(?is)<br\s*/?>", "\n", text)
+    # Anything still tag-shaped is layout the markdown body has no use for, such as a stray paragraph or list wrapper
+    text = re.sub(r"(?s)<[^>]+>", "", text)
+    return html.unescape(text).strip()
 
 
 # Builds one bounded ntfy title and message pair
@@ -2246,16 +3987,87 @@ def build_webhook_headers(provider: str, payload: dict) -> dict:
     return headers
 
 
-# Prints one webhook configuration or delivery failure without exposing private values
-def print_webhook_error(message: Any) -> None:
-    print(f"Error sending webhook: {sanitize_webhook_text(message)}")
+# Returns the HTTP status a webhook failure carries, whether it arrived as a response or as an exception holding one
+def webhook_failure_status(source: Any) -> Optional[int]:
+    status = getattr(source, "status_code", None)
+    if not isinstance(status, int):
+        status = getattr(getattr(source, "response", None), "status_code", None)
+    return status if isinstance(status, int) else None
 
 
+# Returns the service response body a webhook failure carries, kept for the technical detail line --debug prints
+def webhook_failure_detail(source: Any) -> str:
+    body = getattr(getattr(source, "response", source), "text", "")
+    return sanitize_webhook_text(body)[:200] if isinstance(body, str) else ""
+
+
+# Maps one webhook configuration or delivery failure to the advice naming the setting or condition to check
+def webhook_failure_advice(message: Any, source: Any = None) -> RecoveryAdvice:
+    origin = message if source is None else source
+    summary = sanitize_webhook_text(message)
+    lowered = summary.casefold()
+    webhook_command = render_command(["--send-test-webhook"])
+    detail = webhook_failure_detail(origin) or summary
+    status = webhook_failure_status(origin)
+    if status == 429 or "rate limit" in lowered:
+        return make_recovery_advice("webhook.rate_limited", "The webhook service is rate limiting deliveries", recovery_fix_with_guide("Reduce how many alert types are enabled, or wait for the service to accept deliveries again", WEBHOOK_GUIDE_URL), True, detail)
+    if any(term in lowered for term in ("must contain", "must be discord", "could not be formatted", "header", "priority", "tags")):
+        return make_recovery_advice("webhook.invalid", summary or "The webhook configuration is not usable", recovery_fix_with_guide(f"Check WEBHOOK_URL, WEBHOOK_PROVIDER and the alert settings then run: {webhook_command}", WEBHOOK_GUIDE_URL), False, detail)
+    if any(term in lowered for term in ("could not be reached", "connection", "timed out", "timeout")):
+        return make_recovery_advice("webhook.connection", "The webhook service could not be reached", recovery_fix_with_guide("Check connectivity and the webhook host, then try again", WEBHOOK_GUIDE_URL), True, detail)
+    return make_recovery_advice("webhook.rejected", summary or "The webhook service refused the delivery", recovery_fix_with_guide(f"Confirm the webhook still exists and the URL is current then run: {webhook_command}", WEBHOOK_GUIDE_URL), status is not None and status >= 500, detail)
+
+
+# Reports one webhook configuration or delivery failure through the recovery block, without exposing private values
+def print_webhook_error(message: Any, source: Any = None) -> None:
+    print_recovery_advice(webhook_failure_advice(message, source))
+
+
+# Sends one webhook request with the destination, deadline and redirect policy every delivery shares
+def post_webhook_request(destination=None, **request_kwargs: Any) -> Any:
+    destination = str(WEBHOOK_URL if destination is None else destination).strip()
+    if not validate_webhook_url(destination):
+        raise req.exceptions.InvalidURL("WEBHOOK_URL must contain a complete HTTPS link")
+    debug_http_request("POST", destination, "webhook delivery", WEBHOOK_TIMEOUT_SECONDS, headers=request_kwargs.get("headers"), params=request_kwargs.get("params"), token=NTFY_ACCESS_TOKEN or None, host_only=True)
+    return WEBHOOK_SESSION.post(destination, timeout=WEBHOOK_TIMEOUT_SECONDS, verify=VERIFY_SSL, allow_redirects=False, **request_kwargs)
+
+
+_DELIVERY_SECRET_VALUES: contextvars.ContextVar[tuple] = contextvars.ContextVar("delivery_secret_values", default=())
+
+
+# Keeps in-flight credentials available to error redaction across settings reloads
+def _retain_webhook_secrets(deliver):
+    @functools.wraps(deliver)
+    # Restores the previous redaction scope after this delivery finishes
+    def retained(*args, **kwargs):
+        settings = globals().copy()
+        values = [settings.get(name) for name in SECRET_KEYS]
+        headers = settings.get("WEBHOOK_HEADERS")
+        if isinstance(headers, dict):
+            for name, value in headers.items():
+                if isinstance(name, str) and name.casefold() == "authorization" and isinstance(value, str):
+                    values.append(value)
+                    parts = value.split(None, 1)
+                    if len(parts) == 2 and parts[0].casefold() in ("bearer", "basic"):
+                        values.append(parts[1])
+        # The same minimum length every other redaction path applies, so a short secret cannot blank out ordinary words
+        secrets = tuple(value for value in values if isinstance(value, str) and len(value) >= MIN_REDACTABLE_SECRET_LENGTH and not value.startswith("your_"))
+        token = _DELIVERY_SECRET_VALUES.set(_DELIVERY_SECRET_VALUES.get() + secrets)
+        try:
+            return deliver(*args, **kwargs)
+        finally:
+            _DELIVERY_SECRET_VALUES.reset(token)
+    return retained
+
+
+@_retain_webhook_secrets
 # Sends one webhook through an isolated bounded retry path that never uses GitHub retries
-def send_webhook(title: str, description: str, notification_type: str = "event", force: bool = False, sleeper: Optional[Callable[[float], None]] = None, image_url: str = "") -> int:
+def send_webhook(title: str, description: str, notification_type: str = "event", force: bool = False, sleeper: Optional[Callable[[float], None]] = None, image_url: str = "", report_delivery: bool = True, discord_description: str = "") -> int:
     if not force and not webhook_event_enabled(notification_type):
+        verbose_print(f"Webhook delivery skipped because {notification_type} alerts are disabled")
         return 1
-    if not validate_webhook_url():
+    destination = str(WEBHOOK_URL or "").strip()
+    if not validate_webhook_url(destination):
         print_webhook_error("WEBHOOK_URL must contain a complete HTTPS link")
         return 1
     provider = normalized_webhook_provider()
@@ -2270,40 +4082,56 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
     if header_error is not None:
         print_webhook_error(header_error)
         return 1
+    # Discord renders markdown, so it gets the email's formatting while ntfy keeps the plain body it can display
+    effective_description = discord_description if provider == "discord" and discord_description else description
     try:
-        webhook_values = build_webhook_values(title, description, notification_type, image_url)
+        webhook_values = build_webhook_values(title, effective_description, notification_type, image_url)
         request_headers = build_webhook_headers(provider, webhook_values)
-        discord_payload = build_webhook_payload(title, description, notification_type, image_url, webhook_values) if provider == "discord" else None
+        discord_payload = build_webhook_payload(title, effective_description, notification_type, image_url, webhook_values) if provider == "discord" else None
     except ValueError as exc:
         print_webhook_error(exc)
         return 1
     sleep_func = time.sleep if sleeper is None else sleeper
     ntfy_title, ntfy_message = build_ntfy_webhook_message(str(webhook_values["title"]), str(webhook_values["description"])) if provider == "ntfy" else ("", "")
     last_error: Any = None
+    if destination != str(WEBHOOK_URL or "").strip():
+        print_recovery_error(context="webhook", detail="Webhook settings changed while preparing the delivery. Retry the notification with the current settings")
+        return 1
     for attempt in range(WEBHOOK_MAX_ATTEMPTS):
         try:
+            attempt_number = attempt + 1
+            debug_print("Webhook delivery", channel=provider, host=diagnostic_endpoint(destination, host_only=True), attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", timeout=f"{WEBHOOK_TIMEOUT_SECONDS}s")
             if provider == "ntfy":
-                response = WEBHOOK_SESSION.post(str(WEBHOOK_URL).strip(), data=ntfy_message.encode("utf-8"), params={"title": ntfy_title}, headers=request_headers, timeout=WEBHOOK_TIMEOUT_SECONDS)
-            elif isinstance(discord_payload, str):
-                response = WEBHOOK_SESSION.post(str(WEBHOOK_URL).strip(), data=discord_payload, headers=request_headers, timeout=WEBHOOK_TIMEOUT_SECONDS)
+                response = post_webhook_request(destination=destination, data=ntfy_message.encode("utf-8"), params={"title": ntfy_title}, headers=request_headers)
             else:
-                response = WEBHOOK_SESSION.post(str(WEBHOOK_URL).strip(), json=discord_payload, headers=request_headers, timeout=WEBHOOK_TIMEOUT_SECONDS)
+                response = post_webhook_request(destination=destination, json=discord_payload, headers=request_headers)
+            retryable = response.status_code == 429 or 500 <= response.status_code <= 599
+            debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", status=response.status_code, retryable=retryable)
             if 200 <= response.status_code <= 299:
+                if report_delivery:
+                    verbose_delivery_print(f"Webhook sent through {webhook_provider_display_name(provider)}")
+                debug_print("Webhook delivery", channel=provider, outcome="OK", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 return 0
             last_error = response
-            retryable = response.status_code == 429 or 500 <= response.status_code <= 599
             if not retryable or attempt == WEBHOOK_MAX_ATTEMPTS - 1:
-                print_webhook_error(f"HTTP {response.status_code}: {getattr(response, 'text', '')[:200]}")
+                debug_print("Webhook delivery", channel=provider, outcome="failed", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
+                print_webhook_error(f"The webhook service returned HTTP {response.status_code}", response)
                 return 1
             delay = webhook_retry_after_seconds(response) if response.status_code == 429 else WEBHOOK_FALLBACK_RETRY_SECONDS
+            debug_monitor_wait_timing(f"webhook HTTP {response.status_code} retry attempt {attempt_number + 1}/{WEBHOOK_MAX_ATTEMPTS}", delay)
             sleep_func(delay)
         except req.RequestException as exc:
             last_error = exc
+            attempt_number = attempt + 1
+            debug_print("Webhook delivery", channel=provider, attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}", outcome="failed", error=f"{type(exc).__name__}: {exc}", retryable=attempt < WEBHOOK_MAX_ATTEMPTS - 1)
             if attempt == WEBHOOK_MAX_ATTEMPTS - 1:
+                debug_print("Webhook delivery", channel=provider, outcome="failed", attempt=f"{attempt_number}/{WEBHOOK_MAX_ATTEMPTS}")
                 print_webhook_error(exc)
                 return 1
+            debug_monitor_wait_timing(f"webhook request retry attempt {attempt_number + 1}/{WEBHOOK_MAX_ATTEMPTS}", WEBHOOK_FALLBACK_RETRY_SECONDS)
             sleep_func(WEBHOOK_FALLBACK_RETRY_SECONDS)
-    print_webhook_error(last_error)
+    debug_print("Webhook delivery", channel=provider, outcome="failed", after=f"{WEBHOOK_MAX_ATTEMPTS} attempts")
+    print_webhook_error("The webhook delivery did not complete", last_error)
     return 1
 
 
@@ -2311,36 +4139,60 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
 def send_notification_channels(notification_type: str, subject: str, body: str, body_html: str = "", email_enabled: bool = False, webhook_enabled: Optional[bool] = None) -> tuple[bool, bool]:
     email_attempted = bool(email_enabled)
     webhook_attempted = webhook_event_enabled(notification_type) if webhook_enabled is None else bool(webhook_enabled)
+    email_delivered = False
+    webhook_delivered = False
     if email_attempted:
         print(f"Sending email notification to {RECEIVER_EMAIL}")
-        send_email(subject, body, body_html, SMTP_SSL)
+        email_delivered = send_email(subject, body, body_html, SMTP_SSL) == 0
     if webhook_attempted:
-        print("Sending webhook notification")
-        send_webhook(subject, body, notification_type, force=True)
-    return email_attempted, webhook_attempted
+        print(f"Sending webhook notification via {webhook_provider_display_name()}")
+        webhook_delivered = send_webhook(subject, body, notification_type, force=True, discord_description=html_body_to_discord_markdown(body_html)) == 0
+    # Delivery, not the attempt, so a channel that failed is retried while one that succeeded is not resent
+    return email_delivered, webhook_delivered
+
+
+# Reports a step that failed and left its output or alerts degraded, naming the step in front of the classified failure
+def print_degraded_error(subject, error, label="Error"):
+    advice = classify_recovery_error(error)
+    print_recovery_advice(make_recovery_advice(advice.code, f"{subject}: {advice.summary}", advice.fix, advice.retryable, advice.detail), label=label)
+
+
+# Returns the advice an optional library that is missing carries, naming what the run loses and how to install it
+def missing_dependency_advice(package, effect, alternative=""):
+    return make_recovery_advice("dependency.missing", f"{effect} because the optional '{package}' library is missing", recovery_fix_with_guide(f"Install it with: {shlex.join([('python' if platform.system() == 'Windows' else 'python3'), '-m', 'pip', 'install', package])}" + (f". {alternative}" if alternative else ""), INSTALLATION_GUIDE_URL), False)
+
+
+# Reports a CSV row or header that could not be written, which never stops a monitoring cycle
+def print_csv_write_error(error):
+    print_recovery_advice(make_recovery_advice("file.unwritable", str(error), recovery_fix_with_guide("Check CSV_FILE and its parent directory permissions", CSV_GUIDE_URL), False, f"{type(error).__name__}: {error}"))
 
 
 # Initializes the CSV file
 def init_csv_file(csv_file_name):
     try:
+        debug_print("Checking CSV output file", path=csv_file_name)
         if not os.path.isfile(csv_file_name) or os.path.getsize(csv_file_name) == 0:
+            debug_print("Opening CSV output for header write", path=csv_file_name)
             with open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
                 writer.writeheader()
+            debug_print("CSV header write succeeded", path=csv_file_name)
     except Exception as e:
-        raise RuntimeError(f"Could not initialize CSV file '{csv_file_name}': {e}")
+        debug_print("CSV initialization", path=csv_file_name, outcome="failed", error=f"{type(e).__name__}: {e}")
+        raise RuntimeError(f"Could not initialize CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
 # Writes CSV entry
 def write_csv_entry(csv_file_name, timestamp, object_type, object_name, old, new):
     try:
-
+        debug_print("Opening CSV output for append", path=csv_file_name, record_type=object_type)
         with open(csv_file_name, 'a', newline='', buffering=1, encoding="utf-8") as csv_file:
             csvwriter = csv.DictWriter(csv_file, fieldnames=csvfieldnames, quoting=csv.QUOTE_NONNUMERIC)
             csvwriter.writerow({'Date': timestamp, 'Type': object_type, 'Name': object_name, 'Old': old, 'New': new})
-
+        debug_print("CSV append succeeded", path=csv_file_name, record_type=object_type)
     except Exception as e:
-        raise RuntimeError(f"Failed to write to CSV file '{csv_file_name}': {e}")
+        debug_print("CSV append", path=csv_file_name, record_type=object_type, outcome="failed", error=f"{type(e).__name__}: {e}")
+        raise RuntimeError(f"Failed to write to CSV file '{csv_file_name}': {sanitize_error_text(e)}")
 
 
 # Converts a datetime to local timezone and removes timezone info (naive)
@@ -2375,6 +4227,9 @@ def get_cur_ts(ts_str=""):
 
 # Prints the current date/time in human readable format with separator; eg. Sun 21 Apr 2024, 15:08:45
 def print_cur_ts(ts_str=""):
+    global PENDING_NOTICE_BLOCK, REPORTS_PRINTED
+    PENDING_NOTICE_BLOCK = False
+    REPORTS_PRINTED += 1
     print(get_cur_ts(str(ts_str)))
     print(f"{'─' * HORIZONTAL_LINE1}\n{'─' * HORIZONTAL_LINE1}")
 
@@ -2386,7 +4241,8 @@ def get_date_from_ts(ts):
     if isinstance(ts, str):
         try:
             ts = isoparse(ts)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("Long timestamp parsing", exc)
             return ""
 
     if isinstance(ts, datetime):
@@ -2422,7 +4278,8 @@ def get_short_date_from_ts(ts, show_year=False, show_hour=True, show_weekday=Tru
     if isinstance(ts, str):
         try:
             ts = isoparse(ts)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("Short timestamp parsing", exc)
             return ""
 
     if isinstance(ts, datetime):
@@ -2466,7 +4323,8 @@ def get_hour_min_from_ts(ts, show_seconds=False):
     if isinstance(ts, str):
         try:
             ts = isoparse(ts)
-        except Exception:
+        except Exception as exc:
+            debug_swallowed_exception("Hour timestamp parsing", exc)
             return ""
 
     if isinstance(ts, datetime):
@@ -2530,6 +4388,37 @@ def get_range_of_dates_from_tss(ts1, ts2, between_sep=" - ", short=False):
 # Checks if the timezone name is correct
 def is_valid_timezone(tz_name):
     return tz_name in pytz.all_timezones
+
+
+TIMEZONE_CHECK_LABELS = {"config": "Local timezone is valid", "auto": "Local timezone can be detected", "auto_unavailable": "Automatic timezone detection is unavailable", "auto_failed": "Automatic timezone detection failed", "invalid": "Local timezone is invalid"}
+
+
+# Resolves LOCAL_TIMEZONE and the state doctor reports it with, returning advice when no zone could be determined
+def resolve_local_timezone():
+    global LOCAL_TIMEZONE, LOCAL_TIMEZONE_STATE
+
+    LOCAL_TIMEZONE_STATE = "config"
+    timezone_advice = None
+    local_tz = None
+    if LOCAL_TIMEZONE == "Auto":
+        if get_localzone is not None:
+            try:
+                local_tz = get_localzone()
+            except Exception as exc:
+                debug_swallowed_exception("Local timezone detection", exc)
+        if local_tz and is_valid_timezone(str(local_tz)):
+            LOCAL_TIMEZONE = str(local_tz)
+            LOCAL_TIMEZONE_STATE = "auto"
+        elif get_localzone is None:
+            LOCAL_TIMEZONE_STATE = "auto_unavailable"
+            timezone_advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", recovery_fix_with_guide("Install tzlocal for automatic detection or set LOCAL_TIMEZONE to a valid pytz timezone", CONFIG_GUIDE_URL), False, "LOCAL_TIMEZONE is Auto but tzlocal is unavailable")
+        else:
+            LOCAL_TIMEZONE_STATE = "auto_failed"
+            timezone_advice = make_recovery_advice("timezone.invalid", "The local timezone could not be detected", recovery_fix_with_guide("Set LOCAL_TIMEZONE to a valid pytz timezone", CONFIG_GUIDE_URL), False, "tzlocal did not return a supported timezone")
+    elif not is_valid_timezone(LOCAL_TIMEZONE):
+        LOCAL_TIMEZONE_STATE = "invalid"
+        timezone_advice = make_recovery_advice("timezone.invalid", f"Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid", recovery_fix_with_guide("Set LOCAL_TIMEZONE to a valid pytz timezone name", CONFIG_GUIDE_URL), False, f"Time zone: {LOCAL_TIMEZONE}")
+    return timezone_advice
 
 
 # Prints and returns the printed text with new line
@@ -2609,9 +4498,89 @@ def decrease_check_signal_handler(sig, frame):
     print_cur_ts("Timestamp:\t\t\t")
 
 
+DOTENV_RELOAD_STATE = {}
+
+
+# Names the effective source after a file-owned secret is reloaded or removed
+def dotenv_reload_source(key):
+    if key in DOTENV_RELOAD_STATE.get("managed", ()):
+        return "dotenv file reload" if "dotenv file reload" in SECRET_SOURCE_ORDER else "dotenv file"
+    return DOTENV_RELOAD_STATE.get("base_sources", {}).get(key, "environment" if key in DOTENV_RELOAD_STATE.get("exported", ()) else SECRET_SOURCE_ORDER[0])
+
+
+# Resolves dotenv references while keeping explicitly marked private values literal
+def resolve_dotenv_values(content, override=False, interpolate=True, environment=None):
+    from io import StringIO
+    try:
+        from dotenv.main import with_warn_for_invalid_lines
+        from dotenv.parser import parse_stream
+        from dotenv.variables import parse_variables
+    # A python-dotenv without these internals still reads the file, only without the literal marker. Writing a
+    # value that needs the marker then fails its own read-back check rather than saving something unreadable
+    except ImportError:
+        if environment is not None:
+            raise ValueError("The installed python-dotenv cannot resolve this file safely. Update python-dotenv") from None
+        from dotenv.main import DotEnv
+        debug_print("Dotenv literal markers are unavailable in the installed python-dotenv", outcome="skipped")
+        return DotEnv(dotenv_path=None, stream=StringIO(content), override=override, interpolate=interpolate).dict()
+    base_environment = dict(os.environ) if environment is None else environment
+    values = {}
+    for binding in with_warn_for_invalid_lines(parse_stream(StringIO(content))):
+        if binding.key is None:
+            continue
+        value = binding.value
+        literal = binding.key in SECRET_KEYS and binding.original.string.rstrip().endswith("# monitor:literal")
+        if value is not None and interpolate and not literal:
+            resolved_environment = dict(base_environment)
+            if override:
+                resolved_environment.update(values)
+            else:
+                resolved_environment = dict(values, **resolved_environment)
+            value = "".join(atom.resolve(resolved_environment) for atom in parse_variables(value))
+        values[binding.key] = value
+    return values
+
+
+# Returns the secrets explicitly supplied on the command line
+def command_line_secret_keys():
+    return frozenset(globals().get("COMMAND_LINE_SECRET_KEYS", ())) | frozenset(key for key, source in globals().get("SECRET_SOURCES", {}).items() if source == "command line")
+
+
+# Reloads file-owned credentials while preserving startup exports and command-line choices
+def load_managed_dotenv(path, override=False, interpolate=True, protected_keys=()):
+    from io import StringIO
+    from dotenv.parser import parse_stream
+    if not override and not Path(path).is_file():
+        return False
+    content = Path(path).read_text(encoding="utf-8")
+    if override:
+        malformed = next((binding for binding in parse_stream(StringIO(content)) if binding.error), None)
+        if malformed is not None:
+            raise ValueError(f"Dotenv syntax error near line {malformed.original.line}. Correct the assignment and reload again")
+    state: dict = DOTENV_RELOAD_STATE if override and DOTENV_RELOAD_STATE else dict(base={key: os.environ.get(key) or globals().get(key, "") for key in SECRET_KEYS}, exported={key for key, value in os.environ.items() if value}, managed=set())
+    command_keys = command_line_secret_keys()
+    protected = set(protected_keys) | state["exported"] | command_keys
+    environment = {key: value for key, value in os.environ.items() if value and key not in state.get("loaded", state["managed"])}
+    environment.update({key: str(globals().get(key) or "") for key in command_keys})
+    values = resolve_dotenv_values(content, override=False, interpolate=interpolate, environment=environment)
+    applied = {key for key, value in values.items() if value is not None and key not in protected and (override or not os.environ.get(key))}
+    removed = state["managed"] - applied - protected
+    for key in removed:
+        value = state["base"].get(key)
+        os.environ[key] = "" if value is None else str(value)
+    for key in applied:
+        os.environ[key] = str(values[key])
+    state["managed"] = applied.intersection(SECRET_KEYS)
+    state["loaded"] = set(state.get("loaded", ())) | applied
+    if state is not DOTENV_RELOAD_STATE:
+        DOTENV_RELOAD_STATE.clear()
+        DOTENV_RELOAD_STATE.update(state)
+    return bool(values)
+
+
 # Signal handler for SIGHUP allowing to reload secrets from .env
 def reload_secrets_signal_handler(sig, frame):
-    global GITHUB_AUTH_REFRESH_VERSION, WEBHOOK_PROVIDER
+    global GITHUB_AUTH_REFRESH_VERSION, WEBHOOK_PROVIDER, SECRET_SOURCES
     sig_name = signal.Signals(sig).name
     print(f"* Signal {sig_name} received")
 
@@ -2621,31 +4590,49 @@ def reload_secrets_signal_handler(sig, frame):
     else:
         # reload .env if python-dotenv is installed
         try:
-            from dotenv import load_dotenv, find_dotenv
+            from dotenv import find_dotenv
             if DOTENV_FILE:
                 env_path = DOTENV_FILE
             else:
                 env_path = find_dotenv()
             if env_path:
-                load_dotenv(env_path, override=True)
+                debug_print("Reading dotenv file for signal reload", path=env_path)
+                load_managed_dotenv(env_path, override=True)
+                debug_print("Dotenv signal reload succeeded", path=env_path)
             else:
                 print("* No .env file found, skipping env-var reload")
-        except ImportError:
+        except ImportError as exc:
+            debug_swallowed_exception("Dotenv signal reload dependency import", exc)
             env_path = None
-            print("* python-dotenv not installed, skipping env-var reload")
+            print_recovery_advice(missing_dependency_advice("python-dotenv", "The env-var reload was skipped"), label="Warning")
+        except Exception as exc:
+            env_path = None
+            verbose_degraded_feature("Private setting reload", "credential refresh", exc)
+            print_degraded_error("The dotenv reload failed", exc)
 
     github_token_changed = False
     webhook_url_changed = False
     if env_path:
         for secret in SECRET_KEYS:
+            if secret in command_line_secret_keys():
+                continue
             old_val = globals().get(secret)
             val = os.getenv(secret)
             if val is not None and val != old_val:
                 globals()[secret] = val
+                # A placeholder written back into the dotenv file clears the secret rather than becoming one
+                if secret_is_set(val):
+                    record_secret_source(secret, dotenv_reload_source(secret), val)
+                else:
+                    # A cleared secret is a change the trace has to show, which the recorder stays silent about
+                    SECRET_SOURCES.pop(secret, None)
+                    debug_print("Secret resolution", name=secret, source="nowhere", **secret_fields(val))
                 if secret == "GITHUB_TOKEN":
                     github_token_changed = True
                 if secret == "WEBHOOK_URL":
                     webhook_url_changed = True
+                # The line names the setting and where it came from, never its value
+                # codeql[py/clear-text-logging-sensitive-data]
                 print(f"* Reloaded {secret} from {env_path}")
     if github_token_changed:
         GITHUB_AUTH_REFRESH_VERSION += 1
@@ -2653,7 +4640,7 @@ def reload_secrets_signal_handler(sig, frame):
         detected_provider = detect_webhook_provider(WEBHOOK_URL)
         if detected_provider and detected_provider != normalized_webhook_provider():
             WEBHOOK_PROVIDER = detected_provider
-            print(f"* Updated webhook provider to {detected_provider}")
+            print(f"* Updated webhook provider to {webhook_provider_display_name(detected_provider)}")
 
     print_cur_ts("Timestamp:\t\t\t")
 
@@ -2665,13 +4652,41 @@ class EmptyPaginatedList(list):
         self.totalCount = 0
 
 
-# Wraps GitHub API call with retry and linear back-off, returning a specified default on failure
-def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BACKOFF_SEC, default: Any = None,) -> Callable[..., Any]:
+# Creates one timed PyGithub client and records its sanitized connection settings
+def create_github_client(operation):
+    debug_print("PyGithub client", operation=operation, endpoint=diagnostic_endpoint(GITHUB_API_URL), timeout=f"{PYGITHUB_TIMEOUT_SECONDS}s", token=mask_secret(GITHUB_TOKEN))
+    return Github(base_url=GITHUB_API_URL, auth=Auth.Token(GITHUB_TOKEN), timeout=PYGITHUB_TIMEOUT_SECONDS, verify=VERIFY_SSL)
+
+
+# Logs one named PyGithub operation before its lazy network request is consumed
+def debug_github_operation(operation, target=""):
+    suffix = f" target={target}" if target else ""
+    debug_print("PyGithub", operation=operation, endpoint=diagnostic_endpoint(GITHUB_API_URL), timeout=f"{PYGITHUB_TIMEOUT_SECONDS}s", token=f"{mask_secret(GITHUB_TOKEN)}{suffix}")
+
+
+# Returns a stable display name for a partially populated PyGithub object
+def github_object_name(value):
+    return str(getattr(value, "full_name", getattr(value, "name", "resource")))
+
+
+# Callers wrap a lambda and invoke the result immediately, so a lambda that reads a loop variable is
+# evaluated inside the same iteration. Those call sites carry a noqa marker for the loop-binding rule
+# Retries a GitHub operation with current settings and either returns its fallback or raises the final failure
+def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = None, *, raise_on_failure=False) -> Callable[..., Any]:
+    retries = NET_MAX_RETRIES if retries is None else retries
+    backoff = NET_BASE_BACKOFF_SEC if backoff is None else backoff
+
+    # Keeps the original exception available to callers that must distinguish an unavailable feed from an empty one
     def wrapped(*args: Any, **kwargs: Any) -> Any:
+        last_error = None
         for i in range(1, retries + 1):
             try:
-                return fn(*args, **kwargs)
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, attempt=f"{i}/{retries}")
+                result = fn(*args, **kwargs)
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="OK", attempt=f"{i}/{retries}")
+                return result
             except RateLimitExceededException as e:
+                last_error = e
                 headers = getattr(e, "headers", None)
 
                 reset_str = None
@@ -2695,15 +4710,75 @@ def gh_call(fn: Callable[..., Any], retries=NET_MAX_RETRIES, backoff=NET_BASE_BA
                     else:
                         sleep_for = int(backoff * i)
 
-                print(f"* {fn.__name__} rate limited, sleeping {sleep_for}s (retry {i}/{retries})")
-                time.sleep(sleep_for)
+                retryable = i < retries
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                if retryable:
+                    print(f"* {fn.__name__} rate limited, sleeping {sleep_for}s (retry {i}/{retries})")
+                    debug_monitor_wait_timing(f"GitHub rate limit before attempt {i + 1}/{retries}", sleep_for)
+                    time.sleep(sleep_for)
                 continue
 
             except NET_ERRORS as e:
-                print(f"* {fn.__name__} error: {e} (retry {i}/{retries})")
-                time.sleep(backoff * i)
+                last_error = e
+                retryable = i < retries
+                delay = backoff * i
+                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                if retryable:
+                    print(f"* {fn.__name__} error: {sanitize_error_text(e)} (retry {i}/{retries})")
+                    debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{retries}", delay)
+                    time.sleep(delay)
+        if raise_on_failure and last_error is not None:
+            raise last_error
+        verbose_degraded_feature(f"GitHub operation {fn.__name__}", "its dependent alerts", last_error)
+        debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="default", after=f"{retries} attempts")
         return default
     return wrapped
+
+
+# Returns True when the login still resolves to a GitHub account, False when it does not and None when the check fails
+def github_account_exists(login):
+    try:
+        g = create_github_client("account existence check")
+        debug_github_operation("account existence check", login)
+        g.get_user(login)
+        return True
+    except UnknownObjectException:
+        return False
+    except Exception as e:
+        debug_print("PyGithub", operation="account existence check", outcome="failed", error=f"{type(e).__name__}: {e}", target=login)
+        return None
+
+
+# Returns True when the owner/repo path still resolves to a repository, False when it does not and None when the check fails
+def github_repo_exists(full_name):
+    try:
+        g = create_github_client("repository existence check")
+        debug_github_operation("repository existence check", full_name)
+        g.get_repo(full_name)
+        return True
+    except UnknownObjectException:
+        return False
+    except Exception as e:
+        debug_print("PyGithub", operation="repository existence check", outcome="failed", error=f"{type(e).__name__}: {e}", target=full_name)
+        return None
+
+
+# Builds a bracketed availability note for removed accounts and repositories
+def removed_item_note(label, item, user=None):
+    label_lower = label.lower()
+    if label_lower in ("stargazers", "watchers", "followers", "followings"):
+        if github_account_exists(item) is False:
+            return " (account no longer exists)"
+    elif label_lower == "forks":
+        if github_account_exists(item.split("/", 1)[0]) is False:
+            return " (owner account no longer exists)"
+    elif label_lower == "starred repos":
+        if github_repo_exists(item) is False:
+            return " (repository is no longer accessible)"
+    elif label_lower == "repos" and user:
+        if github_repo_exists(f"{user}/{item}") is False:
+            return " (repository is no longer accessible)"
+    return ""
 
 
 # Prints followers and followings for a GitHub user (-f)
@@ -2718,9 +4793,9 @@ def github_print_followers_and_followings(user):
     print(f"* Getting followers & followings for user '{user}' ...")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("followers and followings listing")
 
+        debug_github_operation("user profile lookup", user)
         g_user = g.get_user(user)
         user_login = g_user.login
         user_name = g_user.name
@@ -2729,14 +4804,18 @@ def github_print_followers_and_followings(user):
         followers_count = g_user.followers
         followings_count = g_user.following
 
+        debug_github_operation("followers listing", user)
         followers_list = g_user.get_followers()
+        debug_github_operation("followings listing", user)
         followings_list = g_user.get_following()
 
         user_name_str = user_login
         if user_name:
             user_name_str += f" ({user_name})"
+    except (UnknownObjectException, BadCredentialsException, RateLimitExceededException):
+        raise
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user {user} details: {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details: {sanitize_error_text(e)}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -2756,7 +4835,8 @@ def github_print_followers_and_followings(user):
                     follower_str += f"\n[ {follower.html_url}/ ]"
                 print(follower_str)
     except Exception as e:
-        print(f"* Cannot fetch user's followers list: {e}")
+        verbose_degraded_feature("Follower listing", "complete follower output", e)
+        print_degraded_error("The follower list could not be read", e)
 
     print(f"\nFollowings:\t\t{followings_count}")
 
@@ -2771,20 +4851,28 @@ def github_print_followers_and_followings(user):
                     following_str += f"\n[ {following.html_url}/ ]"
                 print(following_str)
     except Exception as e:
-        print(f"* Cannot fetch user's followings list: {e}")
+        verbose_degraded_feature("Following listing", "complete following output", e)
+        print_degraded_error("The following list could not be read", e)
 
     g.close()
 
 
+# The width of the progress line drawn last, so the next one pads over whatever the previous one left on screen
+_progress_line_width = 0
+
+
 # Displays a progress bar with percentage and current repo name
 def _display_progress(current, total, repo_name: str = "", bar_length: int = 40, is_final: bool = False) -> None:
+    global _progress_line_width
+
     if total == 0:
         return
 
     # Defensive fallback for environments without a real TTY
     try:
         term_width = shutil.get_terminal_size(fallback=(80, 20)).columns
-    except Exception:
+    except Exception as exc:
+        debug_swallowed_exception("Terminal width detection", exc)
         term_width = 80
 
     # Keep a sane minimum – very tiny terminals may still wrap, but that's acceptable
@@ -2848,16 +4936,21 @@ def _display_progress(current, total, repo_name: str = "", bar_length: int = 40,
     progress_str = " ".join(parts)
 
     terminal_out = stdout_bck if stdout_bck is not None else sys.stdout
+    while isinstance(terminal_out, (Logger, TerminalStream)):
+        terminal_out = terminal_out.terminal
+    progress_str = ANSI_ESCAPE_RE.sub("", sanitize_terminal_text(progress_str))
+    padded_progress = progress_str + (" " * max(0, _progress_line_width - len(progress_str)))
+    _progress_line_width = len(progress_str)
 
     if is_final:
-        terminal_out.write("\r\033[K" + progress_str)
+        terminal_out.write("\r" + padded_progress)
         terminal_out.flush()
 
         if stdout_bck is not None and isinstance(sys.stdout, Logger):
             sys.stdout.logfile.write(progress_str + "\n")
             sys.stdout.logfile.flush()
     else:
-        terminal_out.write("\r\033[K" + progress_str)
+        terminal_out.write("\r" + padded_progress)
         terminal_out.flush()
 
 
@@ -2867,13 +4960,117 @@ def github_get_repo_discussions(repo):
         return 0, []
 
     discussion_schema = "id number title createdAt updatedAt author { login } category { name }"
+    debug_github_operation("repository discussions listing", getattr(repo, "full_name", getattr(repo, "name", "repository")))
     discussions = list(repo.get_discussions(discussion_schema, states=["OPEN"]))
     discussions_list = [f"#{discussion.number} {discussion.title} ({discussion.author.login if discussion.author else 'ghost'}) [ {repo.html_url}/discussions/{discussion.number} ]" for discussion in discussions]
     return len(discussions), discussions_list
 
 
+# Returns an item's repository number without treating title or author edits as membership changes
+def repository_item_key(item):
+    match = re.match(r"^#([1-9][0-9]*)\s", item)
+    return int(match.group(1)) if match else item
+
+
+# Reads one item's closure state without automatic retries or redirects consuming extra requests
+def github_verify_repository_closure(full_name, kind, number):
+    operation = f"{kind} closure verification for {full_name} #{number}"
+    try:
+        owner, name = full_name.split("/")
+        base_url = GITHUB_API_URL.rstrip("/")
+        headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
+        payload = None
+        if kind == "discussions":
+            endpoint = (base_url[:-3] if base_url.endswith("/api/v3") else base_url) + "/graphql"
+            method = "POST"
+            payload = {"query": "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { discussion(number: $number) { number closed } } }", "variables": {"owner": owner, "name": name, "number": number}}
+        else:
+            if kind not in ("issues", "pulls"):
+                raise ValueError("Unsupported repository item type")
+            endpoint = f"{base_url}/repos/{quote(owner, safe='')}/{quote(name, safe='')}/{kind}/{number}"
+            method = "GET"
+        debug_http_request(method, endpoint, operation, PYGITHUB_TIMEOUT_SECONDS, headers=headers, token=GITHUB_TOKEN)
+        with req.request(method, endpoint, json=payload, headers=headers, timeout=PYGITHUB_TIMEOUT_SECONDS, verify=VERIFY_SSL, allow_redirects=False) as response:
+            debug_http_response(method, endpoint, operation, response.status_code)
+            if response.status_code != 200:
+                error_type = {401: BadCredentialsException, 404: UnknownObjectException, 429: RateLimitExceededException}.get(response.status_code, GithubException)
+                if response.status_code == 403 and (response.headers.get("X-RateLimit-Remaining") == "0" or "Retry-After" in response.headers):
+                    error_type = RateLimitExceededException
+                raise error_type(response.status_code, {"message": f"Closure verification returned HTTP {response.status_code}"}, dict(response.headers))
+            data = response.json()
+        if kind == "discussions":
+            if not isinstance(data, dict) or data.get("errors"):
+                raise ValueError("Discussion closure verification returned GraphQL errors")
+            item = ((data.get("data") or {}).get("repository") or {}).get("discussion")
+        else:
+            item = data
+        if not isinstance(item, dict) or type(item.get("number")) is not int or item["number"] != number:
+            raise ValueError("Closure verification did not return the requested item")
+        if kind == "discussions":
+            closed = item.get("closed")
+            if type(closed) is not bool:
+                raise ValueError("Discussion closure verification omitted its closed state")
+        else:
+            if item.get("state") not in ("open", "closed") or (kind == "issues" and item.get("pull_request") is not None):
+                raise ValueError("Closure verification returned an invalid item state or type")
+            closed = item["state"] == "closed"
+        debug_print(operation, outcome="closed" if closed else "still open")
+        return closed
+    except Exception as error:
+        verbose_degraded_feature(operation, "verified closure alerts", error)
+        return None
+
+
+class RepositoryClosureVerifier:
+    # Keeps pending checks in rotation so unavailable items cannot monopolize the request allowance
+    def __init__(self):
+        self.pending: deque[tuple[str, str, int]] = deque()
+
+    # Retains missing items until their closure is verified within the shared allowance
+    def reconcile(self, repositories, previous_repos):
+        previous_by_name = {repo["name"]: repo for repo in previous_repos}
+        candidates = {}
+        for repo in repositories:
+            previous = previous_by_name.get(repo["name"], {})
+            for kind in ("issues", "pulls", "discussions"):
+                list_key = f"{kind}_list"
+                current_items = repo.get(list_key)
+                previous_items = previous.get(list_key)
+                if current_items is None or previous_items is None:
+                    continue
+                retained = {repository_item_key(item): item for item in current_items}
+                for item in previous_items:
+                    number = repository_item_key(item)
+                    if number in retained:
+                        continue
+                    retained[number] = item
+                    if isinstance(number, int):
+                        key = (repo["full_name"], kind, number)
+                        candidates[key] = (repo, item)
+                    else:
+                        verbose_degraded_feature(f"{kind} closure verification for {repo['name']}", "closure alerts for an item without a number")
+                repo[list_key] = list(retained.values())
+                repo[kind] = len(retained)
+
+        self.pending = deque(key for key in self.pending if key in candidates)
+        queued = set(self.pending)
+        self.pending.extend(key for key in candidates if key not in queued)
+        attempts = min(REPOSITORY_CLOSURE_REQUEST_BUDGET, len(self.pending))
+        for _ in range(attempts):
+            key = self.pending.popleft()
+            full_name, kind, number = key
+            repo, item = candidates[key]
+            if github_verify_repository_closure(full_name, kind, number) is True:
+                repo[f"{kind}_list"].remove(item)
+                repo[kind] = len(repo[f"{kind}_list"])
+            else:
+                self.pending.append(key)
+        if candidates:
+            debug_print("Repository closure verification", attempts=attempts, pending=len(self.pending), budget=REPOSITORY_CLOSURE_REQUEST_BUDGET)
+
+
 # Processes items from all passed repositories and returns a list of dictionaries
-def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=True):
+def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=True, previous_repos=None, closure_verifier=None):
     import logging
     import warnings
 
@@ -2882,6 +5079,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
     warnings.filterwarnings('ignore')
 
     list_of_repos = []
+    failed_names = set()
     identity_lists_fetched = 0
     if repos_list:
         # Convert to list if it's a generator/iterator to get total count
@@ -2908,20 +5106,25 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
 
                 try:
                     if fetch_identity_lists:
+                        debug_github_operation("repository stargazers listing", github_object_name(repo))
                         stargazers_list = [star.login for star in repo.get_stargazers()]
                         if show_progress:
                             _display_progress(idx, total_repos, repo.name)  # Refresh after stargazers
+                        debug_github_operation("repository subscribers listing", github_object_name(repo))
                         subscribers_list = [subscriber.login for subscriber in repo.get_subscribers()]
                         identity_lists_fetched += 1
                         if show_progress:
                             _display_progress(idx, total_repos, repo.name)  # Refresh after subscribers
+                    debug_github_operation("repository forks listing", github_object_name(repo))
                     forked_repos = [fork.full_name for fork in repo.get_forks()]
                     if show_progress:
                         _display_progress(idx, total_repos, repo.name)  # Refresh after forks
                 except GithubException as e:
                     if e.status in [403, 451]:
+                        failed_names.add(repo.name)
+                        verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
                         if BLOCKED_REPOS:
-                            print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {e}")
+                            print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {sanitize_error_text(e)}")
                             print_cur_ts("Timestamp:\t\t\t")
                         if show_progress:
                             _display_progress(idx, total_repos, repo.name)
@@ -2930,16 +5133,20 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                 finally:
                     github_logger.setLevel(original_level)
 
+                debug_github_operation("repository open issues listing", github_object_name(repo))
                 issues = list(repo.get_issues(state='open'))
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name)  # Refresh after issues
+                debug_github_operation("repository open pull requests listing", github_object_name(repo))
                 pulls = list(repo.get_pulls(state='open'))
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name)  # Refresh after pulls
                 try:
                     discussion_count, discussions_list = github_get_repo_discussions(repo)
                 except Exception as e:
-                    print(f"\n* Cannot fetch discussions for repo '{repo.name}', skipping discussions for now: {e}")
+                    verbose_degraded_feature(f"Discussions for {repo.name}", "discussion change alerts", e)
+                    print()
+                    print_degraded_error(f"Discussions for repo '{repo.name}' were skipped", e)
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name)  # Refresh after discussions
 
@@ -2950,27 +5157,34 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                 issues_list = [f"#{i.number} {i.title} ({i.user.login}) [ {i.html_url} ]" for i in real_issues]
                 pr_list = [f"#{pr.number} {pr.title} ({pr.user.login}) [ {pr.html_url} ]" for pr in pulls]
 
-                list_of_repos.append({"name": repo.name, "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "discussions": discussion_count, "issues_list": issues_list, "pulls_list": pr_list, "discussions_list": discussions_list})
+                list_of_repos.append({"name": repo.name, "full_name": getattr(repo, "full_name", urlsplit(repo.html_url).path.strip("/")), "descr": repo.description, "is_fork": repo.fork, "forks": repo.forks_count, "stars": repo.stargazers_count, "subscribers": repo.subscribers_count, "url": repo.html_url, "language": repo.language, "date": repo_created_date, "update_date": repo_updated_date, "stargazers_list": stargazers_list, "forked_repos": forked_repos, "subscribers_list": subscribers_list, "issues": issue_count, "pulls": pr_count, "discussions": discussion_count, "issues_list": issues_list, "pulls_list": pr_list, "discussions_list": discussions_list})
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))  # Final refresh after successful processing
 
             except GithubException as e:
+                failed_names.add(repo.name)
                 # Skip TOS-blocked (403) and legally blocked (451) repositories
                 if e.status in [403, 451]:
+                    verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
                     if BLOCKED_REPOS:
-                        print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {e}")
+                        print(f"\n* Repo '{repo.name}' is blocked, skipping for now: {sanitize_error_text(e)}")
                         print_cur_ts("Timestamp:\t\t\t")
                     if show_progress:
                         _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
                 else:
-                    print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
+                    verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
+                    print()
+                    print_degraded_error(f"Repo '{repo.name}' was skipped", e)
                     print_cur_ts("Timestamp:\t\t\t")
                     if show_progress:
                         _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
                     continue
             except Exception as e:
-                print(f"\n* Cannot process repo '{repo.name}', skipping for now: {e}")
+                failed_names.add(repo.name)
+                verbose_degraded_feature(f"Repository details for {repo.name}", "repository change alerts", e)
+                print()
+                print_degraded_error(f"Repo '{repo.name}' was skipped", e)
                 print_cur_ts("Timestamp:\t\t\t")
                 if show_progress:
                     _display_progress(idx, total_repos, repo.name, is_final=(idx == total_repos))
@@ -2994,6 +5208,12 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
             else:
                 print("- Stargazer/watcher user lists:\tSkipped (counts only)")
 
+    verifier = closure_verifier if closure_verifier is not None else RepositoryClosureVerifier()
+    if VERIFY_REPOSITORY_CLOSURES:
+        verifier.reconcile(list_of_repos, previous_repos or ())
+    else:
+        verifier.pending.clear()
+    list_of_repos.extend(repo for repo in (previous_repos or ()) if repo.get("name") in failed_names)
     return list_of_repos
 
 
@@ -3008,26 +5228,30 @@ def github_print_repos(user):
     print(f"* Getting public repositories for user '{user}' ...")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("repository listing")
 
+        debug_github_operation("user profile lookup", user)
         g_user = g.get_user(user)
         user_login = g_user.login
         user_name = g_user.name
         user_url = g_user.html_url
 
         if GET_ALL_REPOS:
+            debug_github_operation("all repository listing", user)
             repos_list = g_user.get_repos()
             repos_count = g_user.public_repos
         else:
+            debug_github_operation("owned repository listing", user)
             repos_list = [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login]
             repos_count = len(repos_list)
 
         user_name_str = user_login
         if user_name:
             user_name_str += f" ({user_name})"
+    except (UnknownObjectException, BadCredentialsException, RateLimitExceededException):
+        raise
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user {user} details: {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details: {sanitize_error_text(e)}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -3048,9 +5272,11 @@ def github_print_repos(user):
                 github_logger.setLevel(logging.ERROR)
 
                 try:
+                    debug_github_operation("repository open pull request count", github_object_name(repo))
                     pr_count = repo.get_pulls(state='open').totalCount
                     issue_count = repo.open_issues_count - pr_count
-                except Exception:
+                except Exception as exc:
+                    verbose_degraded_feature(f"Repository counts for {repo.name}", "repository count details", exc, enrichment=True)
                     pr_count = "?"
                     issue_count = "?"
 
@@ -3078,7 +5304,8 @@ def github_print_repos(user):
                 except GithubException as e:
                     # Inform about TOS-blocked (403) and legally blocked (451) repositories
                     if e.status in [403, 451]:
-                        print(f"\n* Repo '{repo.name}' is blocked: {e}")
+                        verbose_degraded_feature(f"Repository details for {repo.name}", "complete repository output", e, enrichment=True)
+                        print(f"\n* Repo '{repo.name}' is blocked: {sanitize_error_text(e)}")
                         print("─" * HORIZONTAL_LINE2)
                         continue
                 finally:
@@ -3086,7 +5313,7 @@ def github_print_repos(user):
 
                 print("─" * HORIZONTAL_LINE2)
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user's repositories list: {e}")
+        raise RuntimeError(f"Cannot fetch user's repositories list: {sanitize_error_text(e)}")
 
     g.close()
 
@@ -3101,22 +5328,25 @@ def github_print_starred_repos(user):
     print(f"* Getting repositories starred by user '{user}' ...")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("starred repository listing")
 
+        debug_github_operation("user profile lookup", user)
         g_user = g.get_user(user)
         user_login = g_user.login
         user_name = g_user.name
         user_url = g_user.html_url
 
+        debug_github_operation("starred repository listing", user)
         starred_list = g_user.get_starred()
         starred_count = starred_list.totalCount
 
         user_name_str = user_login
         if user_name:
             user_name_str += f" ({user_name})"
+    except (UnknownObjectException, BadCredentialsException, RateLimitExceededException):
+        raise
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user {user} details: {e}")
+        raise RuntimeError(f"Cannot fetch user {user} details: {sanitize_error_text(e)}")
 
     print(f"\nUsername:\t\t{user_name_str}")
     print(f"User URL:\t\t{user_url}/")
@@ -3133,7 +5363,7 @@ def github_print_starred_repos(user):
                     star_str += f" [ {star.html_url}/ ]"
                 print(star_str)
     except Exception as e:
-        raise RuntimeError(f"Cannot fetch user's starred list: {e}")
+        raise RuntimeError(f"Cannot fetch user's starred list: {sanitize_error_text(e)}")
 
     g.close()
 
@@ -3157,7 +5387,7 @@ def format_body_block(content, indent="    "):
 
 # Returns the base web URL for GitHub or GHE (e.g. https://github.com or https://ghe.example.com)
 def github_web_base() -> str:
-    if "api.github.com" in GITHUB_API_URL:
+    if (urlsplit(GITHUB_API_URL).hostname or "").casefold() == "api.github.com":
         return "https://github.com"
     return GITHUB_API_URL.replace("/api/v3", "").rstrip("/")
 
@@ -3243,6 +5473,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     if event.repo.id:
         try:
             desc_len = 80
+            debug_github_operation("event repository lookup", event.repo.name)
             repo = g.get_repo(event.repo.name)
 
             # For ForkEvent, prefer the source repo if available
@@ -3251,8 +5482,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     parent = gh_call(lambda: getattr(repo, "parent", None))()
                     if parent:
                         repo = parent
-                except Exception:
-                    pass
+                except Exception as exc:
+                    verbose_degraded_feature("Fork source repository metadata", "complete fork event details", exc, enrichment=True)
 
             repo_name = getattr(repo, "full_name", event.repo.name)
 
@@ -3268,12 +5499,14 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             if short_desc:
                 st += print_v(f"Repo description:\t\t{short_desc}")
 
-        except UnknownObjectException:
+        except UnknownObjectException as exc:
+            debug_swallowed_exception("Event repository lookup", exc)
             repo = None
             st += print_v("\nRepository not found or has been removed")
         except GithubException as e:
+            debug_swallowed_exception("Event repository lookup", e)
             repo = None
-            st += print_v(f"\n* Error occurred while getting repo details: {e}")
+            st += print_v(f"\n* Error occurred while getting repo details: {sanitize_error_text(e)}")
 
     if hasattr(event.actor, 'login'):
         if event.actor.login:
@@ -3314,7 +5547,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
             commit_details = None
             if repo:
-                commit_details = gh_call(lambda: repo.get_commit(commit["sha"]))()
+                debug_github_operation("event commit lookup", commit["sha"])
+                commit_details = gh_call(lambda: repo.get_commit(commit["sha"]))()  # noqa: B023
 
             if commit_details:
                 commit_date = commit_details.commit.author.date
@@ -3339,7 +5573,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             if commit_details:
                 try:
                     file_count = sum(1 for _ in commit_details.files)
-                except Exception:
+                except Exception as exc:
+                    verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
                     file_count = "N/A"
                 st += print_v(f" - Files changed:\t\t{file_count}")
                 if file_count:
@@ -3358,7 +5593,6 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
     elif event.type == "PushEvent" and repo:
         before_sha = event.payload.get("before")
         head_sha = event.payload.get("head") or event.payload.get("after")
-        size_hint = event.payload.get("size")
 
         # Debug when payload has no commits
         # st += print_v("\n[debug] PushEvent payload has no 'commits' array; using compare API")
@@ -3371,8 +5605,9 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             try:
                 compare = gh_call(lambda: repo.compare(before_sha, head_sha))()
             except Exception as e:
+                verbose_degraded_feature("Push comparison", "complete push event details", e, enrichment=True)
                 compare = None
-                st += print_v(f"* Error using compare({before_sha[:12]}...{head_sha[:12]}): {e}")
+                st += print_v(f"* Error using compare({before_sha[:12]}...{head_sha[:12]}): {sanitize_error_text(e)}")
 
             if compare:
                 commits = list(compare.commits)
@@ -3387,7 +5622,9 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                     st += print_v("." * HORIZONTAL_LINE1)
 
                     commit_sha = getattr(c, "sha", None) or getattr(c, "id", None)
-                    commit_details = gh_call(lambda: repo.get_commit(commit_sha))() if (repo and commit_sha) else None
+                    if repo and commit_sha:
+                        debug_github_operation("event commit lookup", commit_sha)
+                    commit_details = gh_call(lambda: repo.get_commit(commit_sha))() if (repo and commit_sha) else None  # noqa: B023
 
                     commit_message = commit_details.commit.message if commit_details and commit_details.commit else ""
                     is_multiline = '\n' in commit_message if commit_message else False
@@ -3425,7 +5662,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
                         try:
                             file_count = sum(1 for _ in commit_details.files)
-                        except Exception:
+                        except Exception as exc:
+                            verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
                             file_count = "N/A"
                         st += print_v(f" - Files changed:\t\t{file_count}")
                         if file_count and file_count != "N/A":
@@ -3475,6 +5713,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
     if repo and event.payload.get("pull_request"):
         pr_number = event.payload["pull_request"]["number"]
+        debug_github_operation("event pull request lookup", f"{github_object_name(repo)}#{pr_number}")
         pr = repo.get_pull(pr_number)
 
         st += print_v(f"\n=== PR #{pr.number}: {pr.title} ===")
@@ -3545,11 +5784,13 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
         if repo:
             try:
                 pr_number = event.payload["pull_request"]["number"]
+                debug_github_operation("event pull request review lookup", f"{github_object_name(repo)}#{pr_number}")
                 pr_obj = repo.get_pull(pr_number)
+                debug_github_operation("event pull request review comments listing", f"{github_object_name(repo)}#{pr_number}")
                 count = sum(1 for _ in pr_obj.get_single_review_comments(event.payload["review"].get("id")))
                 st += print_v(f"Comments in this review:\t{count}")
-            except Exception:
-                pass
+            except Exception as exc:
+                verbose_degraded_feature("Pull request review comment count", "complete review event details", exc, enrichment=True)
 
     if event.payload.get("issue"):
         st += print_v(f"\nIssue title:\t\t\t{event.payload['issue'].get('title')}")
@@ -3643,8 +5884,10 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             if parent_id and repo:
                 try:
                     pr_number = event.payload["pull_request"]["number"]
+                    debug_github_operation("event pull request comment lookup", f"{github_object_name(repo)}#{pr_number}")
                     pr = repo.get_pull(pr_number)
 
+                    debug_github_operation("event pull request parent comment lookup", parent_id)
                     parent = pr.get_review_comment(parent_id)
                     parent_date = get_date_from_ts(parent.created_at)
 
@@ -3657,7 +5900,8 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
                     st += print_v(f"\nPrevious comment URL:\t\t{parent.html_url}")
                 except Exception as e:
-                    st += print_v(f"\n* Could not fetch parent comment (ID {parent_id}): {e}")
+                    verbose_degraded_feature("Parent pull request comment", "complete comment event details", e, enrichment=True)
+                    st += print_v(f"\n* Could not fetch parent comment (ID {parent_id}): {sanitize_error_text(e)}")
             else:
                 st += print_v("\n(This is the first comment in its thread)")
         elif event.type in ("IssueCommentEvent", "CommitCommentEvent"):
@@ -3669,6 +5913,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                 if event.type == "IssueCommentEvent":
 
                     issue_number = event.payload["issue"]["number"]
+                    debug_github_operation("event issue lookup", f"{github_object_name(repo)}#{issue_number}")
                     issue = repo.get_issue(issue_number)
 
                     virtual_comment_list = []
@@ -3682,6 +5927,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                             "html_url": issue.html_url
                         })
 
+                    debug_github_operation("event issue comments listing", f"{github_object_name(repo)}#{issue_number}")
                     for c in issue.get_comments():
                         virtual_comment_list.append({
                             "id": c.id,
@@ -3715,6 +5961,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
                 elif event.type == "CommitCommentEvent":
                     commit_sha = comment["commit_id"]
+                    debug_github_operation("event commit comments listing", commit_sha)
                     comments = list(repo.get_commit(commit_sha).get_comments())
 
                     previous = None
@@ -3790,17 +6037,19 @@ def github_list_events(user, number, csv_file_name):
         if csv_file_name:
             init_csv_file(csv_file_name)
     except Exception as e:
-        print(f"* Error: {e}")
+        verbose_degraded_feature("Recent event CSV initialization", "event CSV records", e)
+        print_csv_write_error(e)
 
     list_operation = "* Listing & saving" if csv_file_name else "* Listing"
 
     print(f"{list_operation} {number} recent events for '{user}' ...\n")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("recent event listing")
 
+        debug_github_operation("user profile lookup", user)
         g_user = g.get_user(user)
+        debug_github_operation("recent event listing", user)
         all_events = list(g_user.get_events())
         total_available = len(all_events)
         events = all_events[:number]
@@ -3814,7 +6063,8 @@ def github_list_events(user, number, csv_file_name):
         if user_name:
             user_name_str += f" ({user_name})"
     except Exception as e:
-        print(f"* Cannot fetch user details: {e}")
+        verbose_degraded_feature("Recent event listing", "recent event output", e)
+        print_degraded_error("The user details could not be read", e)
         return
 
     print(f"Username:\t\t\t{user_name_str}")
@@ -3840,17 +6090,20 @@ def github_list_events(user, number, csv_file_name):
                     try:
                         event_date, repo_name, repo_url, event_text = github_print_event(event, g)
                     except Exception as e:
-                        print(f"\n* Warning, cannot fetch all event details, skipping: {e}")
+                        verbose_degraded_feature("Event detail rendering", "complete event output", e)
+                        print()
+                        print_degraded_error("Some event details are missing", e, label="Warning")
                         print_cur_ts("\nTimestamp:\t\t\t")
                         continue
                     try:
                         if csv_file_name:
                             write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                     except Exception as e:
-                        print(f"* Error: {e}")
+                        print_csv_write_error(e)
                     print_cur_ts("\nTimestamp:\t\t\t")
         except Exception as e:
-            print(f"* Cannot fetch events: {e}")
+            verbose_degraded_feature("Recent event iteration", "recent event output", e)
+            print_degraded_error("The event list could not be read", e)
 
 
 # Detects and reports changes in a user's profile-level entities (followers, followings, public repos, starred repos)
@@ -3859,9 +6112,11 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
         list_new = []
         list_new = [getattr(item, field) for item in raw_list]
         if not list_new and count_new > 0:
+            verbose_degraded_feature(f"{label} identities", f"{label.lower()} membership alerts")
             return list_old, count_old
     except Exception as e:
-        print(f"* Error while trying to get the list of {label.lower()}: {e}")
+        verbose_degraded_feature(f"{label} list", f"{label.lower()} change alerts", e)
+        print_degraded_error(f"The list of {label.lower()} could not be refreshed", e)
         print_cur_ts("Timestamp:\t\t\t")
         return list_old, count_old
 
@@ -3885,7 +6140,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"{label} Count", user, old_count, new_count)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_csv_write_error(e)
 
     added_list_str = ""
     removed_list_str = ""
@@ -3909,14 +6164,15 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
             item_url = (f"{web_base}/{item}/" if label.lower() in ["followers", "followings", "starred repos"]
                         else f"{web_base}/{user}/{item}/")
 
-            print(f"- {item} [ {item_url} ]")
-            removed_list_str += f"- {item} [ {item_url} ]\n"
-            removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a><br>"
+            note = removed_item_note(label, item, user)
+            print(f"- {item} [ {item_url} ]{note}")
+            removed_list_str += f"- {item} [ {item_url} ]{note}\n"
+            removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a>{html.escape(note)}<br>"
             try:
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Removed {label[:-1]}", user, item, "")
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
         print()
 
     if added_items:
@@ -3934,7 +6190,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", user, "", item)
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
         print()
 
     if diff == 0:
@@ -3975,6 +6231,7 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
 def check_repo_list_changes(count_old, count_new, list_old, list_new, label, repo_name, repo_url, user, csv_file_name):
     if list_old is None or list_new is None:
         if count_old == count_new:
+            debug_print(f"{label} for {repo_name}", outcome="OK", mode="counts only")
             return
 
         diff = count_new - count_old
@@ -3984,7 +6241,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"Repo {label} Count", repo_name, count_old, count_new)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_csv_write_error(e)
 
         m_subject = f"GitHub user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {count_old} -> {count_new})"
         m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {count_old} to {count_new} ({diff_str})\n"
@@ -4004,7 +6261,19 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
         return
 
     if not list_new and count_new > 0:
+        verbose_degraded_feature(f"{label} identities for {repo_name}", f"{label.lower()} membership alerts")
         return
+
+    if VERIFY_REPOSITORY_CLOSURES and label in ("Issues", "Pull Requests", "Discussions"):
+        old_by_key = {repository_item_key(item): item for item in list_old}
+        new_by_key = {repository_item_key(item): item for item in list_new}
+        removed_items = [item for key, item in old_by_key.items() if key not in new_by_key]
+        added_items = [item for key, item in new_by_key.items() if key not in old_by_key]
+        if not removed_items and not added_items:
+            return
+    else:
+        removed_items = list(set(list_old) - set(list_new))
+        added_items = list(set(list_new) - set(list_old))
 
     old_count = len(list_old)
     new_count = len(list_new)
@@ -4024,7 +6293,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             if csv_file_name:
                 write_csv_entry(csv_file_name, now_local_naive(), f"Repo {label} Count", repo_name, old_count, new_count)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_csv_write_error(e)
 
     added_list_str = ""
     removed_list_str = ""
@@ -4035,9 +6304,6 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     removed_list_str_html = ""
     added_mbody_html = ""
     removed_mbody_html = ""
-
-    removed_items = list(set(list_old) - set(list_new))
-    added_items = list(set(list_new) - set(list_old))
 
     # If lists are different but sets are the same (just reordered or duplicates), no actual change
     if not removed_items and not added_items:
@@ -4053,13 +6319,14 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
             removed_mbody = f"\n{removal_text} {label.lower()}:\n\n"
             removed_mbody_html = f"<br><b>{html.escape(removal_text)} {html.escape(label.lower())}:</b><br><br>"
             for item in removed_items:
-                item_line = f"- {item} [ {github_web_base()}/{item}/ ]" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
+                note = removed_item_note(label, item)
+                item_line = f"- {item} [ {github_web_base()}/{item}/ ]{note}" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
                 print(item_line)
                 removed_list_str += item_line + "\n"
 
                 if label.lower() in ["stargazers", "watchers", "forks"]:
                     item_url = f"{github_web_base()}/{item}/"
-                    removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a><br>"
+                    removed_list_str_html += f"- <a href=\"{html.escape(item_url)}\">{html.escape(item)}</a>{html.escape(note)}<br>"
                 elif label in ["Issues", "Pull Requests", "Discussions"]:
                     match = re.match(r'#(\d+)\s+(.+?)\s+\(([^)]+)\)\s+\[\s*([^\]]+)\s*\]', item)
                     if match:
@@ -4075,7 +6342,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests", "Discussions"] else item
                         write_csv_entry(csv_file_name, now_local_naive(), f"{removal_text} {label[:-1]}", repo_name, value, "")
                 except Exception as e:
-                    print(f"* Error: {e}")
+                    print_csv_write_error(e)
             print()
 
         if added_items:
@@ -4105,7 +6372,7 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                         value = item.rsplit("(", 1)[0].strip() if label in ["Issues", "Pull Requests", "Discussions"] else item
                         write_csv_entry(csv_file_name, now_local_naive(), f"Added {label[:-1]}", repo_name, "", value)
                 except Exception as e:
-                    print(f"* Error: {e}")
+                    print_csv_write_error(e)
             print()
 
     if diff == 0:
@@ -4142,6 +6409,12 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     print_cur_ts("Timestamp:\t\t\t")
 
 
+# Keeps argparse from colouring its own help, so the help screen is coloured by this tool alone and --no-color is
+# not left with a second palette to silence. From Python 3.14 argparse colours the help by default on a terminal
+def argparse_color_kwargs() -> dict[str, Any]:
+    return {"color": False} if sys.version_info >= (3, 14) else {}
+
+
 # Finds an optional config file
 def find_config_file(cli_path=None):
     """
@@ -4154,6 +6427,7 @@ def find_config_file(cli_path=None):
 
     if cli_path:
         p = Path(os.path.expanduser(cli_path))
+        debug_print("Checking explicit configuration", path=p)
         return str(p) if p.is_file() else None
 
     candidates = [
@@ -4163,9 +6437,292 @@ def find_config_file(cli_path=None):
     ]
 
     for p in candidates:
+        debug_print("Checking discovered configuration", path=p)
         if p.is_file():
+            debug_print("Selected discovered configuration", path=p)
             return str(p)
+    debug_print("No configuration file selected")
     return None
+
+
+# Returns the raw --config-file value before argparse runs
+def early_config_file_argument(arguments=None):
+    values = list(sys.argv[1:] if arguments is None else arguments)
+    for index, argument in enumerate(values):
+        if argument == "--config-file" and index + 1 < len(values):
+            return values[index + 1]
+        if argument.startswith("--config-file="):
+            return argument.split("=", 1)[1]
+    return None
+
+
+# Applies terminal settings needed before argument parsing and leaves failures for normal config loading
+def apply_early_output_config():
+    global CLEAR_SCREEN, COLORED_OUTPUT, COLOR_THEME
+    try:
+        cli_path = early_config_file_argument()
+        if cli_path is not None and cli_path.casefold() == "none":
+            return
+        expanded_path = os.path.expanduser(cli_path) if cli_path else None
+        config_path = find_config_file(expanded_path)
+        if not config_path:
+            return
+        values = parse_config_content(Path(config_path).read_text(encoding="utf-8"), str(config_path))
+    except (MemoryError, OSError, RecursionError, SyntaxError, UnicodeError, ValueError):
+        return
+    if isinstance(values.get("CLEAR_SCREEN"), bool):
+        CLEAR_SCREEN = values["CLEAR_SCREEN"]
+    if isinstance(values.get("COLORED_OUTPUT"), bool):
+        COLORED_OUTPUT = values["COLORED_OUTPUT"]
+    # --help is printed and exited from inside argparse, long before the config load, so the help_* overrides
+    # have to be here or they could never colour the one screen they name. Unusable styles are dropped downstream
+    if isinstance(values.get("COLOR_THEME"), dict):
+        COLOR_THEME = values["COLOR_THEME"]
+
+
+# Settings an older version wrote that this version no longer defines, ignored instead of rejected
+RETIRED_CONFIG_SETTINGS = frozenset(())
+
+# Settings the template ships commented out so the built-in default applies, still accepted from a config file
+COMMENTED_CONFIG_SETTINGS = frozenset({"COLOR_THEME"})
+
+
+# Collects the setting names the built-in configuration template defines
+def _config_allowed_names():
+    template_tree = ast.parse(CONFIG_BLOCK, "<built-in-config>", "exec")
+    return frozenset(statement.targets[0].id for statement in template_tree.body if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name)) | COMMENTED_CONFIG_SETTINGS
+
+
+# Returns the literal values the built-in config template ships with, used to clear a section the user declined
+def _config_template_defaults():
+    template_tree = ast.parse(CONFIG_BLOCK, "<built-in-config>", "exec")
+    defaults = {}
+    for statement in template_tree.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1 or not isinstance(statement.targets[0], ast.Name):
+            continue
+        try:
+            defaults[statement.targets[0].id] = ast.literal_eval(statement.value)
+        except ValueError:
+            continue
+    return defaults
+
+
+# Returns the parsed value with a legacy numeric on/off setting read as the boolean it stands for
+def _normalized_config_value(name, value, defaults):
+    # 0 and 1 were accepted for these settings before the values were checked, so they still mean off and on
+    if isinstance(value, int) and not isinstance(value, bool) and value in (0, 1) and isinstance(defaults.get(name), bool):
+        return bool(value)
+    return value
+
+
+# Parses allowlisted literal config assignments without executing any file content
+def parse_config_content(content, filename="<config>", retired_out=None, reference_values=None):
+    tree = ast.parse(content, filename, "exec")
+    allowed_names = _config_allowed_names()
+    template_defaults = _config_template_defaults()
+    parsed_values = {}
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1 or not isinstance(statement.targets[0], ast.Name):
+            raise ValueError(f"Line {getattr(statement, 'lineno', '?')}: only NAME = value assignments are allowed")
+        name = statement.targets[0].id
+        if name in RETIRED_CONFIG_SETTINGS and name not in allowed_names:
+            if retired_out is not None and name not in retired_out:
+                retired_out.append(name)
+            continue
+        if name not in allowed_names:
+            raise ValueError(f"Line {statement.lineno}: unsupported configuration setting {name!r}")
+        # One setting may reuse another, which the built-in template does and existing configs copy
+        if isinstance(statement.value, ast.Name):
+            referenced = statement.value.id
+            if referenced not in allowed_names:
+                raise ValueError(f"Line {statement.lineno}: {name} may only reference another configuration setting")
+            source = parsed_values if referenced in parsed_values else (reference_values if reference_values is not None else globals())
+            if referenced not in source:
+                raise ValueError(f"Line {statement.lineno}: {name} references {referenced!r} before it has a value")
+            parsed_values[name] = source[referenced]
+            continue
+        try:
+            parsed_values[name] = _normalized_config_value(name, ast.literal_eval(statement.value), template_defaults)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError) as exc:
+            raise ValueError(f"Line {statement.lineno}: {name} must be a plain value such as a number, string, True, False, None, list, tuple or dict") from exc
+    return parsed_values
+
+
+# Validates config content through the same restricted parser used at startup
+def validate_config_content(content, filename="<generated-config>"):
+    parse_config_content(content, filename)
+
+
+# Reports settings an older version wrote that this version no longer defines
+def describe_retired_settings(names, quoted_path):
+    listed = ", ".join(sorted(names))
+    return f"Config file {quoted_path} contains settings this version no longer uses, which were ignored: {listed}"
+
+
+# Loads a config file as data and applies only recognized literal settings
+def load_config_file(config_path, namespace=None, report_errors=True, loaded_names_out=None, diagnostic_overrides=None, error_out=None, retired_names_out=None):
+    selected_namespace = globals() if namespace is None else namespace
+    retired_settings = []
+    try:
+        debug_print("Reading configuration file", path=config_path)
+        content = Path(config_path).read_text(encoding="utf-8")
+        debug_print("Configuration file read succeeded", path=config_path, bytes=len(content.encode('utf-8')))
+        # Parsed as data rather than executed, so a config file picked up from the working directory cannot run code
+        parsed_values = parse_config_content(content, str(config_path), retired_settings)
+        selected_namespace.update(parsed_values)
+        # Only a load that reaches the module settings records a choice, not a copy read for the wizard or a report
+        if selected_namespace is globals():
+            CONFIGURED_SETTING_NAMES.update(parsed_values)
+        if diagnostic_overrides is not None:
+            verbose_override, debug_override = diagnostic_overrides
+            if verbose_override:
+                selected_namespace["VERBOSE_MODE"] = True
+            if debug_override:
+                selected_namespace["DEBUG_MODE"] = True
+        if loaded_names_out is not None:
+            loaded_names_out.update(parsed_values)
+        if retired_names_out is not None:
+            retired_names_out.update(retired_settings)
+        if retired_settings and report_errors:
+            print(f"* Note: {describe_retired_settings(retired_settings, chr(39) + str(config_path) + chr(39))}")
+        debug_print("Configuration applied", path=config_path, settings=len(parsed_values), retired=len(retired_settings))
+        return True
+    except SyntaxError as exc:
+        detail = f"Config file '{config_path}' has invalid Python syntax"
+        if exc.lineno is not None:
+            detail += f" at line {exc.lineno}"
+        detail += f" | Parser: {exc.msg}"
+    # Checked before ValueError because UnicodeDecodeError derives from it
+    except UnicodeDecodeError:
+        detail = f"Config file '{config_path}' is not valid UTF-8"
+    except ValueError as exc:
+        detail = f"Config file '{config_path}' contains unsupported content: {exc}"
+    except Exception as exc:
+        detail = f"Config file '{config_path}' failed with {type(exc).__name__}: {exc}"
+    debug_print("Configuration load", path=config_path, outcome="failed", error=detail)
+    if error_out is not None:
+        error_out.append(detail)
+    if report_errors:
+        config_command = render_command(["--generate-config", "github_monitor.conf"], include_paths=False)
+        advice = make_recovery_advice("config.invalid", detail, recovery_fix_with_guide(f"Keep only documented SETTING = value lines with plain literal values or regenerate with: {config_command}", CONFIG_GUIDE_URL), False, detail)
+        print_recovery_advice(advice)
+    return False
+
+
+# Loads the selected dotenv file then applies every exported secret independently of that file
+def load_startup_secrets(env_file=None, configured_settings=None, report_errors=True, errors_out=None):
+    global DOTENV_FILE, SECRET_SOURCES
+    if env_file is not None:
+        DOTENV_FILE = os.path.expanduser(env_file)
+    elif DOTENV_FILE:
+        DOTENV_FILE = os.path.expanduser(DOTENV_FILE)
+
+    configured_names = set(configured_settings or ())
+    # An empty export is a shell-profile leftover rather than a value, so it is dropped before the dotenv load,
+    # which would otherwise keep it and leave the file's value unused
+    for secret in SECRET_KEYS:
+        if os.environ.get(secret) == "":
+            os.environ.pop(secret)
+    environment_values = {secret: os.environ[secret] for secret in SECRET_KEYS if os.environ.get(secret)}
+    dotenv_keys = set()
+    if DOTENV_FILE and DOTENV_FILE.casefold() == "none":
+        env_path = None
+        debug_print("Dotenv loading disabled by configuration or command line")
+    else:
+        try:
+            from dotenv import dotenv_values, find_dotenv
+
+            if DOTENV_FILE:
+                env_path = DOTENV_FILE
+                if not os.path.isfile(env_path):
+                    debug_print("Dotenv file not found", path=env_path)
+                    detail = f"Dotenv file '{env_path}' does not exist"
+                    if errors_out is not None:
+                        errors_out.append(detail)
+                    if report_errors:
+                        print(f"* Warning: {detail}\n")
+                else:
+                    debug_print("Reading dotenv file", path=env_path)
+                    dotenv_keys = {str(name) for name in dotenv_values(env_path) if name in SECRET_KEYS}
+                    load_managed_dotenv(env_path, override=False)
+                    debug_print("Dotenv file loaded", path=env_path, secret_names=sorted(dotenv_keys))
+            else:
+                env_path = find_dotenv() or None
+                if env_path:
+                    debug_print("Reading discovered dotenv file", path=env_path)
+                    dotenv_keys = {str(name) for name in dotenv_values(env_path) if name in SECRET_KEYS}
+                    load_managed_dotenv(env_path, override=False)
+                    debug_print("Discovered dotenv file loaded", path=env_path, secret_names=sorted(dotenv_keys))
+                else:
+                    debug_print("No dotenv file discovered")
+        except ImportError as exc:
+            debug_swallowed_exception("Dotenv dependency import", exc)
+            env_path = DOTENV_FILE if DOTENV_FILE else None
+            if env_path:
+                advice = missing_dependency_advice("python-dotenv", f"The dotenv file '{env_path}' was not loaded", "Or export the secrets as environment variables")
+                if errors_out is not None:
+                    errors_out.append(advice.summary)
+                if report_errors:
+                    print_recovery_advice(advice, label="Warning")
+        except Exception as exc:
+            env_path = DOTENV_FILE if DOTENV_FILE else None
+            verbose_degraded_feature("Dotenv loading", "dotenv-based private settings", exc)
+            advice = make_recovery_advice("file.unreadable", "The dotenv file could not be read", recovery_fix_with_guide("Check DOTENV_FILE and its permissions or disable it with --env-file none", CONFIG_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
+            if errors_out is not None:
+                errors_out.append(advice.summary + f": {advice.detail}")
+            if report_errors:
+                print_recovery_advice(advice)
+
+    SECRET_SOURCES = {}
+    for secret in SECRET_KEYS:
+        value = os.getenv(secret)
+        if value is not None:
+            globals()[secret] = value
+        # An unedited placeholder is not a configured secret, whichever layer it arrived from
+        if not secret_is_set(globals().get(secret)):
+            continue
+        if secret in environment_values:
+            source = "environment"
+        elif secret in dotenv_keys and value is not None:
+            source = "dotenv file"
+        elif secret in configured_names:
+            source = "configuration file"
+        else:
+            source = "built-in configuration"
+        record_secret_source(secret, source)
+    return env_path
+
+
+# Reports that no layer supplied a secret, called once the command line has had its say so the answer is final
+def trace_unresolved_secrets():
+    if not SECRET_SOURCES:
+        debug_print("No private settings were resolved from config, dotenv, environment or the command line")
+
+
+# Applies startup CLI overrides before any check consumes effective configuration
+def apply_startup_cli_overrides(args, configured_settings=None):
+    global GITHUB_TOKEN, GITHUB_API_URL, CHECK_INTERNET_URL, SECRET_SOURCES, COLORED_OUTPUT
+    if getattr(args, "no_color", None) is True:
+        COLORED_OUTPUT = False
+    configured_names = set(configured_settings or ())
+    previous_api_url = GITHUB_API_URL
+    connectivity_follows_api = "CHECK_INTERNET_URL" not in configured_names or CHECK_INTERNET_URL == previous_api_url
+    if args.github_token is not None:
+        GITHUB_TOKEN = args.github_token
+        record_secret_source("GITHUB_TOKEN", "command line")
+    if args.github_url is not None:
+        GITHUB_API_URL = args.github_url
+    if connectivity_follows_api:
+        CHECK_INTERNET_URL = GITHUB_API_URL
+
+
+# Applies only explicitly supplied diagnostic flags without erasing saved defaults
+def apply_diagnostic_cli_overrides(args):
+    global VERBOSE_MODE, DEBUG_MODE
+    if getattr(args, "verbose", None) is True:
+        VERBOSE_MODE = True
+    if getattr(args, "debug", None) is True:
+        DEBUG_MODE = True
 
 
 # Represents a safe GitHub token setup or validation failure
@@ -4182,35 +6739,114 @@ def resolve_secret_env_path(env_file=None, action_name="Private secret setup") -
     return path.resolve()
 
 
+# Matches one dotenv assignment, tolerating the export prefix used when the same file is sourced by a shell
+def match_dotenv_assignment(line: Any, key: str):
+    return re.match(rf"^(\s*(?:export\s+)?){re.escape(key)}\s*=", str(line))
+
+
+# Renders one quoted dotenv assignment, keeping the export prefix of the line it replaces
+def render_dotenv_assignment(key: str, value: str, prefix: str = "") -> str:
+    # A line break inside a value would split the assignment, so it is escaped rather than written through
+    escaped = value.replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34)).replace("\r", "\\r").replace("\n", "\\n")
+    suffix = ' # monitor:literal' if '${' in str(value) else ''
+    return f'{prefix}{key}="{escaped}"{suffix}'
+
+
 # Returns whether one dotenv file already assigns the requested key
-def dotenv_contains_key(path: Path, key: str) -> bool:
+def _dotenv_contains_key(path: Path, key: str) -> bool:
     if not path.exists():
+        debug_print("Dotenv key check skipped because file does not exist", path=path, key=key)
         return False
-    content = path.read_text(encoding="utf-8")
-    return any(re.match(rf"^\s*{re.escape(key)}\s*=", line) for line in content.splitlines())
+    debug_print("Reading dotenv file for key check", path=path, key=key)
+    try:
+        content = path.read_text(encoding="utf-8")
+    except Exception as exc:
+        debug_print("Dotenv key check read", path=path, key=key, outcome="failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    debug_print("Dotenv key check read succeeded", path=path, key=key)
+    return any(binding.key == key for binding in _dotenv_bindings(content))
 
 
-# Updates one dotenv assignment while preserving unrelated lines
-def update_dotenv_value(path: Path, key: str, value: str) -> None:
+# Returns the dotenv parser's own bindings for one file's text, where a quoted value written across several lines is one binding
+def _dotenv_bindings(text):
+    from io import StringIO
+    from dotenv.parser import parse_stream
+    return list(parse_stream(StringIO(text)))
+
+
+# Rewrites complete dotenv bindings while preserving unrelated content
+def render_private_settings(existing, updates):
+    output_parts = []
+    replaced = set()
+    # Rebuilt from the parser's own bindings rather than physical lines, since a quoted value can span several
+    # of them and replacing only the first leaves the rest of the old secret behind as broken syntax
+    for binding in _dotenv_bindings(existing):
+        original = binding.original.string
+        blank_prefix = original[:len(original) - len(original.lstrip("\r\n"))]
+        if binding.key is None or binding.key not in updates:
+            output_parts.append(original)
+            continue
+        # A secret cleared by its owner is removed rather than emptied, so a disabled value cannot linger here
+        if binding.key in replaced or not updates[binding.key]:
+            output_parts.append(blank_prefix)
+            replaced.add(binding.key)
+            continue
+        replaced.add(binding.key)
+        # An already exported assignment is rewritten in place. Appending a second one would leave the old
+        # credential on disk, with only the load order deciding which one wins
+        head = original[len(blank_prefix):]
+        # Keep key quotes out of the indentation and export prefix
+        written_prefix = head[:head.index(binding.key)].rstrip("'")
+        output_parts.append(f"{blank_prefix}{render_dotenv_assignment(binding.key, updates[binding.key], written_prefix)}\n")
+    content = "".join(output_parts)
+    # A file that did not end in a newline would otherwise take the first new assignment onto its last line
+    if content and not content.endswith("\n"):
+        content += "\n"
+    for key, value in updates.items():
+        if key not in replaced and value:
+            content += f"{render_dotenv_assignment(key, value)}\n"
+    # Checked before it replaces the file, so a rewrite can never publish a secret the next run cannot read back
+    rewritten = resolve_dotenv_values(content, override=True)
+    if any(rewritten.get(key, "") != value for key, value in updates.items()):
+        raise ValueError("The dotenv update would not store the requested values")
+    return content
+
+
+# Atomically replaces dotenv assignments with owner-only permissions while preserving unrelated lines
+def update_dotenv_file(destination, updates):
+    if not hasattr(updates, "items"):
+        raise TypeError("Dotenv updates must be a mapping")
+    path = Path(destination).expanduser()
+    for key, value in updates.items():
+        if key not in SECRET_KEYS:
+            raise ValueError(f"Refusing to write an unknown dotenv key: {key}")
+        if not isinstance(value, str):
+            raise TypeError(f"Dotenv value for {key} must be a string")
     if not path.parent.is_dir():
         raise FileNotFoundError(f"Dotenv parent directory does not exist: {path.parent}")
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    encoded_value = value.replace("\\", "\\\\").replace('"', '\\"')
-    assignment = f'{key}="{encoded_value}"'
-    output_lines = []
-    replaced = False
-    for line in existing.splitlines():
-        if re.match(rf"^\s*{re.escape(key)}\s*=", line):
-            if not replaced:
-                output_lines.append(assignment)
-                replaced = True
-            continue
-        output_lines.append(line)
-    if not replaced:
-        output_lines.append(assignment)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as dotenv_file:
-        dotenv_file.write("\n".join(output_lines) + "\n")
+    debug_print("Reading private settings file before update", path=path, exists=path.exists())
+    try:
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    except Exception as exc:
+        debug_print("Private settings file read", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    content = render_private_settings(existing, updates)
+    temporary_path = None
+    try:
+        # Follow an existing symlink as the original writer did, then replace only its target after the write succeeds
+        target = path.resolve()
+        temporary_path = prepare_wizard_atomic_file(target, content)
+        os.replace(temporary_path, target)
+    except Exception as exc:
+        debug_print("Private settings file update", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    debug_print("Private settings file update succeeded", path=path, mode="0600")
+    for key, value in updates.items():
+        verbose_print(f"{'Saved' if value else 'Removed'} {key} in the private settings file")
+    return {"path": str(path), "updated_keys": tuple(updates)}
 
 
 # Validates one GitHub token without exposing it in errors or output
@@ -4223,18 +6859,18 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
     selected_api_url = GITHUB_API_URL if api_url is None else api_url
     if not isinstance(selected_api_url, str) or not selected_api_url.strip():
         raise GitHubTokenConfigurationError("GITHUB_API_URL is empty and the dotenv file was not changed")
-    try:
-        parsed_api_url = urlsplit(selected_api_url.strip())
-    except ValueError:
-        parsed_api_url = None
-    if parsed_api_url is None or parsed_api_url.scheme.casefold() != "https" or not parsed_api_url.hostname or parsed_api_url.username or parsed_api_url.password or parsed_api_url.query or parsed_api_url.fragment:
+    if not validate_github_endpoint_url(selected_api_url):
         raise GitHubTokenConfigurationError("GITHUB_API_URL must be a complete HTTPS URL without embedded credentials, query parameters or fragments")
     endpoint = selected_api_url.strip().rstrip("/") + "/user"
     headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {selected_token}", "User-Agent": f"GitHubMonitor/{VERSION}"}
     get_request = req.get if request_get is None else request_get
     try:
-        response = get_request(endpoint, headers=headers, timeout=10, allow_redirects=False)
-    except req.RequestException:
+        debug_http_request("GET", endpoint, "GitHub token validation", 10, headers=headers, token=selected_token)
+        response = get_request(endpoint, headers=headers, timeout=10, allow_redirects=False, verify=VERIFY_SSL)
+        debug_http_response("GET", endpoint, "GitHub token validation", getattr(response, "status_code", "unknown"))
+    except req.RequestException as exc:
+        exit_if_out_of_file_descriptors(exc)
+        debug_print("GitHub token validation request", outcome="failed", error=f"{type(exc).__name__}: {sanitize_error_text(exc, (selected_token,))}")
         raise GitHubTokenConfigurationError("Could not reach the configured GitHub API while validating the token and the dotenv file was not changed") from None
     status_code = getattr(response, "status_code", None)
     if status_code in (401, 403):
@@ -4243,7 +6879,8 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
         raise GitHubTokenConfigurationError(f"GitHub token validation returned HTTP {status_code} and the dotenv file was not changed")
     try:
         payload = response.json()
-    except Exception:
+    except Exception as exc:
+        debug_swallowed_exception("GitHub token validation response parsing", exc)
         payload = None
     login = payload.get("login") if isinstance(payload, dict) else None
     if not isinstance(login, str) or not login.strip():
@@ -4252,85 +6889,204 @@ def validate_github_token(token: Any, api_url: Any = None, request_get: Optional
 
 
 # Validates and safely stores one privately entered GitHub token
-def run_set_github_token(env_file=None, api_url=None, interactive=None, input_func=None, getpass_func=None, config_path=None) -> str:
+def run_set_github_token(env_file=None, api_url=None, interactive=None, input_func=None, getpass_func=None, config_path=None, install_context=None) -> str:
+    global DEBUG_MODE
     destination = resolve_secret_env_path(env_file, "--set-github-token")
     terminal_is_interactive = sys.stdin.isatty() if interactive is None else interactive
     if not terminal_is_interactive:
         raise GitHubTokenConfigurationError("--set-github-token requires an interactive terminal so the token stays hidden")
     prompt = input if input_func is None else input_func
-    if dotenv_contains_key(destination, "GITHUB_TOKEN"):
+    if _dotenv_contains_key(destination, "GITHUB_TOKEN"):
         try:
-            confirmed = prompt(f"Replace GITHUB_TOKEN in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
+            confirmed = read_interactively(prompt, f"Replace the saved GitHub token in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
-            confirmed = False
+            print()
+            raise RecoveryError(secret_entry_cancelled_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL)) from None
         if not confirmed:
-            raise GitHubTokenConfigurationError("GITHUB_TOKEN replacement was cancelled and the dotenv file was not changed")
-    print("* Create or review GitHub tokens at: https://github.com/settings/tokens")
+            raise RecoveryError(secret_replacement_declined_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL))
+    print(colorize_links("* Create or review GitHub tokens at: https://github.com/settings/tokens"))
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
+    previous_debug_mode = DEBUG_MODE
+    DEBUG_MODE = False
     try:
-        token = hidden_prompt("Enter GitHub token privately: ").strip()
+        token = read_interactively(hidden_prompt, "Enter GitHub token privately: ").strip()
     except (EOFError, KeyboardInterrupt):
-        raise GitHubTokenConfigurationError("GITHUB_TOKEN entry was cancelled and the dotenv file was not changed") from None
-    print("* Validating the entered GitHub token before changing the dotenv file ...")
+        print()
+        raise RecoveryError(secret_entry_cancelled_advice("GitHub token", "--set-github-token", AUTH_GUIDE_URL)) from None
+    finally:
+        DEBUG_MODE = previous_debug_mode
+    print("* Checking the entered GitHub token before changing the dotenv file ...")
     login = validate_github_token(token, api_url=api_url)
     try:
-        update_dotenv_value(destination, "GITHUB_TOKEN", token)
-    except Exception:
+        update_dotenv_file(destination, {"GITHUB_TOKEN": token})
+    except Exception as exc:
+        debug_print("Private settings file update", path=destination, key="GITHUB_TOKEN", outcome="failed", error=f"{type(exc).__name__}: {exc}")
         raise GitHubTokenConfigurationError(f"Could not save GITHUB_TOKEN in '{destination}'. Check the path and file permissions") from None
-    command = ["github_monitor", "GITHUB_USERNAME"]
-    if config_path:
-        command.extend(("--config-file", str(config_path)))
-    command.extend(("--env-file", str(destination)))
+    paths = []
+    if config_path or CONFIG_DISCOVERY_DISABLED:
+        paths.extend(("--config-file", str(resolved_command_config(config_path))))
+    paths.extend(("--env-file", str(destination)))
     if api_url is not None:
-        command.extend(("--github-url", str(api_url)))
+        paths.extend(("--github-url", str(api_url)))
     print(f"* GitHub token validation succeeded for user: {login}")
     print(f"* Updated private settings file: {destination}")
-    print(f"* Start monitoring: {shlex.join(command)}")
+    print()
+    doctor_target, monitor_target = command_targets(None, config_file_target(resolved_command_config(config_path)))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_command(["--doctor"] + ([doctor_target] if doctor_target else []) + paths, install_context=install_context))
+    _wizard_print_command(sys.stdout, "After Doctor passes, start monitoring:", render_command(([monitor_target] if monitor_target else []) + paths, install_context=install_context))
     return str(destination)
 
 
 # Checks and safely stores one privately entered webhook URL
-def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpass_func=None, config_path=None) -> str:
+def run_set_webhook_url(env_file=None, interactive=None, input_func=None, getpass_func=None, config_path=None, install_context=None) -> str:
+    global DEBUG_MODE
     destination = resolve_secret_env_path(env_file, "--set-webhook-url")
     terminal_is_interactive = sys.stdin.isatty() if interactive is None else interactive
     if not terminal_is_interactive:
         raise ValueError("--set-webhook-url requires an interactive terminal so the webhook URL stays hidden")
     prompt = input if input_func is None else input_func
-    if dotenv_contains_key(destination, "WEBHOOK_URL"):
+    if _dotenv_contains_key(destination, "WEBHOOK_URL"):
         try:
-            confirmed = prompt(f"Replace the saved webhook URL in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
+            confirmed = read_interactively(prompt, f"Replace the saved webhook URL in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
-            confirmed = False
+            print()
+            raise RecoveryError(secret_entry_cancelled_advice("webhook URL", "--set-webhook-url", WEBHOOK_GUIDE_URL)) from None
         if not confirmed:
-            raise ValueError("Webhook setup was cancelled and the dotenv file was not changed")
+            raise RecoveryError(secret_replacement_declined_advice("webhook URL", "--set-webhook-url", WEBHOOK_GUIDE_URL))
     hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
+    previous_debug_mode = DEBUG_MODE
+    DEBUG_MODE = False
     try:
-        webhook_url = hidden_prompt("Paste the Discord or ntfy webhook URL (input hidden): ").strip()
+        webhook_url = read_interactively(hidden_prompt, "Paste the Discord or ntfy webhook URL (input hidden): ").strip()
     except (EOFError, KeyboardInterrupt):
-        raise ValueError("Webhook setup was cancelled and the dotenv file was not changed") from None
+        print()
+        raise RecoveryError(secret_entry_cancelled_advice("webhook URL", "--set-webhook-url", WEBHOOK_GUIDE_URL)) from None
+    finally:
+        DEBUG_MODE = previous_debug_mode
     if not validate_webhook_url(webhook_url):
         raise ValueError("That does not look like a complete HTTPS webhook URL and the dotenv file was not changed")
-    update_dotenv_value(destination, "WEBHOOK_URL", webhook_url)
-    command = ["github_monitor", "--send-test-webhook"]
-    if config_path:
-        command.extend(("--config-file", str(config_path)))
-    command.extend(("--env-file", str(destination)))
+    update_dotenv_file(destination, {"WEBHOOK_URL": webhook_url})
+    paths = []
+    if config_path or CONFIG_DISCOVERY_DISABLED:
+        paths.extend(("--config-file", str(resolved_command_config(config_path))))
+    paths.extend(("--env-file", str(destination)))
     print("* Webhook URL looks valid")
     print(f"* Updated private settings file: {destination}")
-    print(f"* Send a test webhook: {shlex.join(command)}")
+    print()
+    _wizard_print_command(sys.stdout, "Send a test webhook:", render_command(["--send-test-webhook"] + paths, install_context=install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_command(["--doctor"] + paths, install_context=install_context))
     return str(destination)
 
 
-# Resolves an executable path by checking if it's a valid file or searching in $PATH
-def resolve_executable(path):
-    if os.path.isfile(path) and os.access(path, os.X_OK):
-        return path
+# Represents a mail server that is not configured well enough for a password to be checked against it
+class MailConfigurationError(ValueError):
+    pass
 
-    found = shutil.which(path)
-    if found:
-        return found
 
-    raise FileNotFoundError(f"Could not find executable '{path}'")
+# The settings a sign-in needs before a password can be checked against the mail server
+MAIL_SIGN_IN_SETTINGS = ("SMTP_HOST", "SMTP_USER", "SENDER_EMAIL", "RECEIVER_EMAIL")
+
+
+# Returns the mail settings a sign-in needs that are still empty or still hold their shipped placeholder
+def mail_sign_in_settings_missing():
+    return [name for name in MAIL_SIGN_IN_SETTINGS if not secret_is_set(str(globals().get(name) or ""))]
+
+
+# Joins setting names into the phrase a message reads out, for example "SMTP_HOST and SMTP_USER"
+def join_setting_names(names, conjunction):
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} {conjunction} {names[-1]}"
+
+
+# Signs in while removing the attempted password from SMTP rejection replies before they can be rendered
+def smtp_login(connection, username, password):
+    try:
+        return connection.login(username, password)
+    except smtplib.SMTPResponseException as error:
+        reply = error.smtp_error
+        if password:
+            if isinstance(reply, bytes):
+                reply = reply.replace(str(password).encode("utf-8"), b"<redacted>")
+            else:
+                reply = str(reply).replace(str(password), "<redacted>")
+        error.smtp_error = reply
+        error.args = (error.smtp_code, reply)
+        raise
+
+
+# Signs in to the configured mail server with one entered password, so nothing is saved that cannot deliver
+def smtp_sign_in(password, timeout=5):
+    global SMTP_PASSWORD
+
+    candidate = str(password or "")
+    if not candidate or candidate == "your_smtp_password":
+        raise ValueError("No SMTP password was entered and the dotenv file was not changed")
+    settings_problem = wizard_email_settings_error({name: globals()[name] for name in WIZARD_SMTP_CONFIG_KEYS}, {"SMTP_PASSWORD": candidate})
+    if settings_problem:
+        raise ValueError(f"The mail server settings are incomplete: {settings_problem}")
+    previous_password = SMTP_PASSWORD
+    SMTP_PASSWORD = candidate
+    smtp_object = None
+    try:
+        smtp_object = smtp_connect_and_login(SMTP_SSL, smtp_timeout=timeout)
+    finally:
+        if smtp_object is not None:
+            smtp_quit_quietly(smtp_object)
+        SMTP_PASSWORD = previous_password
+    return str(SMTP_USER)
+
+
+# Privately checks one SMTP password against the mail server and atomically stores it
+def run_set_smtp_password(env_file=None, interactive=None, input_func=None, getpass_func=None, config_path=None, install_context=None, sign_in=None) -> str:
+    global DEBUG_MODE
+    destination = resolve_secret_env_path(env_file, "--set-smtp-password")
+    terminal_is_interactive = sys.stdin.isatty() if interactive is None else interactive
+    if not terminal_is_interactive:
+        raise ValueError("--set-smtp-password requires an interactive terminal so the password stays hidden")
+    # Checked before the prompts, so nobody types a password only to be told the mail server was never configured
+    missing = mail_sign_in_settings_missing()
+    if missing:
+        names = join_setting_names(missing, "and")
+        raise MailConfigurationError(f"The mail server settings are incomplete, {names} {'is' if len(missing) == 1 else 'are'} not set")
+    prompt = input if input_func is None else input_func
+    if _dotenv_contains_key(destination, "SMTP_PASSWORD"):
+        try:
+            confirmed = read_interactively(prompt, f"Replace the saved SMTP password in '{destination}'? [y/N]: ").strip().casefold() in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            raise RecoveryError(secret_entry_cancelled_advice("SMTP password", "--set-smtp-password", SMTP_GUIDE_URL)) from None
+        if not confirmed:
+            raise RecoveryError(secret_replacement_declined_advice("SMTP password", "--set-smtp-password", SMTP_GUIDE_URL))
+    print(f"* The password is checked by signing in to {SMTP_HOST} as {SMTP_USER}. Nothing is sent")
+    hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
+    previous_debug_mode = DEBUG_MODE
+    DEBUG_MODE = False
+    try:
+        smtp_password = str(read_interactively(hidden_prompt, "Enter the SMTP password (input hidden): "))
+    except (EOFError, KeyboardInterrupt):
+        print()
+        raise RecoveryError(secret_entry_cancelled_advice("SMTP password", "--set-smtp-password", SMTP_GUIDE_URL)) from None
+    finally:
+        DEBUG_MODE = previous_debug_mode
+    check = smtp_sign_in if sign_in is None else sign_in
+    try:
+        signed_in_user = check(smtp_password, timeout=WIZARD_SMTP_TIMEOUT)
+    except RecoveryError:
+        raise
+    except Exception as exc:
+        # The sign-in restores the previous password before the failure reaches here, so the value that was tried
+        # is passed to the redaction explicitly rather than left to the global it would otherwise read
+        raise RecoveryError(classify_recovery_error(exc, context="email", detail=sanitize_error_text(exc, (smtp_password,)), install_context=install_context), exc) from None
+    update_dotenv_file(destination, {"SMTP_PASSWORD": smtp_password})
+    paths = []
+    if config_path or CONFIG_DISCOVERY_DISABLED:
+        paths.extend(("--config-file", str(resolved_command_config(config_path))))
+    paths.extend(("--env-file", str(destination)))
+    print(f"* The mail server accepted the password for {signed_in_user}")
+    print(f"* Updated private settings file: {destination}")
+    print()
+    _wizard_print_command(sys.stdout, "Send a test email:", render_command(["--send-test-email"] + paths, install_context=install_context))
+    _wizard_print_command(sys.stdout, "Check setup again:", render_command(["--doctor"] + paths, install_context=install_context))
+    return str(destination)
 
 
 # Checks if the authenticated user (token's owner) is blocked by user
@@ -4342,9 +7098,13 @@ def is_blocked_by(user):
             "Accept": "application/vnd.github+json",
         }
 
-        response = req.get(f"{GITHUB_API_URL}/user", headers=headers, timeout=15)
+        user_endpoint = f"{GITHUB_API_URL}/user"
+        debug_http_request("GET", user_endpoint, "authenticated viewer lookup for block detection", 15, headers=headers, token=GITHUB_TOKEN)
+        response = req.get(user_endpoint, headers=headers, timeout=15, verify=VERIFY_SSL)
+        debug_http_response("GET", user_endpoint, "authenticated viewer lookup for block detection", response.status_code)
         if response.status_code != 200:
-            return False
+            verbose_degraded_feature("Block status", "block and unblock alerts")
+            return None
         me_login = response.json().get("login", "").lower()
         if user.lower() == me_login:
             return False
@@ -4358,20 +7118,25 @@ def is_blocked_by(user):
         }
         """
         payload = {"query": query, "variables": {"login": user}}
-        response_graphql = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15)
+        debug_http_request("POST", graphql_endpoint, "target block relationship lookup", 15, headers=headers, token=GITHUB_TOKEN)
+        response_graphql = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL)
+        debug_http_response("POST", graphql_endpoint, "target block relationship lookup", response_graphql.status_code)
 
         if response_graphql.status_code == 404:
-            return False
+            verbose_degraded_feature("Block status", "block and unblock alerts")
+            return None
 
         if not response_graphql.ok:
-            return False
+            verbose_degraded_feature("Block status", "block and unblock alerts")
+            return None
 
         data = response_graphql.json()
         can_follow = (data.get("data", {}).get("user", {}).get("viewerCanFollow", True))
         return not bool(can_follow)
 
-    except Exception:
-        return False
+    except Exception as exc:
+        verbose_degraded_feature("Block status", "block and unblock alerts", exc)
+        return None
 
 
 # Return the total number of repositories the user has starred (faster than via PyGithub)
@@ -4394,16 +7159,20 @@ def get_starred_count(user):
         }
         """
         payload = {"query": query, "variables": {"login": user}}
-        response = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15)
+        debug_http_request("POST", graphql_endpoint, "starred repository count", 15, headers=headers, token=GITHUB_TOKEN)
+        response = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL)
+        debug_http_response("POST", graphql_endpoint, "starred repository count", response.status_code)
 
         if not response.ok:
+            verbose_degraded_feature("Starred repository count", "starred repository change alerts")
             return 0
 
         data = response.json()
 
         return (data.get("data", {}).get("user", {}).get("starredRepositories", {}).get("totalCount", 0))
 
-    except Exception:
+    except Exception as exc:
+        verbose_degraded_feature("Starred repository count", "starred repository change alerts", exc)
         return 0
 
 
@@ -4411,9 +7180,12 @@ def get_starred_count(user):
 def has_private_banner(user):
     try:
         url = f"{GITHUB_HTML_URL.rstrip('/')}/{user}"
-        r = req.get(url, timeout=15)
+        debug_http_request("GET", url, "public profile visibility page", 15)
+        r = req.get(url, timeout=15, verify=VERIFY_SSL)
+        debug_http_response("GET", url, "public profile visibility page", r.status_code)
         return r.ok and "activity is private" in r.text.lower()
-    except Exception:
+    except Exception as exc:
+        verbose_degraded_feature("Profile visibility", "profile visibility alerts", exc)
         return False
 
 
@@ -4424,6 +7196,7 @@ def is_profile_public(g: Github, user, new_account_days=30):
         return False
 
     try:
+        debug_github_operation("public profile lookup", user)
         u = g.get_user(user)
 
         if any([
@@ -4434,14 +7207,17 @@ def is_profile_public(g: Github, user, new_account_days=30):
             return True
 
         try:
+            debug_print("PyGithub", operation="recent public event probe", endpoint=diagnostic_endpoint(GITHUB_API_URL), timeout=f"{PYGITHUB_TIMEOUT_SECONDS}s", token=mask_secret(GITHUB_TOKEN), target=user)
             events_iter = iter(u.get_events())
             next(events_iter)
             return True
-        except (StopIteration, GithubException):
-            pass
+        except StopIteration as exc:
+            debug_swallowed_exception("Recent public event probe returned no events", exc)
+        except GithubException as exc:
+            verbose_degraded_feature("Public profile detection", "profile visibility alerts", exc)
 
-    except GithubException:
-        pass
+    except GithubException as exc:
+        verbose_degraded_feature("Public profile detection", "profile visibility alerts", exc)
 
     return False
 
@@ -4481,7 +7257,7 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
 
         tz = pytz.timezone(LOCAL_TIMEZONE)
         start_w = current_start - dt.timedelta(days=1)
-        end_w_exclusive = chunk_end + dt.timedelta(days=2)
+        end_w_exclusive = chunk_end + dt.timedelta(days=1)
         start_iso = tz.localize(dt.datetime.combine(start_w, dt.time.min)).isoformat()
         end_iso = tz.localize(dt.datetime.combine(end_w_exclusive, dt.time.min)).isoformat()
 
@@ -4502,7 +7278,9 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
         }"""
 
         variables = {"login": username, "from": start_iso, "to": end_iso}
-        r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30)
+        debug_http_request("POST", url, "daily contribution calendar", 30, headers=headers, token=token)
+        r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30, verify=VERIFY_SSL)
+        debug_http_response("POST", url, "daily contribution calendar", r.status_code)
         r.raise_for_status()
         data = r.json()
 
@@ -4543,7 +7321,8 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
                     date_obj = dt.date.fromisoformat(date_str)
                     if start <= date_obj <= end:
                         out[date_str] = d.get("contributionCount", 0)
-                except ValueError:
+                except ValueError as exc:
+                    debug_swallowed_exception("Contribution calendar date parsing", exc)
                     continue
 
         # Move to next chunk
@@ -4563,18 +7342,15 @@ def get_daily_contributions_count(username: str, day: dt.date, token: str) -> in
 
 
 # Checks count for today and decides whether to notify based on stored state.
-def check_daily_contribs(username: str, token: str, state: dict, min_delta: int = 1, fail_threshold: int = 3) -> tuple[bool, int, bool]:
+def check_daily_contribs(username: str, token: str, state: dict, min_delta: int = 1) -> tuple[bool, int]:
     day = today_local()
 
     try:
         curr = get_daily_contributions_count(username, day, token=token)
-        state["consecutive_failures"] = 0
-        state["last_error"] = None
+    # The check itself carries the failure to the error alerts, so the previous count is kept untouched
     except Exception as e:
-        state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-        state["last_error"] = f"{type(e).__name__}: {e}"
-        error_notify = state["consecutive_failures"] >= fail_threshold
-        return False, state.get("count", 0), error_notify
+        verbose_degraded_feature("Daily contribution count", "daily contribution change alerts", e)
+        return False, state.get("count", 0)
 
     prev_day = state.get("day")
     prev_cnt = state.get("count")
@@ -4584,17 +7360,17 @@ def check_daily_contribs(username: str, token: str, state: dict, min_delta: int 
         state["day"] = day
         state["count"] = curr
         state["prev_count"] = curr
-        return False, curr, False  # no notify on rollover
+        return False, curr  # no notify on rollover
 
     # Same day -> notify if change >= threshold
     if prev_cnt is not None and abs(curr - prev_cnt) >= min_delta:
         state["prev_count"] = prev_cnt
         state["count"] = curr
-        return True, curr, False
+        return True, curr
 
     # No change
     state["count"] = curr
-    return False, curr, False
+    return False, curr
 
 
 # Returns whether a nullable profile field was fetched successfully and changed
@@ -4602,14 +7378,55 @@ def has_nullable_profile_field_changed(value, previous, unavailable):
     return value is not unavailable and value != previous
 
 
+# Reports one unavailable profile field whose change alert cannot be evaluated
+def report_unavailable_profile_field(label, value, unavailable):
+    if value is unavailable:
+        verbose_degraded_feature(f"Profile {label}", f"{label} change alerts")
+
+
+# Reports one failed monitoring check and retries only error-alert channels that still owe delivery
+def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage):
+    # A failure that has not changed is left to the liveness cadence rather than repeated every check
+    outage_outcome = outage.failed(advice)
+    delivery_reported = False
+    if outage_outcome == "full":
+        print_recovery_advice(advice, tracker=monitor_recovery_tracker, retry_note=f"retrying in {display_time(GITHUB_CHECK_INTERVAL)}")
+    elif outage_outcome == "changed":
+        print_outage_change(user, advice)
+    elif outage_outcome == "reminder":
+        print_outage_liveness(user, advice, outage.since, outage.failures)
+
+    m_subject = f"{advice.summary} (GitHub user: {user})"
+    m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
+    m_body_html = f"<html><head></head><body><b>{html_text(advice.summary)}</b><br><br>To fix: {html_text(advice.fix)}<br><br>GitHub Monitor will retry in {html.escape(display_time(GITHUB_CHECK_INTERVAL))}.{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
+    # Attempted on every failing check rather than only on the report, so a channel that failed is tried again
+    # A failure the tool can retry away is alerted once the outage has lasted ERROR_ALERT_AFTER_SECONDS, one it cannot at once
+    alert_due = not advice.retryable or int(time.time()) - outage.since >= ERROR_ALERT_AFTER_SECONDS
+    now = int(time.time())
+    error_email_pending = alert_due and error_alert.pending("email", ERROR_NOTIFICATION, now)
+    error_webhook_pending = alert_due and error_alert.pending("webhook", webhook_event_enabled("error"), now)
+    if error_email_pending or error_webhook_pending:
+        email_delivered, webhook_delivered = send_notification_channels("error", m_subject, m_body, m_body_html, error_email_pending, error_webhook_pending)
+        error_alert.record("email", error_email_pending, email_delivered, now)
+        error_alert.record("webhook", error_webhook_pending, webhook_delivered, now)
+        delivery_reported = True
+
+    # A retry can reach the screen on a check the outage reporter keeps quiet, and a delivery line
+    # with nothing under it reads as a run that stopped there
+    if outage_outcome in ("full", "changed") or delivery_reported:
+        print_cur_ts("Timestamp:\t\t\t")
+
+
 # Monitors activity of the specified GitHub user
 def github_monitor_user(user, csv_file_name):
+
+    mark_monitoring_started()
 
     try:
         if csv_file_name:
             init_csv_file(csv_file_name)
     except Exception as e:
-        print(f"* Error: {e}")
+        print_csv_write_error(e)
 
     followers_count = 0
     followings_count = 0
@@ -4623,18 +7440,20 @@ def github_monitor_user(user, csv_file_name):
     public = False
     contrib_state = {}
     contrib_curr = 0
+    closure_verifier = RepositoryClosureVerifier()
 
     print("Sneaking into GitHub like a ninja ...")
 
     try:
-        auth = Auth.Token(GITHUB_TOKEN)
-        g = Github(base_url=GITHUB_API_URL, auth=auth)
+        g = create_github_client("monitor initialization")
         auth_refresh_version = GITHUB_AUTH_REFRESH_VERSION
+        debug_github_operation("authenticated viewer profile lookup")
         g_user_myself = g.get_user()
         user_myself_login = g_user_myself.login
         user_myself_name = g_user_myself.name
         user_myself_url = g_user_myself.html_url
 
+        debug_github_operation("monitored user profile lookup", user)
         g_user = g.get_user(user)
         user_login = g_user.login
         user_name = g_user.name
@@ -4650,16 +7469,21 @@ def github_monitor_user(user, csv_file_name):
         followers_count = g_user.followers
         followings_count = g_user.following
 
+        debug_github_operation("followers listing", user)
         followers_list = g_user.get_followers()
+        debug_github_operation("followings listing", user)
         followings_list = g_user.get_following()
 
         if GET_ALL_REPOS:
+            debug_github_operation("all repository listing", user)
             repos_list = g_user.get_repos()
             repos_count = g_user.public_repos
         else:
+            debug_github_operation("owned repository listing", user)
             repos_list = [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login]
             repos_count = len(repos_list)
 
+        debug_github_operation("starred repository listing", user)
         starred_list = g_user.get_starred()
         starred_count = starred_list.totalCount
 
@@ -4675,11 +7499,13 @@ def github_monitor_user(user, csv_file_name):
             }
 
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
+            debug_github_operation("recent event listing", user)
             events = list(islice(g_user.get_events(), EVENTS_NUMBER))
             available_events = len(events)
 
     except Exception as e:
-        print(f"\n* Error: {e}")
+        print()
+        print_recovery_error(e, detail=f"Reading the event feed of '{user}' failed: {e}")
         sys.exit(1)
 
     last_event_id = 0
@@ -4697,8 +7523,10 @@ def github_monitor_user(user, csv_file_name):
                 if last_event_id:
                     last_event_ts = newest.created_at
             except Exception as e:
-                print(f"\n* Cannot get event IDs / timestamps: {e}\n")
-                pass
+                verbose_degraded_feature("Initial event identifiers", "new event alerts", e)
+                print()
+                print_degraded_error("The event identifiers could not be read", e)
+                print()
 
     followers_old_count = followers_count
     followings_old_count = followings_count
@@ -4792,7 +7620,8 @@ def github_monitor_user(user, csv_file_name):
         try:
             list_of_repos = github_process_repos(repos_list_filtered, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()))
         except Exception as e:
-            print(f"* Cannot process list of public repositories: {e}")
+            verbose_degraded_feature("Initial repository details", "repository detail alerts", e)
+            print_degraded_error("The public repository list could not be processed", e)
         print_cur_ts("\nTimestamp:\t\t\t")
 
     list_of_repos_old = list_of_repos
@@ -4806,7 +7635,9 @@ def github_monitor_user(user, csv_file_name):
             try:
                 github_print_event(events[0], g, True)
             except Exception as e:
-                print(f"\n* Warning: cannot fetch last event details: {e}")
+                verbose_degraded_feature("Initial event details", "complete event alerts", e, enrichment=True)
+                print()
+                print_degraded_error("The last event details could not be read", e, label="Warning")
 
         print_cur_ts("\nTimestamp:\t\t\t")
 
@@ -4821,69 +7652,61 @@ def github_monitor_user(user, csv_file_name):
         repos_old = [repo.name for repo in repos_list]
         starred_old = [star.full_name for star in starred_list]
     except Exception as e:
-        print(f"* Error: {e}")
+        print_recovery_error(e, detail=f"Reading the initial profile snapshot of '{user}' failed: {e}")
         sys.exit(1)
 
+    verbose_notice(f"Initial snapshot completed for {user}")
+    # The snapshot names its features differently from the checks, so its outages are not carried into the loop
+    reset_degraded_features()
+    debug_monitor_wait_timing("initial monitoring interval", GITHUB_CHECK_INTERVAL)
     time.sleep(GITHUB_CHECK_INTERVAL)
-    alive_counter = 0
-    email_sent = False
+    alive_since = int(time.time())
+    # The error alert is tracked once per channel and per outage
+    error_alert = ErrorAlertState()
+    monitor_recovery_tracker = RecoveryHintTracker()
+    outage = OutageReporter()
     profile_field_unavailable = object()
+    check_number = 0
 
     # Primary loop
     while True:
+        check_number += 1
+        MONITOR_CHECK_FAILURES.clear()
+        DEGRADED_FEATURES_SEEN.clear()
+        reports_before_check = REPORTS_PRINTED
+        check_started_at = debug_monitor_check_start(check_number, user)
 
         try:
             if auth_refresh_version != GITHUB_AUTH_REFRESH_VERSION:
-                auth = Auth.Token(GITHUB_TOKEN)
-                g = Github(base_url=GITHUB_API_URL, auth=auth)
+                g = create_github_client("monitor authentication reload")
+                debug_github_operation("authenticated viewer profile lookup after reload")
                 g_user_myself = g.get_user()
                 user_myself_login = g_user_myself.login
                 user_myself_name = g_user_myself.name
                 user_myself_url = g_user_myself.html_url
                 auth_refresh_version = GITHUB_AUTH_REFRESH_VERSION
                 print("* GitHub API client recreated after token reload")
+            debug_github_operation("monitored user profile refresh", user)
             g_user = g.get_user(user)
-            email_sent = False
 
         except (GithubException, Exception) as e:
-            print(f"* Error, retrying in {display_time(GITHUB_CHECK_INTERVAL)}: {e}")
+            verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
+            advice = classify_recovery_error(e, "target")
 
-            should_notify = False
-            reason_msg = None
-
-            if isinstance(e, BadCredentialsException):
-                reason_msg = "GitHub token might not be valid anymore (bad credentials error)!"
-            else:
-                matched = next((msg for msg in ["Forbidden", "Bad Request"] if msg in str(e)), None)
-                if matched:
-                    reason_msg = f"Session might not be valid ('{matched}' error)"
-
-            if reason_msg:
-                print(f"* {reason_msg}")
-                should_notify = True
-
-            if should_notify and (ERROR_NOTIFICATION or webhook_event_enabled("error")) and not email_sent:
-                m_subject = f"github_monitor: session error! (user: {user})"
-                m_body = f"{reason_msg}\n{e}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
-                m_body_html = (
-                    f"<html><head></head><body>"
-                    f"<b>{html.escape(reason_msg or '')}</b><br>"
-                    f"{html.escape(str(e))}{get_cur_ts('<br><br>Timestamp: ')}"
-                    f"</body></html>"
-                )
-                send_notification_channels("error", m_subject, m_body, m_body_html, ERROR_NOTIFICATION)
-                email_sent = True
-
-            print_cur_ts("Timestamp:\t\t\t")
+            report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage)
+            debug_print("Completed monitoring check", check=f"#{check_number}", user=user, outcome="failed", code=advice.code, error=f"{type(e).__name__}: {e}")
+            debug_monitor_wait_timing("monitored user refresh failure", GITHUB_CHECK_INTERVAL)
             time.sleep(GITHUB_CHECK_INTERVAL)
             continue
 
         # Changed followings
         try:
-            followings_raw = list(gh_call(g_user.get_following)())
-            followings_count = gh_call(lambda: g_user.following)()
+            debug_github_operation("followings refresh", user)
+            followings_raw = gh_call(lambda: list(g_user.get_following()), raise_on_failure=True)()  # noqa: B023
+            followings_count = gh_call(lambda: g_user.following)()  # noqa: B023
         except NET_ERRORS as e:
-            print(f"* Error while fetching followings: {e}")
+            verbose_degraded_feature("Followings", "following change alerts", e)
+            print_degraded_error("Followings could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             followings_raw = None
             followings_count = None
@@ -4893,10 +7716,12 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed followers
         try:
-            followers_raw = list(gh_call(g_user.get_followers)())
-            followers_count = gh_call(lambda: g_user.followers)()
+            debug_github_operation("followers refresh", user)
+            followers_raw = gh_call(lambda: list(g_user.get_followers()), raise_on_failure=True)()  # noqa: B023
+            followers_count = gh_call(lambda: g_user.followers)()  # noqa: B023
         except NET_ERRORS as e:
-            print(f"* Error while fetching followers: {e}")
+            verbose_degraded_feature("Followers", "follower change alerts", e)
+            print_degraded_error("Followers could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             followers_raw = None
             followers_count = None
@@ -4907,13 +7732,16 @@ def github_monitor_user(user, csv_file_name):
         # Changed public repositories
         try:
             if GET_ALL_REPOS:
-                repos_raw = list(gh_call(g_user.get_repos)())
-                repos_count = gh_call(lambda: g_user.public_repos)()
+                debug_github_operation("all repository refresh", user)
+                repos_raw = gh_call(lambda: list(g_user.get_repos()), raise_on_failure=True)()  # noqa: B023
+                repos_count = gh_call(lambda: g_user.public_repos)()  # noqa: B023
             else:
-                repos_raw = list(gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])())
+                debug_github_operation("owned repository refresh", user)
+                repos_raw = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], raise_on_failure=True)()  # noqa: B023
                 repos_count = len(repos_raw)
         except NET_ERRORS as e:
-            print(f"* Error while fetching repositories: {e}")
+            verbose_degraded_feature("Repositories", "repository change alerts", e)
+            print_degraded_error("Repositories could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             repos_raw = None
             repos_count = None
@@ -4923,15 +7751,12 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed starred repositories
         try:
-            starred_raw = gh_call(g_user.get_starred)()
-            if starred_raw is not None:
-                starred_list = list(starred_raw)
-                starred_count = starred_raw.totalCount
-            else:
-                starred_list = None
-                starred_count = None
+            debug_github_operation("starred repository refresh", user)
+            starred_list = gh_call(lambda: list(g_user.get_starred()), raise_on_failure=True)()  # noqa: B023
+            starred_count = len(starred_list)
         except NET_ERRORS as e:
-            print(f"* Error while fetching starred repositories: {e}")
+            verbose_degraded_feature("Starred repositories", "starred repository change alerts", e)
+            print_degraded_error("Starred repositories could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             starred_list = None
             starred_count = None
@@ -4941,20 +7766,7 @@ def github_monitor_user(user, csv_file_name):
 
         # Changed contributions in a day
         if TRACK_CONTRIB_CHANGES:
-            contrib_notify, contrib_curr, contrib_error_notify = check_daily_contribs(user, GITHUB_TOKEN, contrib_state, min_delta=1, fail_threshold=3)
-            if contrib_error_notify and (ERROR_NOTIFICATION or webhook_event_enabled("error")):
-                failures = contrib_state.get("consecutive_failures", 0)
-                last_err = contrib_state.get("last_error", "Unknown error")
-                err_msg = f"Error: GitHub daily contributions check failed {failures} times. Last error: {last_err}\n"
-                print(err_msg)
-                err_msg_html = (
-                    f"<html><head></head><body>"
-                    f"Error: GitHub daily contributions check failed <b>{failures}</b> times. Last error: <b>{html.escape(str(last_err))}</b><br>"
-                    f"{get_cur_ts('<br>Timestamp: ')}"
-                    f"</body></html>"
-                )
-                send_notification_channels("error", f"GitHub monitor errors for {user}", err_msg + get_cur_ts(nl_ch + "Timestamp: "), err_msg_html, ERROR_NOTIFICATION)
-
+            contrib_notify, contrib_curr = check_daily_contribs(user, GITHUB_TOKEN, contrib_state, min_delta=1)
             if contrib_notify:
                 contrib_old = contrib_state.get("prev_count")
                 print(f"* Daily contributions changed for user {user} on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}!\n")
@@ -4963,7 +7775,7 @@ def github_monitor_user(user, csv_file_name):
                     if csv_file_name:
                         write_csv_entry(csv_file_name, now_local_naive(), "Daily Contribs", user, contrib_old, contrib_curr)
                 except Exception as e:
-                    print(f"* Error: {e}")
+                    print_csv_write_error(e)
 
                 m_subject = f"GitHub user {user} daily contributions changed from {contrib_old} to {contrib_curr}!"
                 m_body = (f"GitHub user {user} daily contributions changed on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
@@ -4980,7 +7792,8 @@ def github_monitor_user(user, csv_file_name):
                 print_cur_ts("Timestamp:\t\t\t")
 
         # Changed bio
-        bio = gh_call(lambda: g_user.bio, default=profile_field_unavailable)()
+        bio = gh_call(lambda: g_user.bio, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("bio", bio, profile_field_unavailable)
         if has_nullable_profile_field_changed(bio, bio_old, profile_field_unavailable):
             print(f"* Bio has changed for user {user} !\n")
             print(f"Old bio:\n\n{bio_old}\n")
@@ -4990,7 +7803,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Bio", user, bio_old, bio)
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} bio has changed!"
             m_body = f"GitHub user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5012,7 +7825,8 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed location
-        location = gh_call(lambda: g_user.location, default=profile_field_unavailable)()
+        location = gh_call(lambda: g_user.location, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("location", location, profile_field_unavailable)
         if has_nullable_profile_field_changed(location, location_old, profile_field_unavailable):
             print(f"* Location has changed for user {user} !\n")
             print(f"Old location:\t\t\t{location_old}\n")
@@ -5022,7 +7836,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Location", user, location_old, location)
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} location has changed!"
             m_body = f"GitHub user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5042,7 +7856,8 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed user name
-        user_name = gh_call(lambda: g_user.name, default=profile_field_unavailable)()
+        user_name = gh_call(lambda: g_user.name, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("name", user_name, profile_field_unavailable)
         if has_nullable_profile_field_changed(user_name, user_name_old, profile_field_unavailable):
             print(f"* User name has changed for user {user} !\n")
             print(f"Old user name:\t\t\t{user_name_old}\n")
@@ -5052,7 +7867,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "User Name", user, user_name_old, user_name)
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} name has changed!"
             m_body = f"GitHub user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5072,7 +7887,8 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed company
-        company = gh_call(lambda: g_user.company, default=profile_field_unavailable)()
+        company = gh_call(lambda: g_user.company, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("company", company, profile_field_unavailable)
         if has_nullable_profile_field_changed(company, company_old, profile_field_unavailable):
             print(f"* User company has changed for user {user} !\n")
             print(f"Old company:\t\t\t{company_old}\n")
@@ -5082,7 +7898,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Company", user, company_old, company)
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} company has changed!"
             m_body = f"GitHub user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5102,7 +7918,8 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed email
-        email = gh_call(lambda: g_user.email, default=profile_field_unavailable)()
+        email = gh_call(lambda: g_user.email, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("email", email, profile_field_unavailable)
         if has_nullable_profile_field_changed(email, email_old, profile_field_unavailable):
             print(f"* User email has changed for user {user} !\n")
             print(f"Old email:\t\t\t{email_old}\n")
@@ -5112,7 +7929,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Email", user, email_old, email)
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} email has changed!"
             m_body = f"GitHub user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5132,7 +7949,8 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed blog URL
-        blog = gh_call(lambda: g_user.blog, default=profile_field_unavailable)()
+        blog = gh_call(lambda: g_user.blog, default=profile_field_unavailable)()  # noqa: B023
+        report_unavailable_profile_field("blog URL", blog, profile_field_unavailable)
         if has_nullable_profile_field_changed(blog, blog_old, profile_field_unavailable):
             print(f"* User blog URL has changed for user {user} !\n")
             print(f"Old blog URL:\t\t\t{blog_old}\n")
@@ -5142,7 +7960,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Blog URL", user, blog_old, blog)
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} blog URL has changed!"
             m_body = f"GitHub user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5154,7 +7972,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed account update date
-        account_updated_date = gh_call(lambda: g_user.updated_at)()
+        account_updated_date = gh_call(lambda: g_user.updated_at)()  # noqa: B023
         if account_updated_date is not None and account_updated_date != account_updated_date_old:
             print(f"* User account has been updated for user {user} ! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n")
             print(f"Old account update date:\t{get_date_from_ts(account_updated_date_old)}\n")
@@ -5164,7 +7982,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, convert_to_local_naive(account_updated_date), "Account Update Date", user, convert_to_local_naive(account_updated_date_old), convert_to_local_naive(account_updated_date))
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
             m_body = f"GitHub user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5188,7 +8006,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Profile Visibility", user, _get_profile_status(public_old), _get_profile_status(public))
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !"
             m_body = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5216,7 +8034,7 @@ def github_monitor_user(user, csv_file_name):
                 if csv_file_name:
                     write_csv_entry(csv_file_name, now_local_naive(), "Block Status", user, _get_blocked_status(blocked_old, public), _get_blocked_status(blocked, public))
             except Exception as e:
-                print(f"* Error: {e}")
+                print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!"
             m_body = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5232,10 +8050,17 @@ def github_monitor_user(user, csv_file_name):
         # Changed repos details
         if TRACK_REPOS_CHANGES:
 
-            if GET_ALL_REPOS:
-                repos_list = gh_call(g_user.get_repos)()
-            else:
-                repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login])()
+            try:
+                if GET_ALL_REPOS:
+                    repos_list = gh_call(lambda: list(g_user.get_repos()), raise_on_failure=True)()  # noqa: B023
+                else:
+                    debug_github_operation("owned repository detail refresh", user)
+                    repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], raise_on_failure=True)()  # noqa: B023
+            except NET_ERRORS as e:
+                repos_list = None
+                verbose_degraded_feature("Repository detail feed", "repository detail alerts", e)
+                print_degraded_error("The repository detail feed could not be refreshed, so the previous snapshot is kept", e)
+                print_cur_ts("Timestamp:\t\t\t")
 
             # Filter repos for detailed monitoring only (keep full repos_list for profile change detection)
             repos_list_filtered = repos_list
@@ -5261,11 +8086,12 @@ def github_monitor_user(user, csv_file_name):
 
             if repos_list_filtered is not None:
                 try:
-                    list_of_repos = github_process_repos(repos_list_filtered, show_progress=False, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()))
+                    list_of_repos = github_process_repos(repos_list_filtered, show_progress=False, fetch_identity_lists=(user_login.casefold() == user_myself_login.casefold()), previous_repos=list_of_repos_old, closure_verifier=closure_verifier)
                     list_of_repos_ok = True
                 except Exception as e:
                     list_of_repos = list_of_repos_old
-                    print(f"* Cannot process list of public repositories, keeping old list: {e}")
+                    verbose_degraded_feature("Repository detail refresh", "repository detail alerts", e)
+                    print_degraded_error("The public repository list could not be refreshed, so the previous one is kept", e)
                     list_of_repos_ok = False
 
                 if list_of_repos_ok:
@@ -5295,7 +8121,6 @@ def github_monitor_user(user, csv_file_name):
                                 r_forks_old = repo_old.get("forks", 0)
                                 r_stars_old = repo_old.get("stars", 0)
                                 r_subscribers_old = repo_old.get("subscribers", 0)
-                                r_url_old = repo_old.get("url", "")
                                 r_update_old = repo_old.get("update_date")
                                 r_stargazers_list_old = repo_old.get("stargazers_list")
                                 r_subscribers_list_old = repo_old.get("subscribers_list")
@@ -5315,7 +8140,7 @@ def github_monitor_user(user, csv_file_name):
                                         if csv_file_name:
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Update Date", r_name, convert_to_local_naive(r_update_old), convert_to_local_naive(r_update))
                                     except Exception as e:
-                                        print(f"* Error: {e}")
+                                        print_csv_write_error(e)
                                     m_subject = f"GitHub user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     timespan_str = calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)
@@ -5351,6 +8176,7 @@ def github_monitor_user(user, csv_file_name):
                                 if r_discussions is not None and r_discussions_old is not None:
                                     check_repo_list_changes(r_discussions_old, r_discussions, r_discussions_list_old, r_discussions_list, "Discussions", r_name, r_url, user, csv_file_name)
                                 elif r_discussions is None:
+                                    verbose_degraded_feature(f"Discussions for {r_name}", "discussion change alerts")
                                     repo["discussions"] = r_discussions_old
                                     repo["discussions_list"] = r_discussions_list_old
 
@@ -5362,7 +8188,7 @@ def github_monitor_user(user, csv_file_name):
                                         if csv_file_name:
                                             write_csv_entry(csv_file_name, now_local_naive(), "Repo Description", r_name, r_descr_old, r_descr)
                                     except Exception as e:
-                                        print(f"* Error: {e}")
+                                        print_csv_write_error(e)
                                     m_subject = f"GitHub user {user} repo '{r_name}' description has changed !"
                                     m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     r_descr_old_html = markdown_to_html(r_descr_old, convert_line_breaks=True) if r_descr_old else ""
@@ -5385,7 +8211,14 @@ def github_monitor_user(user, csv_file_name):
 
         # New GitHub events
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
-            events = list(gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)))())
+            debug_github_operation("recent event refresh", user)
+            try:
+                events = gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)), raise_on_failure=True)()  # noqa: B023
+            except NET_ERRORS as e:
+                events = None
+                verbose_degraded_feature("Recent events", "new event alerts", e)
+                print_degraded_error("Recent events could not be refreshed, so the previous snapshot is kept", e)
+                print_cur_ts("Timestamp:\t\t\t")
             if events is not None:
                 available_events = len(events)
                 if available_events == 0:
@@ -5400,7 +8233,8 @@ def github_monitor_user(user, csv_file_name):
                     except Exception as e:
                         last_event_id = 0
                         last_event_ts = None
-                        print(f"* Cannot get last event ID / timestamp: {e}")
+                        verbose_degraded_feature("Newest event identifiers", "new event alerts", e)
+                        print_degraded_error("The last event identifier could not be read", e)
                         print_cur_ts("Timestamp:\t\t\t")
 
                 events_list_of_ids = set()
@@ -5426,7 +8260,9 @@ def github_monitor_user(user, csv_file_name):
                             try:
                                 event_date, repo_name, repo_url, event_text = github_print_event(event, g, first_new, last_event_ts_old)
                             except Exception as e:
-                                print(f"\n* Warning, cannot fetch all event details: {e}")
+                                verbose_degraded_feature("New event details", "complete event alerts", e)
+                                print()
+                                print_degraded_error("Some event details are missing", e, label="Warning")
 
                             first_new = False
 
@@ -5436,7 +8272,7 @@ def github_monitor_user(user, csv_file_name):
                                     if csv_file_name:
                                         write_csv_entry(csv_file_name, convert_to_local_naive(event_date), str(event.type), str(repo_name), "", "")
                                 except Exception as e:
-                                    print(f"* Error: {e}")
+                                    print_csv_write_error(e)
 
                                 m_subject = f"GitHub user {user} has new {event.type} (repo: {repo_name})"
                                 m_body = f"GitHub user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
@@ -5444,8 +8280,8 @@ def github_monitor_user(user, csv_file_name):
                                 try:
                                     if hasattr(event, 'payload'):
                                         event_payload = event.payload
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    verbose_degraded_feature("Event payload", "complete event notification details", exc, enrichment=True)
                                 event_text_html = event_text_to_html(event_text, event.type, event_payload)
                                 m_body_html = (
                                     f"<html><head></head><body>"
@@ -5463,19 +8299,43 @@ def github_monitor_user(user, csv_file_name):
                     last_event_id_old = last_event_id
                     last_event_ts_old = last_event_ts
                     events_list_of_ids_old = events_list_of_ids.copy()
+            else:
+                verbose_degraded_feature("Recent events", "new event alerts")
 
-        alive_counter += 1
+        if MONITOR_CHECK_FAILURES:
+            failures = [(feature, classify_recovery_error(error) if error is not None else make_recovery_advice("github.api_error", "The monitoring check did not return usable data", recovery_fix_with_guide("Check connectivity and resource access, then let the next check retry", DIAGNOSTICS_GUIDE_URL), True)) for feature, error in MONITOR_CHECK_FAILURES.items()]
+            feature, advice = next(((feature, advice) for feature, advice in failures if not advice.retryable), failures[0])
+            # One failure carries the fix, but an alert that hides the rest understates the outage. The
+            # count rather than the names keeps the text stable while a per-repository failure set changes
+            others = len(failures) - 1
+            summary = f"{feature}: {advice.summary}" + (f" ({others} other check also failed)" if others == 1 else f" ({others} other checks also failed)" if others else "")
+            advice = make_recovery_advice(advice.code, summary, advice.fix, advice.retryable, advice.detail)
+            report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage)
+        else:
+            error_alert.reset()
+            monitor_recovery_tracker.reset()
+            outage_lasted = outage.recovered()
+            if outage_lasted is not None:
+                print_outage_recovery(user, outage_lasted)
 
-        if LIVENESS_CHECK_COUNTER and alive_counter >= LIVENESS_CHECK_COUNTER:
-            print_cur_ts("Liveness check, timestamp:\t")
-            alive_counter = 0
+        report_recovered_features()
+        close_pending_notice_block()
 
+        # The banner speaks for a quiet check, so anything this one reported restarts the clock instead of being contradicted by it
+        if REPORTS_PRINTED != reports_before_check:
+            alive_since = int(time.time())
+        elif not MONITOR_CHECK_FAILURES and LIVENESS_REMINDER_SECONDS and int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS:
+            print_liveness_banner(f"Monitoring healthy for {user}. No tracked change since the last check")
+            alive_since = int(time.time())
+
+        debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL, outcome="degraded" if MONITOR_CHECK_FAILURES else "OK")
+        debug_monitor_wait_timing("normal monitoring interval", GITHUB_CHECK_INTERVAL)
         time.sleep(GITHUB_CHECK_INTERVAL)
 
 
 # Applies validated one-run webhook command-line overrides to runtime settings
-def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    global WEBHOOK_ENABLED, WEBHOOK_URL, WEBHOOK_PROVIDER, WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_ERROR_NOTIFICATION
+def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser, report_warnings=True) -> None:
+    global WEBHOOK_ENABLED, WEBHOOK_URL, WEBHOOK_PROVIDER, WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_ERROR_NOTIFICATION, SECRET_SOURCES
     if args.webhook_provider is not None:
         WEBHOOK_PROVIDER = str(args.webhook_provider)
     if args.webhook_url is not None:
@@ -5483,6 +8343,7 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
             parser.error("--webhook-url must contain a complete HTTPS link without embedded credentials")
         WEBHOOK_URL = str(args.webhook_url).strip()
         WEBHOOK_ENABLED = True
+        record_secret_source("WEBHOOK_URL", "command line")
     if args.webhook_enabled is not None:
         WEBHOOK_ENABLED = args.webhook_enabled
     if args.webhook_profile is True:
@@ -5509,14 +8370,2228 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
         configured_provider = normalized_webhook_provider()
         if detected_provider and detected_provider != configured_provider:
             WEBHOOK_PROVIDER = detected_provider
-            print(f"* Warning: Configured webhook provider did not match the URL. Using {detected_provider}.")
+            verbose_print(f"Selected webhook provider {webhook_provider_display_name(detected_provider)} from the destination URL")
+            # The built-in default is not a choice anyone made, so detection there is the documented behaviour
+            # rather than a mismatch. Only a provider the configuration actually sets is worth warning about
+            if report_warnings and "WEBHOOK_PROVIDER" in CONFIGURED_SETTING_NAMES:
+                print(f"* Warning: Configured webhook provider did not match the URL. Using {webhook_provider_display_name(detected_provider)}.")
+
+
+# Applies monitoring, output and email command-line overrides to effective settings
+def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser, strict=True) -> None:
+    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_REMINDER_SECONDS, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
+    if args.check_interval is not None:
+        GITHUB_CHECK_INTERVAL = args.check_interval
+    if args.csv_file is not None:
+        CSV_FILE = os.path.expanduser(args.csv_file)
+    elif CSV_FILE:
+        CSV_FILE = os.path.expanduser(CSV_FILE)
+    if args.disable_logging is True:
+        DISABLE_LOGGING = True
+    if args.notify_profile is True:
+        PROFILE_NOTIFICATION = True
+    if args.notify_events is True:
+        EVENT_NOTIFICATION = True
+    if args.notify_repo_changes is True:
+        REPO_NOTIFICATION = True
+    if args.notify_repo_update_date is True:
+        REPO_UPDATE_DATE_NOTIFICATION = True
+    if args.notify_daily_contribs is True:
+        CONTRIB_NOTIFICATION = True
+    if args.notify_errors is False:
+        ERROR_NOTIFICATION = False
+    if args.track_repos_changes is True:
+        TRACK_REPOS_CHANGES = True
+    if args.repos is not None:
+        if not TRACK_REPOS_CHANGES:
+            if strict:
+                parser.error("--repos requires -j/--track-repos-changes to be enabled")
+        else:
+            REPOS_TO_MONITOR = [repo.strip() for repo in args.repos.split(',') if repo.strip()]
+    if args.track_contribs_changes is True:
+        TRACK_CONTRIB_CHANGES = True
+    if args.no_monitor_events is True:
+        DO_NOT_MONITOR_GITHUB_EVENTS = True
+    if args.get_all_repos is True:
+        GET_ALL_REPOS = True
+    if not TRACK_REPOS_CHANGES:
+        REPO_NOTIFICATION = False
+        REPO_UPDATE_DATE_NOTIFICATION = False
+        WEBHOOK_REPO_NOTIFICATION = False
+        WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION = False
+    if not TRACK_CONTRIB_CHANGES:
+        CONTRIB_NOTIFICATION = False
+        WEBHOOK_CONTRIB_NOTIFICATION = False
+    if DO_NOT_MONITOR_GITHUB_EVENTS:
+        EVENT_NOTIFICATION = False
+        WEBHOOK_EVENT_NOTIFICATION = False
+    intervals_valid = type(GITHUB_CHECK_INTERVAL) is int and GITHUB_CHECK_INTERVAL > 0 and runtime_liveness_error() is None
+    LIVENESS_REMINDER_SECONDS = int(LIVENESS_CHECK_INTERVAL) if intervals_valid and LIVENESS_CHECK_INTERVAL else 0
+
+
+# Returns the final log file path without creating its directory or file
+def resolve_output_log_path(username):
+    log_path = Path(os.path.expanduser(GITHUB_LOGFILE))
+    if log_path.parent != Path('.'):
+        if log_path.suffix == "":
+            log_path = log_path.parent / f"{log_path.name}_{username or 'target'}.log"
+    elif log_path.suffix == "":
+        log_path = Path(f"{log_path.name}_{username or 'target'}.log")
+    return log_path
+
+
+# The four shared status markers. A fifth neutral marker is the single biggest source of drift between these
+# tools, because every state it would cover is a state the others already call PASS
+DOCTOR_STATUSES = ("PASS", "WARN", "FAIL", "SKIP")
+
+# A check interval below this invites the GitHub rate limiter, which stops the tool seeing anything
+DOCTOR_MIN_SAFE_CHECK_INTERVAL = 30
+
+
+@dataclass(frozen=True)
+class DoctorCheck:
+    section: str
+    status: str
+    label: str
+    detail: str = ""
+    advice: Optional[RecoveryAdvice] = None
+
+
+# Builds one validated doctor row, which is where the status, the required action and a duplicated detail are decided
+def make_doctor_check(section, status, label, detail="", advice=None):
+    normalized_status = str(status).upper()
+    if normalized_status not in DOCTOR_STATUSES:
+        raise ValueError(f"Unsupported doctor status {status}")
+    # A row the user has to act on is useless without an action, so the row is rejected rather than printed bare
+    if normalized_status in ("WARN", "FAIL") and (advice is None or not advice.fix):
+        raise ValueError(f"Doctor {normalized_status} rows require a fix")
+    # Several advice objects carry the same text as their summary and printing it twice reads as two problems
+    return DoctorCheck(section, normalized_status, label, "" if str(detail).strip() == str(label).strip() else detail, advice)
+
+
+@dataclass
+class DoctorReport:
+    checks: list[DoctorCheck] = field(default_factory=list)
+    github_token: str = ""
+    authenticated_login: str = ""
+    github_client: Any = None
+    target_profile: Any = None
+    target_name: str = ""
+    email_ready: bool = False
+    webhook_ready: bool = False
+
+    # Adds one validated result row to the report and returns it, so a row rendered on its own is still validated here
+    def add(self, section, status, label, detail="", advice=None):
+        check = make_doctor_check(section, status, label, detail, advice)
+        self.checks.append(check)
+        return check
+
+    # Counts failed checks including approved delivery tests
+    @property
+    def failure_count(self):
+        return sum(check.status == "FAIL" for check in self.checks)
+
+    # Counts warnings while excluding declined optional tests
+    @property
+    def warning_count(self):
+        return sum(check.status == "WARN" for check in self.checks)
+
+
+class DoctorProgress:
+    # Resolves the real terminal beneath a logger wrapper
+    def __init__(self, stream=None):
+        self.stream = sys.stdout if stream is None else stream
+        self.terminal = self.stream
+        while isinstance(self.terminal, (Logger, TerminalStream)):
+            self.terminal = self.terminal.terminal
+        self.width = 0
+
+    # Writes one transient progress label only to an interactive terminal
+    def show(self, label):
+        self.clear()
+        if VERBOSE_MODE or DEBUG_MODE:
+            return
+        try:
+            interactive = bool(self.terminal.isatty())
+        except Exception as exc:
+            debug_swallowed_exception("Doctor terminal detection", exc)
+            interactive = False
+        if not interactive:
+            return
+        safe_label = ANSI_ESCAPE_RE.sub("", sanitize_terminal_text(str(label)))
+        message = f"* Checking {safe_label} ..."
+        self.terminal.write(message + "\r")
+        self.terminal.flush()
+        self.width = len(message)
+
+    # Erases any transient progress text without affecting piped output
+    def clear(self):
+        if not self.width:
+            return
+        self.terminal.write(" " * self.width + "\r")
+        self.terminal.flush()
+        self.width = 0
+
+
+# Returns whether one importable dependency is available to this runtime
+def doctor_dependency_available(module_name, module_finder=None):
+    finder = importlib.util.find_spec if module_finder is None else module_finder
+    try:
+        return finder(module_name) is not None
+    except Exception as exc:
+        debug_swallowed_exception(f"Dependency lookup for {module_name}", exc)
+        return False
+
+
+# Adds Python, required dependency, optional dependency and install checks
+def doctor_check_environment(report, module_finder=None):
+    version = platform.python_version()
+    if sys.version_info >= MINIMUM_PYTHON_VERSION:
+        report.add("Environment", "PASS", f"Python {version} is supported", f"Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}")
+    else:
+        advice = make_recovery_advice("dependency.missing", f"Python {version} is unsupported", recovery_fix_with_guide(f"Install Python {MINIMUM_PYTHON_VERSION_TEXT} or newer", INSTALLATION_GUIDE_URL), False)
+        report.add("Environment", "FAIL", advice.summary, f"Minimum supported version: {MINIMUM_PYTHON_VERSION_TEXT}", advice)
+    required = (("requests", "requests"), ("urllib3", "urllib3"), ("python-dateutil", "dateutil"), ("pytz", "pytz"), ("PyGithub", "github"))
+    for package_name, module_name in required:
+        if doctor_dependency_available(module_name, module_finder):
+            report.add("Environment", "PASS", f"Required dependency {package_name} is installed")
+        else:
+            install_command = shlex.join([("python" if platform.system() == "Windows" else "python3"), "-m", "pip", "install", package_name])
+            advice = make_recovery_advice("dependency.missing", f"Required dependency {package_name} is missing", recovery_fix_with_guide(f"Install it with: {install_command}", INSTALLATION_GUIDE_URL), False)
+            report.add("Environment", "FAIL", advice.summary, "The monitor cannot run its required path without this package", advice)
+    optional = (("python-dotenv", "dotenv", "dotenv discovery and loading"), ("tzlocal", "tzlocal", "automatic timezone detection"))
+    # The classic Command Prompt is the only place this library changes anything, so a machine it cannot affect is not warned about a package it does not need
+    if platform.system() == "Windows":
+        optional += (("colorama", "colorama", "coloured output in the classic Windows Command Prompt"),)
+    for package_name, module_name, feature in optional:
+        if doctor_dependency_available(module_name, module_finder):
+            report.add("Environment", "PASS", f"Optional dependency {package_name} is installed", f"Used only for {feature}")
+        else:
+            install_command = shlex.join([("python" if platform.system() == "Windows" else "python3"), "-m", "pip", "install", package_name])
+            advice = make_recovery_advice("dependency.missing", f"Optional dependency {package_name} is not installed", recovery_fix_with_guide(f"Install it with: {install_command}", INSTALLATION_GUIDE_URL), False)
+            report.add("Environment", "WARN", advice.summary, f"{feature[:1].upper() + feature[1:]} will not work. Every other feature is unaffected", advice)
+
+
+# Returns whether a URL is a complete credential-free HTTPS endpoint
+def validate_github_endpoint_url(value):
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        parsed = urlsplit(value.strip())
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            return False
+    except ValueError as exc:
+        debug_swallowed_exception("GitHub endpoint parsing", exc)
+        return False
+    return parsed.scheme.casefold() == "https" and bool(parsed.hostname) and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
+
+
+# Names every on/off setting holding something other than True or False, since a string such as "false" would count as on
+def runtime_boolean_errors():
+    errors = []
+    for statement in ast.parse(CONFIG_BLOCK, "<built-in-config>", "exec").body:
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name) and isinstance(statement.value, ast.Constant) and isinstance(statement.value.value, bool):
+            value = globals().get(statement.targets[0].id)
+            if not isinstance(value, bool):
+                errors.append(f"{statement.targets[0].id} must be True or False, not {value!r}")
+    return errors
+
+
+# Returns a recovery message for an unusable liveness interval
+def runtime_liveness_error():
+    value = LIVENESS_CHECK_INTERVAL
+    if not finite_number(value) or value < 0:
+        return f"LIVENESS_CHECK_INTERVAL must be a finite number zero or greater, not {value!r}"
+    return None
+
+
+# Returns all type and range errors in settings that control runtime timing or counts
+def runtime_configuration_errors():
+    liveness_error = runtime_liveness_error()
+    errors = [liveness_error] if liveness_error else []
+    positive_numbers = (("CHECK_INTERNET_TIMEOUT", CHECK_INTERNET_TIMEOUT),)
+    nonnegative_numbers = (("NET_BASE_BACKOFF_SEC", NET_BASE_BACKOFF_SEC),)
+    positive_integers = (("GITHUB_CHECK_INTERVAL", GITHUB_CHECK_INTERVAL), ("EVENTS_NUMBER", EVENTS_NUMBER), ("NET_MAX_RETRIES", NET_MAX_RETRIES))
+    for name, value in positive_numbers:
+        if not finite_number(value) or value <= 0:
+            errors.append(f"{name} must be a number greater than zero, not {value!r}")
+    for name, value in nonnegative_numbers:
+        if not finite_number(value) or value < 0:
+            errors.append(f"{name} must be a number zero or greater, not {value!r}")
+    for name, value in positive_integers:
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            errors.append(f"{name} must be an integer greater than zero, not {value!r}")
+    if not isinstance(SMTP_PORT, int) or isinstance(SMTP_PORT, bool) or not 1 <= SMTP_PORT <= 65535:
+        errors.append(f"SMTP_PORT must be an integer from 1 through 65535, not {SMTP_PORT!r}")
+    return errors
+
+
+# The values this file defines for the settings checked below, so a configuration file that makes one
+# unusable can be reported and then ignored instead of stopping the commands that exist to correct it
+BUILT_IN_SHAPE_SETTINGS = {name: globals()[name] for name in ('GITHUB_LOGFILE', 'CSV_FILE', 'DOTENV_FILE', 'COLOR_THEME', 'TRUNCATE_CHARS') if name in globals()}
+
+# Shape errors whose settings were replaced with the built-in values, so doctor still names them
+DISCARDED_SETTING_ERRORS = []
+
+
+# True when the selected command exists to correct the configuration, so a malformed setting is reported
+# there instead of stopping the one run that could repair it
+def command_reports_configuration(args=None):
+    # Read from the parsed namespace rather than the raw words, since argparse also accepts abbreviations
+    return any(getattr(args, name, False) for name in ("doctor", "setup", "set_github_token", "set_smtp_password", "set_webhook_url"))
+
+
+# Validates effective path settings before startup expands or opens them
+def prepare_configured_paths(args):
+    overrides = {'DOTENV_FILE': 'env_file', 'CSV_FILE': 'csv_file'}
+    settings = globals().copy()
+    for name, argument in overrides.items():
+        value = getattr(args, argument, None)
+        if value:
+            settings[name] = value
+    if getattr(args, "truncate", None) is not None:
+        settings["TRUNCATE_CHARS"] = args.truncate
+        globals()["TRUNCATE_CHARS"] = args.truncate
+    errors = configuration_shape_errors(settings)
+    if not errors:
+        # Cleared here so a run that starts with usable settings cannot inherit an earlier run's report
+        DISCARDED_SETTING_ERRORS.clear()
+        return
+    advice = make_recovery_advice("config.invalid", "Invalid settings: " + ". ".join(errors), recovery_fix_with_guide("Correct the named settings in the configuration file or command line", CONFIG_GUIDE_URL), False)
+    # A monitoring run cannot continue on a value this broken, but doctor, the setup wizard and the secret
+    # commands are how it gets corrected, so they fall back to the built-in values and report the setting
+    if not command_reports_configuration(args):
+        print_recovery_advice(advice)
+        raise SystemExit(1)
+    DISCARDED_SETTING_ERRORS[:] = errors
+    # Only the values that are broken after command-line overrides are replaced, so an override still wins
+    for name, built_in in BUILT_IN_SHAPE_SETTINGS.items():
+        if name in settings and configuration_shape_errors({name: settings[name]}):
+            globals()[name] = built_in
+    # Doctor lists the same settings as report rows, so a warning above it would only say them twice
+    if not getattr(args, "doctor", False):
+        print_recovery_advice(advice, label="Warning")
+        print()
+
+
+# Names malformed path and color settings before diagnostics consume their values
+def configuration_shape_errors(settings=None):
+    errors = list(DISCARDED_SETTING_ERRORS) if settings is None else []
+    settings = globals() if settings is None else settings
+    for name in ('GITHUB_LOGFILE', 'CSV_FILE', 'DOTENV_FILE'):
+        if name in settings and not isinstance(settings[name], (str, os.PathLike)):
+            errors.append(f"{name} must be a path string")
+    width = settings.get("TRUNCATE_CHARS", 0)
+    if not isinstance(width, int) or isinstance(width, bool) or width < 0:
+        errors.append("TRUNCATE_CHARS must be an integer zero or greater")
+    theme = settings.get("COLOR_THEME", {})
+    if not isinstance(theme, dict):
+        errors.append("COLOR_THEME must be a dictionary of style strings")
+    else:
+        errors.extend(f"COLOR_THEME[{key!r}] must be a style string" for key, value in theme.items() if not isinstance(value, str))
+    return errors
+
+
+# Replaces every setting still holding a value this file cannot use with the built-in one, so a report reached
+# from any entry point reads a usable value after it has named the setting
+def discard_invalid_shape_settings():
+    for name, built_in in BUILT_IN_SHAPE_SETTINGS.items():
+        if configuration_shape_errors({name: globals().get(name)}):
+            globals()[name] = built_in
+
+
+# Adds configuration, dotenv, private-setting and core value checks
+def doctor_check_configuration(report, args, parser):
+    global CLI_CONFIG_PATH, CONFIG_DISCOVERY_DISABLED, LOCAL_TIMEZONE
+    CONFIG_DISCOVERY_DISABLED = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
+    if args.config_file and not CONFIG_DISCOVERY_DISABLED:
+        CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
+    elif CONFIG_DISCOVERY_DISABLED:
+        CLI_CONFIG_PATH = None
+    cfg_path = None if CONFIG_DISCOVERY_DISABLED else find_config_file(CLI_CONFIG_PATH)
+    configured_settings = set()
+    config_errors = []
+    retired_settings = set()
+    if CONFIG_DISCOVERY_DISABLED:
+        report.add("Configuration", "PASS", "No configuration file selected", "Using built-in defaults and command-line overrides")
+    elif CLI_CONFIG_PATH and not cfg_path:
+        advice = make_recovery_advice("config.missing", "Configuration file was not found", recovery_fix_with_guide("Correct --config-file or generate a new configuration with --generate-config", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, f"Requested path: {CLI_CONFIG_PATH}", advice)
+    elif cfg_path:
+        loaded = load_config_file(cfg_path, report_errors=False, loaded_names_out=configured_settings, diagnostic_overrides=(args.verbose is True, args.debug is True), error_out=config_errors, retired_names_out=retired_settings)
+        if loaded:
+            report.add("Configuration", "PASS", "Configuration file loaded", f"Path: {cfg_path}")
+        else:
+            advice = make_recovery_advice("config.invalid", "Configuration file could not be loaded", recovery_fix_with_guide("Keep only documented SETTING = value lines with plain literal values or regenerate the file", CONFIG_GUIDE_URL), False)
+            report.add("Configuration", "FAIL", advice.summary, config_errors[0] if config_errors else f"Path: {cfg_path}", advice)
+    else:
+        report.add("Configuration", "PASS", "No configuration file selected", "Using built-in defaults and command-line overrides")
+    if retired_settings:
+        listed = ", ".join(sorted(retired_settings))
+        advice = make_recovery_advice("config.invalid", "Retired configuration settings were ignored", recovery_fix_with_guide("Remove the retired settings from the configuration file", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "WARN", advice.summary, listed, advice)
+    apply_diagnostic_cli_overrides(args)
+    dotenv_errors = []
+    prepare_configured_paths(args)
+    env_path = load_startup_secrets(args.env_file, configured_settings, report_errors=False, errors_out=dotenv_errors)
+    apply_startup_cli_overrides(args, configured_settings)
+    apply_webhook_cli_overrides(args, parser, report_warnings=False)
+    trace_unresolved_secrets()
+    if args.repos is not None and not (TRACK_REPOS_CHANGES or args.track_repos_changes is True):
+        advice = make_recovery_advice("config.invalid", "Repository selection cannot take effect", recovery_fix_with_guide("Add --track-repos-changes or remove --repos", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, "--repos requires repository detail tracking", advice)
+    apply_monitoring_cli_overrides(args, parser, strict=False)
+    if DOTENV_FILE and DOTENV_FILE.casefold() == "none":
+        report.add("Configuration", "PASS", "No dotenv file selected", "Using environment variables and other configured sources")
+    elif env_path and os.path.isfile(env_path) and not dotenv_errors:
+        report.add("Configuration", "PASS", "Dotenv file loaded", f"Path: {env_path}")
+    elif dotenv_errors:
+        advice = make_recovery_advice("file.unreadable", "Dotenv file could not be loaded", recovery_fix_with_guide("Correct --env-file, install python-dotenv or disable dotenv loading with --env-file none", SECRETS_GUIDE_URL), False)
+        report.add("Configuration", "WARN", advice.summary, dotenv_errors[0], advice)
+    else:
+        report.add("Configuration", "PASS", "No dotenv file selected", "Using environment variables and other configured sources")
+    source_order = ("dotenv file", "environment", "configuration file", "built-in configuration", "command line")
+    source_labels = {"dotenv file": "Secrets loaded from the dotenv file", "environment": "Secrets loaded from the environment", "configuration file": "Secrets loaded from the configuration file", "built-in configuration": "Secrets loaded from the built-in configuration", "command line": "Secrets loaded from the command line"}
+    source_rows = 0
+    for source in source_order:
+        names = sorted(name for name, actual_source in SECRET_SOURCES.items() if actual_source == source)
+        if names:
+            report.add("Configuration", "PASS", source_labels[source], ", ".join(names))
+            source_rows += 1
+    if not source_rows:
+        report.add("Configuration", "PASS", "No secrets loaded", "Nothing was read from a dotenv file, the environment, the configuration file or the command line")
+    if VERIFY_SSL:
+        report.add("Configuration", "PASS", "TLS certificate verification is on", "Every outbound request checks the server certificate")
+    else:
+        advice = make_recovery_advice("config.insecure", "TLS certificate verification is off", recovery_fix_with_guide("Set VERIFY_SSL back to True unless this network intercepts TLS with its own certificate authority", TLS_GUIDE_URL), False)
+        report.add("Configuration", "WARN", advice.summary, "VERIFY_SSL is False, so an intercepted connection cannot be told apart from the real service", advice)
+    if not validate_github_endpoint_url(GITHUB_API_URL):
+        advice = make_recovery_advice("config.value_invalid", "GitHub API URL is invalid", recovery_fix_with_guide("Set GITHUB_API_URL to a complete HTTPS URL without credentials, query parameters or fragments", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, sanitize_error_text(GITHUB_API_URL) or "No URL configured", advice)
+    if not validate_github_endpoint_url(GITHUB_HTML_URL):
+        advice = make_recovery_advice("config.value_invalid", "GitHub web URL is invalid", recovery_fix_with_guide("Set GITHUB_HTML_URL to a complete HTTPS URL without credentials, query parameters or fragments", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, sanitize_error_text(GITHUB_HTML_URL) or "No URL configured", advice)
+    timezone_advice = resolve_local_timezone()
+    timezone_label = TIMEZONE_CHECK_LABELS[LOCAL_TIMEZONE_STATE]
+    if timezone_advice is not None:
+        report.add("Configuration", "FAIL", timezone_label, timezone_advice.detail, timezone_advice)
+        # The report still stamps timestamps, so it falls back rather than stopping before the diagnosis
+        LOCAL_TIMEZONE = "UTC"
+    else:
+        report.add("Configuration", "PASS", timezone_label, f"Time zone: {LOCAL_TIMEZONE}")
+    if isinstance(GITHUB_CHECK_INTERVAL, (int, float)) and not isinstance(GITHUB_CHECK_INTERVAL, bool) and 0 < GITHUB_CHECK_INTERVAL < DOCTOR_MIN_SAFE_CHECK_INTERVAL:
+        advice = make_recovery_advice("github.rate_limited", "Check intervals are short", recovery_fix_with_guide(f"Raise GITHUB_CHECK_INTERVAL to at least {DOCTOR_MIN_SAFE_CHECK_INTERVAL} seconds", INTERVALS_GUIDE_URL), True)
+        report.add("Configuration", "WARN", advice.summary, f"{display_time(GITHUB_CHECK_INTERVAL)} between checks", advice)
+    for detail in configuration_shape_errors():
+        advice = make_recovery_advice("config.value_invalid", detail, recovery_fix_with_guide("Correct the named setting in the configuration file", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", detail, advice=advice)
+    discard_invalid_shape_settings()
+    numeric_errors = runtime_configuration_errors()
+    if numeric_errors:
+        advice = make_recovery_advice("config.value_invalid", "One or more numeric settings are invalid", recovery_fix_with_guide("Correct the reported settings in the configuration file", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, "Invalid numeric settings: " + "; ".join(numeric_errors), advice)
+    boolean_errors = runtime_boolean_errors()
+    if boolean_errors:
+        advice = make_recovery_advice("config.value_invalid", "One or more on/off settings are invalid", recovery_fix_with_guide("Set the reported settings to True or False in the configuration file", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, "Invalid on/off settings: " + "; ".join(boolean_errors), advice)
+    if TARGET_GITHUB_USERNAME and not wizard_normalize_target(TARGET_GITHUB_USERNAME):
+        advice = make_recovery_advice("config.value_invalid", "Saved GitHub target is invalid", recovery_fix_with_guide("Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, sanitize_error_text(TARGET_GITHUB_USERNAME), advice)
+    event_types_valid = isinstance(EVENTS_TO_MONITOR, (list, tuple)) and any(isinstance(value, str) and value.strip() for value in EVENTS_TO_MONITOR)
+    if not DO_NOT_MONITOR_GITHUB_EVENTS and not event_types_valid:
+        advice = make_recovery_advice("config.value_invalid", "Event type selection is invalid", recovery_fix_with_guide("Add ALL or at least one supported event name to EVENTS_TO_MONITOR", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, "No usable event type is configured", advice)
+    try:
+        ascii_log_separators_enabled()
+    except ValueError as exc:
+        advice = make_recovery_advice("config.value_invalid", "Log separator mode is invalid", recovery_fix_with_guide("Set ASCII_LOG_SEPARATORS to Auto, On or Off", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, str(exc), advice)
+    return cfg_path, env_path
+
+
+# Adds a live token validation result and retains authenticated state for later checks
+def doctor_check_authentication(report, request_get=None):
+    report.github_token = str(GITHUB_TOKEN or "")
+    if not report.github_token or report.github_token == "your_github_classic_personal_access_token":
+        token_command = render_command(["--set-github-token"])
+        advice = make_recovery_advice("auth.github_token_missing", "GitHub token is missing", recovery_fix_with_guide(f"Create a token then run: {token_command}", AUTH_GUIDE_URL), False)
+        report.add("Authentication", "FAIL", advice.summary, "No usable GITHUB_TOKEN was resolved", advice)
+        return
+    try:
+        report.authenticated_login = validate_github_token(report.github_token, request_get=request_get)
+        report.add("Authentication", "PASS", "GitHub token was accepted", f"Authenticated as: {report.authenticated_login}")
+    except Exception as exc:
+        detail = sanitize_error_text(exc).replace(" and the dotenv file was not changed", "")
+        advice = make_recovery_advice("auth.github_token_invalid", "GitHub token validation failed", recovery_fix_with_guide("Check the token, its access and GITHUB_API_URL then run doctor again", AUTH_GUIDE_URL), False)
+        report.add("Authentication", "FAIL", advice.summary, f"{type(exc).__name__}: {detail}", advice)
+
+
+# Adds one bounded connectivity check for the configured startup endpoint
+def doctor_check_connectivity(report, request_get=None):
+    if not validate_github_endpoint_url(CHECK_INTERNET_URL):
+        row_advice = make_recovery_advice("config.value_invalid", "The connectivity endpoint URL is invalid", recovery_fix_with_guide("Set CHECK_INTERNET_URL to a complete HTTPS URL", CONFIG_GUIDE_URL), False)
+        report.add("Connectivity", "FAIL", row_advice.summary, sanitize_error_text(CHECK_INTERNET_URL) or "No URL configured", row_advice)
+        return
+    # The same check the monitor runs at startup, so doctor cannot disagree with it about the same endpoint
+    if check_internet(quiet=True, operation="doctor connectivity", request_get=request_get):
+        report.add("Connectivity", "PASS", "The connectivity endpoint is reachable", f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}")
+        return
+    # The row names the endpoint, so the technical cause goes where the other tools put it
+    advice = classify_recovery_error(LAST_CONNECTIVITY_ERROR, "connectivity")
+    report.add("Connectivity", "FAIL", advice.summary, f"Endpoint: {diagnostic_endpoint(CHECK_INTERNET_URL)}", advice)
+
+
+# Adds a target lookup and retains the fetched profile for feed checks
+def doctor_check_target(report, github_factory=None):
+    if not report.target_name:
+        command = render_command(["<github_target>", "--doctor"])
+        advice = make_recovery_advice("target.missing", "No GitHub target was provided", recovery_fix_with_guide(f"Run doctor again with a target: {command}", QUICK_START_GUIDE_URL), False)
+        report.add("Target", "WARN", advice.summary, "Nothing will be monitored until one is given", advice)
+        return
+    if not report.authenticated_login:
+        report.add("Target", "SKIP", "The monitored profile was not checked", "The GitHub token did not validate, so no lookup was attempted")
+        return
+    try:
+        report.github_client = create_github_client("doctor target validation") if github_factory is None else github_factory()
+        debug_github_operation("doctor target lookup", report.target_name)
+        report.target_profile = report.github_client.get_user(report.target_name)
+        resolved_login = str(getattr(report.target_profile, "login", report.target_name))
+        report.add("Target", "PASS", "GitHub target is accessible", f"Resolved login: {resolved_login}")
+    except Exception as exc:
+        advice = make_recovery_advice("target.not_found", "GitHub target is not accessible", recovery_fix_with_guide("Check the username, token access and GitHub Enterprise endpoint then run doctor again", QUICK_START_GUIDE_URL), False)
+        report.add("Target", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
+
+
+# Evaluates one lazy PyGithub feed without retaining its potentially large contents
+def doctor_probe_feed(operation, iterable_factory):
+    debug_github_operation(operation)
+    iterator = iter(iterable_factory())
+    next(iterator, None)
+
+
+# Adds monitoring feed, feature and read-only output path checks
+def doctor_check_monitoring(report, contribution_checker=None):
+    if report.target_name and report.target_profile is None:
+        report.add("Monitoring", "SKIP", "Core monitoring feeds were not checked", "The target profile was not fetched, so no feed was probed")
+    elif report.target_profile is not None:
+        feed_checks = [("Repository feed is accessible", "doctor repository feed", lambda: report.target_profile.get_repos(type='owner')), ("Starred repository feed is accessible", "doctor starred repository feed", report.target_profile.get_starred)]
+        if not DO_NOT_MONITOR_GITHUB_EVENTS:
+            feed_checks.append(("Recent event feed is accessible", "doctor recent event feed", report.target_profile.get_events))
+        for label, operation, factory in feed_checks:
+            try:
+                doctor_probe_feed(operation, factory)
+                report.add("Monitoring", "PASS", label)
+            except Exception as exc:
+                advice = make_recovery_advice("github.api_error", label.replace(" is accessible", " is unavailable"), recovery_fix_with_guide("Check target visibility, token access and GitHub API availability", DIAGNOSTICS_GUIDE_URL), False)
+                report.add("Monitoring", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
+        if DO_NOT_MONITOR_GITHUB_EVENTS:
+            report.add("Monitoring", "PASS", "GitHub event monitoring is disabled", "No event feed check was needed")
+    if TRACK_REPOS_CHANGES:
+        if REPOS_TO_MONITOR:
+            report.add("Monitoring", "PASS", "Repository detail tracking is enabled", f"Selection: {', '.join(str(value) for value in REPOS_TO_MONITOR)}")
+        else:
+            advice = make_recovery_advice("config.value_invalid", "Repository detail tracking has no selected repositories", recovery_fix_with_guide("Set REPOS_TO_MONITOR or pass --repos", CONFIG_GUIDE_URL), False)
+            report.add("Monitoring", "WARN", advice.summary, "No repository detail alerts can fire", advice)
+    else:
+        report.add("Monitoring", "PASS", "Repository detail tracking is disabled")
+    if TRACK_CONTRIB_CHANGES and report.target_profile is not None:
+        checker = get_daily_contributions_count if contribution_checker is None else contribution_checker
+        try:
+            checker(report.target_name, today_local(), report.github_token)
+            report.add("Monitoring", "PASS", "Daily contribution feed is accessible")
+        except Exception as exc:
+            advice = make_recovery_advice("github.api_error", "Daily contribution feed is unavailable", recovery_fix_with_guide("Check token access, timezone and GitHub GraphQL availability", DIAGNOSTICS_GUIDE_URL), False)
+            report.add("Monitoring", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
+    elif TRACK_CONTRIB_CHANGES:
+        report.add("Monitoring", "SKIP", "Daily contribution feed was not checked", "The target profile was not fetched, so no lookup was attempted")
+    else:
+        report.add("Monitoring", "PASS", "Daily contribution tracking is disabled")
+
+
+# Returns the nearest existing parent used for a read-only path permission check
+def doctor_existing_parent(path):
+    candidate = Path(path).expanduser()
+    parent = candidate if candidate.is_dir() else candidate.parent
+    while not parent.exists() and parent != parent.parent:
+        parent = parent.parent
+    return parent
+
+
+# Adds one read-only output destination check without creating anything
+def doctor_add_path_check(report, label, path, creates_parents=False):
+    selected = Path(path).expanduser()
+    if selected.exists():
+        writable = selected.is_file() and os.access(selected, os.W_OK)
+        detail = f"Path: {selected}"
+    else:
+        parent = doctor_existing_parent(selected) if creates_parents else selected.parent
+        writable = parent.is_dir() and os.access(parent, os.W_OK)
+        detail = f"Path: {selected}"
+    if writable:
+        report.add("Configuration", "PASS", f"{label} appears writable", detail)
+    else:
+        advice = make_recovery_advice("file.unwritable", f"{label} is not writable: {selected}", recovery_fix_with_guide(f"Choose a writable path for the {label.lower()} or create its parent directory and correct its permissions", CONFIG_GUIDE_URL), False)
+        report.add("Configuration", "FAIL", advice.summary, detail, advice)
+
+
+# Adds read-only checks for each file monitoring would write
+def doctor_check_output_paths(report):
+    if configuration_shape_errors():
+        return
+    if CSV_FILE:
+        doctor_add_path_check(report, "CSV destination", CSV_FILE)
+    else:
+        report.add("Configuration", "PASS", "CSV logging is disabled")
+    if DISABLE_LOGGING:
+        report.add("Configuration", "PASS", "Output logging is disabled")
+    elif report.target_name:
+        doctor_add_path_check(report, "Log destination", resolve_output_log_path(report.target_name), creates_parents=True)
+    else:
+        # The log file name carries the target, so it is only resolved once a target is known
+        report.add("Configuration", "PASS", "Log destination will be finalized after a target is selected", f"Base path: {Path(os.path.expanduser(GITHUB_LOGFILE))}")
+
+
+# Returns whether email settings indicate that any alert can fire
+def doctor_email_alerts_enabled():
+    selected = (PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, CONTRIB_NOTIFICATION)
+    configured_destination = not str(SMTP_HOST).startswith("your_smtp_server_")
+    return any(selected) or bool(ERROR_NOTIFICATION and configured_destination)
+
+
+# Returns the user-facing spelling of one selected webhook provider
+def webhook_provider_display_name(provider=None):
+    normalized = normalized_webhook_provider(provider)
+    selected = WEBHOOK_PROVIDER if provider is None else provider
+    return "Discord" if normalized == "discord" else "ntfy" if normalized == "ntfy" else sanitize_error_text(selected)
+
+
+# Confirms the SMTP sign-in without sending anything, so a rejected login is reported before monitoring starts
+def doctor_add_smtp_login_check(report):
+    smtp_object = None
+    try:
+        smtp_object = smtp_connect_and_login(SMTP_SSL, smtp_timeout=5)
+    except Exception as exc:
+        advice = classify_recovery_error(exc, "email")
+        report.add("Notifications", "FAIL", advice.summary, advice.detail, advice)
+        return
+    finally:
+        smtp_quit_quietly(smtp_object)
+    report.email_ready = True
+    report.add("Notifications", "PASS", SMTP_READY_CHECK_LABEL, f"Alerts: {', '.join(_startup_email_notification_categories())}. No email was sent during this passive check")
+
+
+# Adds the doctor row for email alerts whose settings cannot deliver, worded the same way by every sibling monitor
+def doctor_add_email_unusable_check(report, detail, fix):
+    advice = make_recovery_advice("smtp.invalid", EMAIL_UNUSABLE_CHECK_LABEL, recovery_fix_with_guide(fix, SMTP_GUIDE_URL), False, detail)
+    report.add("Notifications", "WARN", advice.summary, detail, advice)
+
+
+# Adds channel readiness checks and stores structural delivery-test readiness
+def doctor_check_notifications(report):
+    problem = email_settings_problem()
+    if not _startup_email_notification_categories() and problem is None:
+        advice = make_recovery_advice("smtp.invalid", "Email is configured but no alert types are selected", recovery_fix_with_guide("Turn on at least one email alert in the configuration file", SMTP_GUIDE_URL), False)
+        report.add("Notifications", "WARN", advice.summary, "Nothing would ever be emailed", advice)
+    elif not doctor_email_alerts_enabled():
+        report.add("Notifications", "PASS", "Email notifications are disabled", "No SMTP connection was attempted and no email was sent")
+    else:
+        if problem is not None:
+            doctor_add_email_unusable_check(report, *problem)
+        else:
+            doctor_add_smtp_login_check(report)
+    # The error alert ships on by default, so it alone cannot mean the channel was meant to be on
+    deliberate_webhook_types = any((WEBHOOK_PROFILE_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION))
+    if not WEBHOOK_ENABLED and not deliberate_webhook_types:
+        report.add("Notifications", "PASS", "Webhook alerts are disabled")
+        return
+    if not WEBHOOK_ENABLED:
+        advice = make_recovery_advice("webhook.invalid", "Webhook alert types are selected but webhooks are switched off", recovery_fix_with_guide("Set WEBHOOK_ENABLED to True, or turn the alert types off", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "WARN", advice.summary, "Nothing would ever be delivered", advice)
+        return
+    if not validate_webhook_url(WEBHOOK_URL):
+        advice = make_recovery_advice("webhook.invalid", "WEBHOOK_URL must contain a complete HTTPS link", recovery_fix_with_guide("Set WEBHOOK_URL with --set-webhook-url or disable WEBHOOK_ENABLED", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "FAIL", advice.summary, "The destination is not a complete supported HTTPS link", advice)
+        return
+    provider = normalized_webhook_provider()
+    customization_error = validate_webhook_customization(provider)
+    header_error = validate_webhook_headers(provider)
+    if not provider:
+        advice = make_recovery_advice("webhook.invalid", "Webhook provider is invalid", recovery_fix_with_guide("Set WEBHOOK_PROVIDER to discord or ntfy", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "FAIL", advice.summary, sanitize_error_text(WEBHOOK_PROVIDER), advice)
+    elif customization_error is not None:
+        advice = make_recovery_advice("webhook.invalid", "Webhook customization is invalid", recovery_fix_with_guide("Correct WEBHOOK_TEMPLATE, WEBHOOK_USERNAME, WEBHOOK_AVATAR_URL or WEBHOOK_TRANSFORMS", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "FAIL", advice.summary, customization_error, advice)
+    elif header_error is not None:
+        advice = make_recovery_advice("webhook.invalid", "Webhook headers are invalid", recovery_fix_with_guide("Correct WEBHOOK_HEADERS or NTFY_ACCESS_TOKEN", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "FAIL", advice.summary, header_error, advice)
+    elif not deliberate_webhook_types and not WEBHOOK_ERROR_NOTIFICATION:
+        advice = make_recovery_advice("webhook.invalid", "Webhook alerts are on but no alert types are selected", recovery_fix_with_guide("Turn on at least one webhook alert in the configuration file, or set WEBHOOK_ENABLED to False", WEBHOOK_GUIDE_URL), False)
+        report.add("Notifications", "WARN", advice.summary, "Nothing would ever be delivered", advice)
+    else:
+        report.webhook_ready = True
+        report.add("Notifications", "PASS", f"{WEBHOOK_READY_CHECK_LABEL} for {webhook_provider_display_name()}", f"Alerts: {', '.join(_startup_webhook_notification_categories())}. The private link was not displayed. No webhook was sent during this passive check")
+
+
+# Sanitizes one doctor field and keeps it on a single output-contract line
+def sanitize_doctor_text(value):
+    return " ".join(sanitize_error_text(value).splitlines()).strip()
+
+
+# Renders one doctor result while sanitizing every user-visible field
+def print_doctor_check(check, *, stream=None):
+    destination = sys.stdout if stream is None else stream
+    marker = colorize(_DOCTOR_MARK_STYLES[check.status], f"[{check.status}]")
+    destination.write(f"{marker} {sanitize_doctor_text(check.label)}\n")
+    if check.detail:
+        # The report is written to a sanitize-only surface, so the link colour every other line gets from the stream is applied here
+        destination.write(f"  {colorize_links(sanitize_doctor_text(check.detail))}\n")
+    if check.status != "PASS" and check.advice is not None:
+        # The fix carries its own guide line, so each line is indented and styled on its own
+        for advice_line in f"To fix: {check.advice.fix}".splitlines():
+            destination.write(f"  {colorize_fix_line(sanitize_doctor_text(advice_line))}\n")
+
+
+# The fixed section order the report renders in, chosen so each section depends only on the ones above it
+DOCTOR_SECTIONS = ("Environment", "Configuration", "Authentication", "Connectivity", "Target", "Monitoring", "Notifications")
+
+
+# Renders every non-empty section in the fixed order with exactly one blank line between them
+def render_doctor_sections(report, stream=None):
+    destination = sys.stdout if stream is None else stream
+    for section in DOCTOR_SECTIONS:
+        section_checks = [check for check in report.checks if check.section == section]
+        if not section_checks:
+            continue
+        destination.write(f"\n{colorize('section', section)}\n")
+        for check in section_checks:
+            print_doctor_check(check, stream=destination)
+
+
+# Returns whether stdin supports separate interactive delivery approvals
+def doctor_input_is_interactive(input_stream=None):
+    source = sys.stdin if input_stream is None else input_stream
+    try:
+        return bool(source.isatty())
+    except Exception as exc:
+        debug_swallowed_exception("Doctor input terminal detection", exc)
+        return False
+
+
+# Returns whether doctor output is attached to a real terminal instead of a pipe
+def doctor_output_is_interactive(stream=None):
+    destination = sys.stdout if stream is None else stream
+    terminal = getattr(destination, "terminal", destination)
+    try:
+        return bool(terminal.isatty())
+    except Exception as exc:
+        debug_swallowed_exception("Doctor output terminal detection", exc)
+        return False
+
+
+# Reads one default-no delivery approval without exposing any private setting
+def ask_doctor_approval(prompt, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    while True:
+        destination.write(colorize("info", f"{prompt} [y/N]: "))
+        destination.flush()
+        try:
+            answer = str(read_interactively(input_func)).strip().casefold()
+        except EOFError:
+            destination.write("\nDelivery test skipped.\n")
+            return False
+        except KeyboardInterrupt:
+            # Ctrl+C ends the run here the way it does anywhere else, rather than only declining this one test
+            signal_handler(signal.SIGINT, None)
+            raise
+        if not answer or answer in ("n", "no"):
+            return False
+        if answer in ("y", "yes"):
+            return True
+        # An unreadable answer is re-asked rather than counted as consent or as a refusal the user did not give
+        destination.write("  Please answer 'y' or 'n'." + "\n")
+
+
+# Offers separately approved real delivery tests only on interactive stdin
+def doctor_run_optional_delivery_tests(report, input_func=input, input_stream=None, stream=None, email_sender=None, webhook_sender=None):
+    if not (report.email_ready or report.webhook_ready) or not doctor_input_is_interactive(input_stream) or not doctor_output_is_interactive(stream):
+        return
+    destination = sys.stdout if stream is None else stream
+    destination.write("\n" + colorize("section", "Optional delivery tests") + "\n\n")
+    destination.write("Doctor will not write files. Each approved test sends one real message.\n\n")
+    send_email_func = send_email if email_sender is None else email_sender
+    send_webhook_func = send_webhook if webhook_sender is None else webhook_sender
+    if report.email_ready:
+        approved = ask_doctor_approval("Send one test email now? This will deliver a real message", input_func, destination)
+        if approved:
+            result = send_email_func("GitHub Monitor doctor test email", "This test email was sent after approval in --doctor. Your SMTP delivery settings work.", "", SMTP_SSL, smtp_timeout=5, report_delivery=False)
+            if result == 0:
+                check = report.add("Optional delivery tests", "PASS", "Doctor test email delivered", "One real test email was sent after confirmation")
+            else:
+                advice = make_recovery_advice("smtp.connection", "Doctor test email delivery failed", recovery_fix_with_guide("Review the SMTP error above and correct the email settings", SMTP_GUIDE_URL), True)
+                check = report.add("Optional delivery tests", "FAIL", advice.summary, "The approved test email could not be delivered", advice)
+        else:
+            check = report.add("Optional delivery tests", "SKIP", "Test email was not sent", "You declined the real delivery test. Run doctor again and approve the email test when ready")
+        print_doctor_check(check, stream=destination)
+    if report.webhook_ready:
+        provider = webhook_provider_display_name()
+        approved = ask_doctor_approval(f"Send one test webhook through {provider} now? This will publish a real notification", input_func, destination)
+        if approved:
+            result = send_webhook_func("GitHub Monitor doctor test webhook", "This test notification was sent after approval in --doctor. Your webhook delivery settings work.", "event", force=True, report_delivery=False)
+            if result == 0:
+                check = report.add("Optional delivery tests", "PASS", f"Doctor test webhook through {provider} delivered", "One real test webhook was sent after confirmation")
+            else:
+                advice = make_recovery_advice("webhook.connection", f"Doctor test webhook through {provider} delivery failed", recovery_fix_with_guide("Review the webhook error above and correct the destination settings", WEBHOOK_GUIDE_URL), True)
+                check = report.add("Optional delivery tests", "FAIL", advice.summary, "The approved test webhook could not be delivered", advice)
+        else:
+            check = report.add("Optional delivery tests", "SKIP", f"Test webhook through {provider} was not sent", "You declined the real delivery test. Run doctor again and approve the webhook test when ready")
+        print_doctor_check(check, stream=destination)
+
+
+# Renders the single actionable doctor verdict and guide URL
+def render_doctor_summary(report, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("\n" + colorize("header", "Summary") + "\n")
+    if report.failure_count:
+        destination.write(colorize("error", f"  {report.failure_count} check(s) failed, {report.warning_count} warning(s). Fix the failures above before relying on the tool.") + "\n")
+    elif report.warning_count:
+        destination.write(colorize("warning", f"  All critical checks passed with {report.warning_count} warning(s). Review the warnings above.") + "\n")
+    else:
+        destination.write(colorize("boolean_true", "  All checks passed. You are good to go!") + "\n")
+    destination.write("\n" + colorize_links(f"Guide: {DOCTOR_GUIDE_URL}") + "\n")
+
+
+# Runs the complete read-only preflight and returns its healthcheck exit code
+def run_doctor(args, parser, request_get=None, github_factory=None, contribution_checker=None, module_finder=None, input_func=input, input_stream=None, stream=None, email_sender=None, webhook_sender=None, show_banner=True):
+    destination = terminal_surface_stream(sys.stdout if stream is None else stream)
+    if show_banner:
+        _write_startup_banner(destination)
+    destination.write("Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval.\n\n")
+    report = DoctorReport(target_name=str(args.username or ""))
+    progress = DoctorProgress(destination)
+    try:
+        progress.show("environment")
+        doctor_check_environment(report, module_finder)
+        progress.show("configuration")
+        progress.clear()
+        doctor_check_configuration(report, args, parser)
+        if not report.target_name:
+            report.target_name = wizard_normalize_target(TARGET_GITHUB_USERNAME)
+        doctor_check_output_paths(report)
+        colour_stream = destination
+        while isinstance(colour_stream, (Logger, TerminalStream)):
+            colour_stream = colour_stream.terminal
+        init_color_output(colour_stream)
+        progress.show("connectivity")
+        doctor_check_connectivity(report, request_get)
+        progress.show("authentication")
+        doctor_check_authentication(report, request_get)
+        progress.show("the monitored profile")
+        doctor_check_target(report, github_factory)
+        progress.show("monitoring feeds")
+        doctor_check_monitoring(report, contribution_checker)
+        progress.show("notifications")
+        doctor_check_notifications(report)
+    finally:
+        progress.clear()
+    destination.write(colorize("header", "Doctor") + "\n")
+    # The install method is context rather than a check: it cannot fail, so it is stated once here
+    # instead of taking a result row that no marker describes
+    destination.write(f"Detected install method: {colorize('username', detect_install_context().install_method)}\n")
+    render_doctor_sections(report, destination)
+    doctor_run_optional_delivery_tests(report, input_func, input_stream, destination, email_sender, webhook_sender)
+    render_doctor_summary(report, destination)
+    destination.flush()
+    return 1 if report.failure_count else 0
+
+
+WIZARD_SECTION_KEYS = {
+    "Target": ("TARGET_GITHUB_USERNAME", "DO_NOT_MONITOR_GITHUB_EVENTS", "TRACK_REPOS_CHANGES", "TRACK_CONTRIB_CHANGES"),
+    "Polling": ("GITHUB_CHECK_INTERVAL",),
+    "Authentication": ("GITHUB_API_URL", "GITHUB_HTML_URL"),
+    "Email": ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_SSL", "SENDER_EMAIL", "RECEIVER_EMAIL", "PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION"),
+    "Webhook": ("WEBHOOK_ENABLED", "WEBHOOK_PROVIDER", "WEBHOOK_PROFILE_NOTIFICATION", "WEBHOOK_EVENT_NOTIFICATION", "WEBHOOK_REPO_NOTIFICATION", "WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION", "WEBHOOK_CONTRIB_NOTIFICATION", "WEBHOOK_ERROR_NOTIFICATION"),
+    "Destinations": ("CSV_FILE", "DISABLE_LOGGING", "DOTENV_FILE"),
+    "FileDestinations": (),
+}
+WIZARD_SECRET_KEYS = {"Authentication": ("GITHUB_TOKEN",), "Email": ("SMTP_PASSWORD",), "Webhook": ("WEBHOOK_URL", "NTFY_ACCESS_TOKEN")}
+WIZARD_CONFIG_ORDER = tuple(name for names in WIZARD_SECTION_KEYS.values() for name in names)
+
+# The mail server settings the wizard collects, and how long its sign-in check waits for the server
+WIZARD_SMTP_CONFIG_KEYS = ("SMTP_HOST", "SMTP_PORT", "SMTP_SSL", "SMTP_USER", "SENDER_EMAIL", "RECEIVER_EMAIL")
+WIZARD_SMTP_TIMEOUT = 5
+
+# The alert settings each channel owns, so one preset answer can switch the whole channel on
+WIZARD_EMAIL_NOTIFICATION_KEYS = ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION", "ERROR_NOTIFICATION")
+WIZARD_WEBHOOK_NOTIFICATION_KEYS = ("WEBHOOK_PROFILE_NOTIFICATION", "WEBHOOK_EVENT_NOTIFICATION", "WEBHOOK_REPO_NOTIFICATION", "WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION", "WEBHOOK_CONTRIB_NOTIFICATION", "WEBHOOK_ERROR_NOTIFICATION")
+
+
+# Writes one coloured wizard heading at the requested level
+def _wizard_heading(destination, text, part="section"):
+    destination.write("\n" + colorize(part, text) + "\n\n")
+
+
+# Writes one labelled command with sibling-style indentation and spacing
+def _wizard_print_command(destination, label, command, suffix=""):
+    destination.write(f"{label}\n")
+    destination.write(f"    {colorize('section', command)}{colorize('info', suffix) if suffix else ''}\n\n")
+
+
+# Writes the command that starts monitoring with the files this run checked, so a report read on its own
+# ends with the next action rather than leaving the reader to assemble the command
+def print_doctor_next_steps(destination, target=None, saved_target=None, doctor_exit=0):
+    _wizard_heading(destination, "Next steps", "header")
+    label = "After Doctor passes, start monitoring:" if doctor_exit else "Start monitoring:"
+    monitor_target = command_targets(target, saved_target)[1]
+    _wizard_print_command(destination, label, render_command([monitor_target] if monitor_target else []))
+    destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
+
+
+# Walks up to the first directory that exists, so a destination under a missing folder can still be judged
+def wizard_nearest_existing_parent(path):
+    candidate = Path(path).expanduser()
+    if candidate.exists():
+        return candidate if candidate.is_dir() else candidate.parent
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return candidate
+
+
+# Checks one setup destination without creating or modifying it, so an unwritable path is caught before any question
+def wizard_validate_destination(path, label):
+    resolved = Path(path).expanduser().resolve()
+    if resolved.exists() and resolved.is_dir():
+        raise ValueError(f"{label} must be a file path, not a directory")
+    parent = wizard_nearest_existing_parent(resolved)
+    if not parent.is_dir():
+        raise ValueError(f"{label} does not have a usable parent directory")
+    if not os.access(str(parent), os.W_OK):
+        raise ValueError(f"{label} is not writable through parent '{parent}'")
+    return resolved
+
+
+# Confirms replacing an existing config before any question is asked, so a long run cannot end in a surprise
+def wizard_choose_config_destination(config_path, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    selected = Path(config_path)
+    while selected.exists() and not wizard_ask_yes_no(f"Configuration file '{selected}' exists. A timestamped backup is kept. Rebuild it from your answers, starting from its current settings?", False, input_func, destination):
+        alternative = wizard_ask_text("Another config destination or leave empty to cancel", input_func=input_func, stream=destination)
+        if not alternative:
+            return None
+        try:
+            selected = wizard_validate_destination(alternative, "Configuration destination")
+        except ValueError as exc:
+            destination.write(f"  {exc}." + "\n")
+    return selected
+
+
+# Writes the detected installation method and selected setup files
+def _wizard_print_setup_destinations(destination, context, state):
+    destination.write(f"Detected install method: {colorize('username', context.install_method)}\n")
+    destination.write(f"Configuration:          {state.config_path}\n")
+    destination.write(f"Dotenv:                 {state.dotenv_path}\n")
+
+
+# The theme part each setup summary row draws its value in, for rows whose value has a known kind
+WIZARD_SUMMARY_VALUE_STYLES = {"Target": "username", "Polling interval": "duration", "GitHub API": "url"}
+
+
+# Colours one setup summary value from its row label
+def _wizard_summary_value(label, value):
+    text = str(value)
+    part = WIZARD_SUMMARY_VALUE_STYLES.get(label)
+    if part:
+        return colorize(part, text)
+    if text.startswith("enabled") or text == "complete":
+        return colorize("boolean_true", text)
+    if text in ("disabled", "incomplete"):
+        return colorize("boolean_false", text)
+    return text
+
+
+# Signals a clean interactive cancellation before any wizard files are written
+class WizardCancelled(Exception):
+    pass
+
+
+@dataclass
+class WizardSetupState:
+    target: str
+    config_path: Path
+    dotenv_path: Path
+    install_context: InstallContext
+    values: dict[str, Any]
+    secrets: dict[str, str]
+    baseline_values: dict[str, Any]
+    baseline_secrets: dict[str, str]
+    preserved_values: dict[str, Any] = field(default_factory=dict)
+    authenticated_login: str = ""
+    environment_token_available: bool = False
+    persist_target: bool = True
+
+    # Reports whether doctor can exercise an authenticated real path
+    @property
+    def authentication_complete(self):
+        return bool(self.secrets.get("GITHUB_TOKEN") or self.environment_token_available)
+
+
+# Normalizes a GitHub username or profile URL to one canonical username
+def wizard_normalize_target(value):
+    selected = str(value).strip()
+    if "://" in selected:
+        try:
+            parsed = urlsplit(selected)
+        except ValueError:
+            return ""
+        parts = [part for part in parsed.path.split("/") if part]
+        if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname or len(parts) != 1:
+            return ""
+        selected = parts[0]
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", selected):
+        return ""
+    return selected
+
+
+# Parses one human duration and returns a positive whole number of seconds
+def wizard_parse_duration(value):
+    selected = str(value).strip().casefold()
+    if not selected:
+        raise ValueError("Enter a duration such as 120, 2m, 1.5h, 1h 30m or 1d")
+    if selected.isdigit():
+        seconds = int(selected)
+        if seconds <= 0:
+            raise ValueError("The duration must be at least one second")
+        if seconds > 31536000:
+            raise ValueError("Use a positive duration no longer than one year")
+        return seconds
+    position = 0
+    total = 0.0
+    matches = list(re.finditer(r"\s*(\d+(?:\.\d+)?)\s*([smhd])", selected))
+    for match in matches:
+        if selected[position:match.start()].strip():
+            raise ValueError("Use seconds, minutes, hours or days such as 30s, 2m, 1.5h, 1h 30m or 1d")
+        amount = float(match.group(1))
+        total += amount * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2)]
+        position = match.end()
+    if not matches or selected[position:].strip() or total <= 0 or total > 31536000:
+        raise ValueError("Use a positive duration no longer than one year")
+    seconds = round(total)
+    if seconds <= 0:
+        raise ValueError("The duration must be at least one second")
+    return seconds
+
+
+# Renders raw seconds plus a compact readable duration for wizard defaults and summaries
+def wizard_format_duration(seconds):
+    remaining = int(seconds)
+    parts = []
+    for suffix, count in (("d", 86400), ("h", 3600), ("m", 60), ("s", 1)):
+        value, remaining = divmod(remaining, count)
+        if value:
+            parts.append(f"{value}{suffix}")
+    raw = f"{seconds}s"
+    readable = " ".join(parts) or raw
+    return raw if readable == raw else f"{raw} - {readable}"
+
+
+# Trims the parenthetical hint from a question, so the retry offer that repeats it stays one readable line
+def wizard_retry_label(label):
+    return label.split(" (")[0].strip()
+
+
+# Prompts until the user enters a positive duration or accepts the readable default
+def wizard_ask_duration(label, default, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    while True:
+        answer = wizard_read_answer(f"{label} [{wizard_format_duration(default)}]: ", input_func, destination)
+        if not answer:
+            return int(default)
+        try:
+            return wizard_parse_duration(answer)
+        except ValueError:
+            destination.write("  Enter a positive duration such as 120, 2m, 1.5h, 1h 30m or 1d." + "\n")
+            if not wizard_offer_retry(wizard_retry_label(label), input_func=input_func, stream=destination):
+                destination.write(f"  Keeping {wizard_format_duration(default)}.\n")
+                return int(default)
+
+
+# Reads one wizard answer after rendering its prompt to the selected stream
+def wizard_read_answer(prompt, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    # Writes the prompt text, not the answer that follows it
+    # codeql[py/clear-text-logging-sensitive-data]
+    destination.write(colorize("info", prompt))
+    destination.flush()
+    try:
+        return str(read_interactively(input_func)).strip()
+    except (EOFError, KeyboardInterrupt) as exc:
+        destination.write("\n")
+        raise WizardCancelled from exc
+
+
+# Reads one hidden wizard answer while forcing debug output off around the secret path
+def wizard_read_secret(label, getpass_func=None, stream=None, strip=True):
+    global DEBUG_MODE
+    destination = sys.stdout if stream is None else stream
+    destination.write(colorize("info", f"{label}: "))
+    destination.flush()
+    hidden_prompt = getpass.getpass if getpass_func is None else getpass_func
+    previous_debug_mode = DEBUG_MODE
+    DEBUG_MODE = False
+    try:
+        value = str(read_interactively(hidden_prompt, ""))
+        return value.strip() if strip else value
+    except (EOFError, KeyboardInterrupt) as exc:
+        destination.write("\n")
+        raise WizardCancelled from exc
+    finally:
+        DEBUG_MODE = previous_debug_mode
+
+
+# Reads a yes or no answer with an explicit default and retries invalid input
+def wizard_ask_yes_no(prompt, default=False, input_func=input, stream=None):
+    suffix = " [Y/n]: " if default else " [y/N]: "
+    destination = sys.stdout if stream is None else stream
+    while True:
+        answer = wizard_read_answer(prompt + suffix, input_func, destination).casefold()
+        if not answer:
+            return default
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        destination.write("  Please answer 'y' or 'n'." + "\n")
+
+
+# Offers the one way out after an entry the wizard cannot use, so declining keeps every answer already given
+def wizard_offer_retry(label, consequence="", input_func=input, stream=None):
+    if consequence:
+        return not wizard_ask_yes_no(f"Continue without the {label}? {consequence}", False, input_func, stream)
+    return wizard_ask_yes_no(f"Try entering the {label} again?", True, input_func, stream)
+
+
+# Reads one numbered choice and returns its stable value
+def wizard_ask_choice(prompt, choices, default, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("\n")
+    destination.write(colorize("info", prompt) + "\n")
+    for index, (_, label, description) in enumerate(choices, 1):
+        marker = " (default)" if choices[index - 1][0] == default else ""
+        destination.write(f"  {colorize('username', str(index))}. {label}{colorize('info', marker)}\n")
+        destination.write(f"     {description}\n")
+    while True:
+        answer = wizard_read_answer(f"Choose [1-{len(choices)}]: ", input_func, destination)
+        if not answer:
+            return default
+        if answer.isdigit() and 1 <= int(answer) <= len(choices):
+            return choices[int(answer) - 1][0]
+        destination.write(f"  Enter a number between 1 and {len(choices)}." + "\n")
+
+
+# Reads one text value with a shown default and optional validation
+def wizard_ask_text(label, default="", validator=None, input_func=input, stream=None, required=False):
+    destination = sys.stdout if stream is None else stream
+    shown_default = f" [{default}]" if default not in (None, "") else ""
+    while True:
+        answer = wizard_read_answer(f"{label}{shown_default}: ", input_func, destination)
+        selected = str(default) if not answer else answer
+        if required and not selected:
+            destination.write("  This value is required.\n")
+            if not wizard_offer_retry(label, input_func=input_func, stream=destination):
+                return ""
+            continue
+        if validator is None:
+            return selected
+        error = validator(selected)
+        if not error:
+            return selected
+        destination.write(f"  That value is not valid: {error}\n")
+        if not wizard_offer_retry(label, input_func=input_func, stream=destination):
+            return str(default)
+
+
+# Asks for a whole number inside the accepted range, keeping the saved value when the retry offer is declined
+def wizard_ask_positive_int(label, default, maximum=None, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    while True:
+        answer = wizard_ask_text(label, str(default), input_func=input_func, stream=destination, required=True)
+        # An empty answer means the retry offer was declined, so the default stands instead of asking again
+        if not answer:
+            return int(default)
+        parsed = int(answer) if str(answer).isdigit() else 0
+        if parsed > 0 and (maximum is None or parsed <= maximum):
+            return parsed
+        destination.write(f"  Enter a whole number from 1 through {maximum}.\n" if maximum is not None else "  Enter a positive whole number.\n")
+        # A value the helper cannot use is a rejected entry, so it gets the same way out an empty one gets
+        if not wizard_offer_retry(wizard_retry_label(label), input_func=input_func, stream=destination):
+            destination.write(f"  Keeping {default}.\n")
+            return int(default)
+
+
+# Returns a saved value fit to show as a prompt default, so a shipped placeholder is never offered back
+def wizard_default(value):
+    text = str(value or "")
+    return "" if not text.strip() or text.startswith("your_") else text
+
+
+# Returns a concise validation error for one general HTTPS service endpoint
+def wizard_https_url_error(value):
+    try:
+        parsed = urlsplit(str(value).strip())
+    except ValueError:
+        return "enter a complete HTTPS URL"
+    if parsed.scheme.casefold() != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return "enter a complete HTTPS URL without credentials, a query or a fragment"
+    return ""
+
+
+# Returns a concise validation error for one wizard email configuration
+def wizard_email_settings_error(values, secrets):
+    host = str(values.get("SMTP_HOST", ""))
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not re.fullmatch(r"(?=.{4,253}\Z)((?!-)[A-Za-z0-9-]{1,63}(?<!-)\.)+[A-Za-z]{2,63}\.?", host):
+            return "SMTP host must be a valid IP address or fully qualified domain name"
+    try:
+        port = int(values.get("SMTP_PORT", 0))
+    except (TypeError, ValueError):
+        return "SMTP port must be a number from 1 through 65535"
+    if not 1 <= port <= 65535:
+        return "SMTP port must be a number from 1 through 65535"
+    email_pattern = r"[^@\s]+@[^@\s]+\.[^@\s]+"
+    if not re.fullmatch(email_pattern, str(values.get("SENDER_EMAIL", ""))) or not re.fullmatch(email_pattern, str(values.get("RECEIVER_EMAIL", ""))):
+        return "sender and receiver must be valid email addresses"
+    if not str(values.get("SMTP_USER", "")).strip() or not secrets.get("SMTP_PASSWORD"):
+        return "SMTP username and password are required"
+    return ""
+
+
+# Loads safe baseline values from existing config and dotenv files without applying them globally
+def build_wizard_state(config_path, dotenv_path, install_context=None, *, env_file_explicit=True):
+    selected_config = Path(config_path).expanduser().resolve()
+    selected_dotenv = Path(dotenv_path).expanduser().resolve()
+    if selected_config == selected_dotenv:
+        raise ValueError("Configuration and dotenv must use different files")
+    defaults = parse_config_content(CONFIG_BLOCK, "<built-in-config>")
+    existing_values = {}
+    if selected_config.exists():
+        debug_print("Reading setup baseline configuration", path=selected_config)
+        existing_values = parse_config_content(selected_config.read_text(encoding="utf-8"), str(selected_config), reference_values=defaults)
+    values = dict(defaults)
+    values.update(existing_values)
+    if not env_file_explicit and existing_values.get("DOTENV_FILE"):
+        if str(existing_values["DOTENV_FILE"]).casefold() == "none":
+            raise ValueError("Setup needs a writable dotenv destination. Pass --env-file PATH to choose one.")
+        selected_dotenv = wizard_validate_destination(existing_values["DOTENV_FILE"], "Dotenv destination")
+    if selected_config == selected_dotenv:
+        raise ValueError("Configuration and dotenv must use different files")
+    secrets = {}
+    if selected_dotenv.exists():
+        debug_print("Reading setup baseline dotenv", path=selected_dotenv)
+        try:
+            from dotenv import dotenv_values
+            secrets.update({str(name): str(value) for name, value in dotenv_values(selected_dotenv).items() if name in SECRET_KEYS and value is not None})
+        except Exception as exc:
+            raise ValueError(f"Dotenv file '{selected_dotenv}' could not be read: {type(exc).__name__}: {exc}") from None
+    for name in SECRET_KEYS:
+        configured = existing_values.pop(name, None)
+        if name not in secrets and secret_is_set(configured):
+            secrets[name] = configured
+    values["DOTENV_FILE"] = str(selected_dotenv)
+    baseline_values = dict(values)
+    baseline_secrets = dict(secrets)
+    preserved = {name: value for name, value in existing_values.items() if name not in SECRET_KEYS}
+    context = detect_install_context() if install_context is None else install_context
+    target = wizard_normalize_target(values.get("TARGET_GITHUB_USERNAME", ""))
+    return WizardSetupState(target, selected_config, selected_dotenv, context, values, secrets, baseline_values, baseline_secrets, preserved, environment_token_available=bool(os.environ.get("GITHUB_TOKEN")), persist_target=bool(target) if target else True)
+
+
+# Restores one wizard section to its pre-wizard values before recollecting it
+def wizard_reset_section(state, section):
+    for name in WIZARD_SECTION_KEYS[section]:
+        state.values[name] = state.baseline_values[name]
+    for name in WIZARD_SECRET_KEYS.get(section, ()):
+        if name in state.baseline_secrets:
+            state.secrets[name] = state.baseline_secrets[name]
+        else:
+            state.secrets.pop(name, None)
+    if section == "Target":
+        state.target = wizard_normalize_target(state.values.get("TARGET_GITHUB_USERNAME", ""))
+        state.persist_target = bool(state.target) if state.target else True
+    if section == "Authentication":
+        state.authenticated_login = ""
+
+
+# Collects the target and core monitoring feature choices
+def wizard_collect_target(state, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    while True:
+        entered = wizard_ask_text("GitHub username or profile URL", state.target, input_func=input_func, stream=destination)
+        normalized = wizard_normalize_target(entered)
+        if normalized:
+            state.target = normalized
+            if normalized != entered:
+                # The username is not a secret, the scanner conflates it with the hidden answers that share this helper
+                # codeql[py/clear-text-logging-sensitive-data]
+                destination.write(f"Using normalized GitHub username: {normalized}\n")
+            break
+        destination.write("  That target is not valid. Enter a GitHub username or full profile URL.\n")
+        # Leaving the target unset has to be a decision rather than a loop the user can only leave with Ctrl+C
+        if not wizard_offer_retry("GitHub username", "Nothing can be monitored until one is set", input_func, destination):
+            break
+    # A declined target ends the section, so nothing asks about persisting a target that does not exist
+    if not state.target:
+        destination.write("  No target selected. Nothing can be monitored until one is set. Run --setup again or pass the target on the command line.\n")
+        state.values["TARGET_GITHUB_USERNAME"] = ""
+        return
+    state.persist_target = wizard_ask_yes_no("Persist this target in the generated config?", state.persist_target, input_func, destination)
+    state.values["TARGET_GITHUB_USERNAME"] = state.target if state.persist_target else ""
+    state.values["DO_NOT_MONITOR_GITHUB_EVENTS"] = not wizard_ask_yes_no("Monitor public GitHub events?", not bool(state.values["DO_NOT_MONITOR_GITHUB_EVENTS"]), input_func, destination)
+    state.values["TRACK_REPOS_CHANGES"] = wizard_ask_yes_no("Track detailed repository changes?", bool(state.values["TRACK_REPOS_CHANGES"]), input_func, destination)
+    state.values["TRACK_CONTRIB_CHANGES"] = wizard_ask_yes_no("Track daily contribution changes?", bool(state.values["TRACK_CONTRIB_CHANGES"]), input_func, destination)
+
+
+# Collects a human polling interval while retaining the existing automatic timezone setting
+def wizard_collect_polling(state, input_func=input, stream=None):
+    seconds = int(state.values["GITHUB_CHECK_INTERVAL"])
+    state.values["GITHUB_CHECK_INTERVAL"] = wizard_ask_duration("GitHub polling interval (seconds or use s/m/h/d)", seconds, input_func, stream)
+
+
+# Collects GitHub endpoints and optionally validates a hidden token
+def wizard_collect_authentication(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
+    state.values["GITHUB_API_URL"] = wizard_ask_text("GitHub API URL", str(state.values["GITHUB_API_URL"]), lambda value: "" if validate_github_endpoint_url(value) else "enter a complete HTTPS GitHub API URL", input_func, destination)
+    state.values["GITHUB_HTML_URL"] = wizard_ask_text("GitHub web URL", str(state.values["GITHUB_HTML_URL"]), wizard_https_url_error, input_func, destination)
+    destination.write(f"Create or view your GitHub personal access token: {colorize('link', GITHUB_TOKEN_SETTINGS_URL)}\n")
+    existing = bool(state.secrets.get("GITHUB_TOKEN") or state.environment_token_available)
+    if existing and not wizard_ask_yes_no("Replace the GitHub token already configured?", False, input_func, destination):
+        return
+    validator = validate_github_token if token_validator is None else token_validator
+    while True:
+        token = wizard_read_secret("GitHub token", getpass_func, destination)
+        if not token:
+            # Monitoring cannot run without it, so leaving it unset has to be a decision rather than a fallthrough
+            if not wizard_offer_retry("GitHub token", "Nothing can be monitored until one is set", input_func, destination):
+                if "GITHUB_TOKEN" in state.baseline_secrets:
+                    state.secrets["GITHUB_TOKEN"] = state.baseline_secrets["GITHUB_TOKEN"]
+                else:
+                    state.secrets.pop("GITHUB_TOKEN", None)
+                return
+            continue
+        destination.write("  Checking the token with GitHub ...\n")
+        try:
+            login = validator(token, state.values["GITHUB_API_URL"])
+        except Exception as exc:
+            destination.write(colorize("error", f"  Token validation failed: {sanitize_error_text(exc)}") + "\n")
+            # A token GitHub keeps rejecting cannot be corrected from inside the loop, so the wizard must be leavable here too
+            if not wizard_offer_retry("GitHub token", input_func=input_func, stream=destination):
+                return
+            continue
+        state.secrets["GITHUB_TOKEN"] = token
+        state.authenticated_login = str(login)
+        # The row names the account the token signed in as, not the token
+        # codeql[py/clear-text-logging-sensitive-data]
+        destination.write(f"  GitHub token is valid for user: {colorize('username', state.authenticated_login)}\n")
+        return
+
+
+# Returns one declined section to the built-in template values, so nothing the user turned down is written
+def wizard_clear_section(state, config_keys, secret_keys=()):
+    defaults = _config_template_defaults()
+    for name in config_keys:
+        if name in defaults:
+            state.values[name] = defaults[name]
+        else:
+            state.values.pop(name, None)
+    for name in secret_keys:
+        state.secrets.pop(name, None)
+        if name in state.baseline_secrets:
+            state.secrets[name] = state.baseline_secrets[name]
+
+
+# Switches every email alert off together, so an abandoned answer cannot leave half a mail server configured
+def wizard_disable_email(state):
+    wizard_clear_section(state, WIZARD_SMTP_CONFIG_KEYS, ("SMTP_PASSWORD",))
+    for name in WIZARD_EMAIL_NOTIFICATION_KEYS:
+        state.values[name] = False
+
+
+# Reports which email alerts the current tracking settings can actually produce
+def wizard_available_email_alerts(state, prefix=""):
+    return {
+        f"{prefix}PROFILE_NOTIFICATION": True,
+        f"{prefix}EVENT_NOTIFICATION": not state.values["DO_NOT_MONITOR_GITHUB_EVENTS"],
+        f"{prefix}REPO_NOTIFICATION": bool(state.values["TRACK_REPOS_CHANGES"]),
+        f"{prefix}REPO_UPDATE_DATE_NOTIFICATION": bool(state.values["TRACK_REPOS_CHANGES"]),
+        f"{prefix}CONTRIB_NOTIFICATION": bool(state.values["TRACK_CONTRIB_CHANGES"]),
+        f"{prefix}ERROR_NOTIFICATION": True,
+    }
+
+
+# Signs in to the collected mail server without sending anything, so a refused login is caught during setup
+def wizard_verify_smtp(values, secrets):
+    names = WIZARD_SMTP_CONFIG_KEYS + ("SMTP_PASSWORD",)
+    previous = {name: globals()[name] for name in names}
+    smtp_object = None
+    try:
+        globals().update({name: values[name] for name in WIZARD_SMTP_CONFIG_KEYS})
+        # A password kept from an earlier run is the one the sign-in has to prove
+        globals()["SMTP_PASSWORD"] = _wizard_exported_secrets().get("SMTP_PASSWORD", secrets.get("SMTP_PASSWORD", previous["SMTP_PASSWORD"]))
+        smtp_object = smtp_connect_and_login(SMTP_SSL, smtp_timeout=WIZARD_SMTP_TIMEOUT)
+        return None
+    except Exception as exc:
+        return classify_recovery_error(exc, "email")
+    finally:
+        if smtp_object is not None:
+            smtp_quit_quietly(smtp_object)
+        globals().update(previous)
+
+
+# Reports the outcome of the sign-in check: True to continue, False to ask again, None to switch email off
+def wizard_smtp_sign_in_accepted(state, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    destination.write("  Checking the sign-in with the mail server ...\n")
+    advice = wizard_verify_smtp(state.values, state.secrets)
+    if advice is None:
+        destination.write("  The mail server accepted the sign-in. No email was sent.\n")
+        return True
+    destination.write(f"  {advice.summary}: {advice.detail}" if advice.detail else f"  {advice.summary}" + "\n")
+    destination.write(f"  To fix: {advice.fix}\n")
+    if wizard_offer_retry("mail server settings", input_func=input_func, stream=destination):
+        return False
+    if advice.retryable:
+        # Being offline is the usual reason a correct setup fails here, so the answers are kept rather than discarded
+        destination.write("  The settings were kept without being checked. Run --doctor to check the sign-in again.\n")
+        return True
+    destination.write("  Email notifications stay off until the mail server accepts the settings." + "\n")
+    return None
+
+
+# Collects optional email delivery settings and alert choices
+def wizard_collect_email(state, input_func=input, getpass_func=None, stream=None):
+    destination = sys.stdout if stream is None else stream
+    configured_destination = not str(state.values["SMTP_HOST"]).startswith("your_smtp_server_")
+    enabled_default = any(bool(state.values[name]) for name in ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "REPO_NOTIFICATION", "REPO_UPDATE_DATE_NOTIFICATION", "CONTRIB_NOTIFICATION")) or bool(state.values["ERROR_NOTIFICATION"] and configured_destination)
+    if not wizard_ask_yes_no("Configure email notifications?", enabled_default, input_func, destination):
+        wizard_disable_email(state)
+        return
+    while True:
+        state.values["SMTP_HOST"] = wizard_ask_text("SMTP host", wizard_default(state.values["SMTP_HOST"]), input_func=input_func, stream=destination, required=True)
+        state.values["SMTP_PORT"] = wizard_ask_positive_int("SMTP port", state.values["SMTP_PORT"], maximum=65535, input_func=input_func, stream=destination)
+        state.values["SMTP_SSL"] = wizard_ask_yes_no("Enable TLS/SSL for SMTP?", bool(state.values["SMTP_SSL"]), input_func, destination)
+        state.values["SMTP_USER"] = wizard_ask_text("SMTP username", wizard_default(state.values["SMTP_USER"]), input_func=input_func, stream=destination, required=True)
+        state.values["SENDER_EMAIL"] = wizard_ask_text("Sender email", wizard_default(state.values["SENDER_EMAIL"]), input_func=input_func, stream=destination, required=True)
+        state.values["RECEIVER_EMAIL"] = wizard_ask_text("Receiver email", wizard_default(state.values["RECEIVER_EMAIL"]), input_func=input_func, stream=destination, required=True)
+        # A blank answer keeps the password already saved in the dotenv file
+        password = wizard_read_secret("SMTP password", getpass_func, destination, strip=False)
+        if password and ("SMTP_PASSWORD" not in read_private_settings(state.dotenv_path) or wizard_ask_yes_no("The dotenv file already contains SMTP_PASSWORD. Replace that value?", False, input_func, destination)):
+            state.secrets["SMTP_PASSWORD"] = password
+        validation_error = wizard_email_settings_error(state.values, state.secrets)
+        if validation_error:
+            destination.write(f"  Email settings are incomplete: {validation_error}" + "\n")
+            if wizard_offer_retry("mail server settings", input_func=input_func, stream=destination):
+                continue
+            destination.write("  Email notifications stay off until every mail server setting is answered." + "\n")
+            wizard_disable_email(state)
+            return
+        outcome = wizard_smtp_sign_in_accepted(state, input_func, destination)
+        if outcome is None:
+            wizard_disable_email(state)
+            return
+        if outcome:
+            break
+    available = wizard_available_email_alerts(state)
+    preset = wizard_ask_choice("Which email notifications should be enabled?", (
+        ("recommended", "Status and errors, recommended", "Profile changes, new GitHub events and monitoring errors."),
+        ("all", "Every supported event", "Enables every email notification the tracking settings allow."),
+        ("custom", "Custom", "Choose each notification type separately."),
+    ), "recommended", input_func, destination)
+    if preset == "custom":
+        destination.write("\n")
+        questions = (
+            ("PROFILE_NOTIFICATION", "Email on profile changes?"),
+            ("EVENT_NOTIFICATION", "Email on new GitHub events?"),
+            ("REPO_NOTIFICATION", "Email on detailed repository changes?"),
+            ("REPO_UPDATE_DATE_NOTIFICATION", "Email on repository update date changes?"),
+            ("CONTRIB_NOTIFICATION", "Email on daily contribution changes?"),
+            ("ERROR_NOTIFICATION", "Email monitoring errors?"),
+        )
+        for name, question in questions:
+            state.values[name] = available[name] and wizard_ask_yes_no(question, False, input_func, destination)
+        return
+    recommended = ("PROFILE_NOTIFICATION", "EVENT_NOTIFICATION", "ERROR_NOTIFICATION")
+    for name, usable in available.items():
+        state.values[name] = usable and (preset == "all" or name in recommended)
+
+
+# Switches the channel and every alert it owns off together, so a half-configured webhook cannot be written
+def wizard_disable_webhook(state):
+    wizard_clear_section(state, ("WEBHOOK_PROVIDER",), ("WEBHOOK_URL", "NTFY_ACCESS_TOKEN"))
+    state.values["WEBHOOK_ENABLED"] = False
+    for name in WIZARD_SECTION_KEYS["Webhook"]:
+        if name.endswith("_NOTIFICATION"):
+            state.values[name] = False
+
+
+# Collects an optional ntfy access token without displaying or contacting the service
+def wizard_collect_ntfy_access_token(state, input_func=input, getpass_func=None, stream=None):
+    destination = sys.stdout if stream is None else stream
+    if state.secrets.get("NTFY_ACCESS_TOKEN"):
+        choice = wizard_ask_choice("Which ntfy authentication should be used?", (
+            ("keep", "Keep the saved access token", "Keeps the private value without displaying or changing it."),
+            ("replace", "Paste a new access token", "Uses a hidden prompt then saves the replacement in .env."),
+            ("remove", "Do not use an access token", "Disables the saved token. Authentication in the topic URL still works."),
+        ), "keep", input_func, destination)
+        if choice == "keep":
+            return
+        if choice == "remove":
+            state.secrets["NTFY_ACCESS_TOKEN"] = ""
+            destination.write("  The saved ntfy access token will be disabled without being displayed.\n")
+            return
+    elif not wizard_ask_yes_no("Authenticate this ntfy topic with a separate access token?", False, input_func, destination):
+        destination.write("  No separate access token selected. Authentication already present in the topic URL still works.\n")
+        return
+    while True:
+        access_token = wizard_read_secret("Paste the ntfy access token only", getpass_func, destination)
+        if not access_token or ("\r" not in access_token and "\n" not in access_token and not access_token.casefold().startswith(("bearer ", "basic "))):
+            if access_token:
+                state.secrets["NTFY_ACCESS_TOKEN"] = access_token
+            return
+        destination.write("  Paste only the access token without a Bearer or Basic prefix." + "\n")
+        if not wizard_offer_retry("ntfy access token", input_func=input_func, stream=destination):
+            return
+
+
+# Collects optional Discord or ntfy delivery settings and alert choices
+def wizard_collect_webhook(state, input_func=input, getpass_func=None, stream=None):
+    destination = sys.stdout if stream is None else stream
+    if not wizard_ask_yes_no("Set up webhook alerts (Discord, ntfy etc.)?", bool(state.values["WEBHOOK_ENABLED"]), input_func, destination):
+        wizard_disable_webhook(state)
+        return
+    provider = wizard_ask_choice("Which webhook service should receive alerts?", (
+        ("discord", "Discord", "Sends a Discord embed to one channel webhook."),
+        ("ntfy", "ntfy", "Sends a native notification to one ntfy topic URL."),
+    ), normalized_webhook_provider(state.values["WEBHOOK_PROVIDER"]) or "discord", input_func, destination)
+    state.values["WEBHOOK_PROVIDER"] = provider
+    if provider == "discord":
+        destination.write("  In Discord: Edit Channel > Integrations > Webhooks > New Webhook > Copy Webhook URL.\n")
+    else:
+        destination.write("  In ntfy: choose a hard-to-guess topic. Paste its complete topic URL, or just the topic name when it is hosted on ntfy.sh.\n")
+    replace_webhook = True
+    if state.secrets.get("WEBHOOK_URL"):
+        replace_webhook = wizard_ask_choice("Which webhook URL should be used?", (
+            ("keep", "Keep the saved URL", "Keeps the private value without displaying or changing it."),
+            ("replace", "Paste a new URL", "Uses a hidden prompt then saves the new private value in .env."),
+        ), "keep", input_func, destination) == "replace"
+    if replace_webhook:
+        while True:
+            entered = wizard_read_secret("Paste the Discord webhook URL" if provider == "discord" else "Paste the ntfy topic URL or ntfy.sh topic name", getpass_func, destination)
+            normalized = normalize_ntfy_topic_url(entered) if provider == "ntfy" else entered
+            detected = detect_webhook_provider(normalized)
+            valid = bool(normalized and validate_webhook_url(normalized) and (provider == "ntfy" or detected == "discord"))
+            if valid:
+                state.secrets["WEBHOOK_URL"] = normalized
+                break
+            # Nothing can be delivered without a destination, so giving up has to stay reachable from the prompt
+            if not str(entered).strip():
+                if not wizard_offer_retry("webhook URL", "Webhook alerts stay off until one is set", input_func, destination):
+                    break
+                continue
+            if provider == "ntfy":
+                destination.write("  Enter a complete HTTPS ntfy topic URL or a topic name containing up to 64 letters, numbers, dashes or underscores." + "\n")
+            else:
+                destination.write("  That does not look like a complete HTTPS webhook URL. Copy it from the webhook service and try again." + "\n")
+            if not wizard_offer_retry("webhook URL", input_func=input_func, stream=destination):
+                break
+    if provider == "ntfy":
+        wizard_collect_ntfy_access_token(state, input_func, getpass_func, destination)
+    if not state.secrets.get("WEBHOOK_URL"):
+        wizard_disable_webhook(state)
+        destination.write("  Webhook alerts will stay disabled until a destination is saved." + "\n")
+        return
+    state.values["WEBHOOK_ENABLED"] = True
+    available = wizard_available_email_alerts(state, "WEBHOOK_")
+    preset = wizard_ask_choice("Which webhook alerts should be sent?", (
+        ("recommended", "Status and errors, recommended", "Profile changes, new GitHub events and monitoring errors."),
+        ("all", "Every supported alert", "Enables every webhook alert the tracking settings allow."),
+        ("custom", "Custom", "Choose each webhook alert separately."),
+    ), "recommended", input_func, destination)
+    if preset == "custom":
+        destination.write("\n")
+        questions = (
+            ("WEBHOOK_PROFILE_NOTIFICATION", "Send a webhook alert on profile changes?"),
+            ("WEBHOOK_EVENT_NOTIFICATION", "Send a webhook alert on new GitHub events?"),
+            ("WEBHOOK_REPO_NOTIFICATION", "Send a webhook alert on detailed repository changes?"),
+            ("WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION", "Send a webhook alert on repository update date changes?"),
+            ("WEBHOOK_CONTRIB_NOTIFICATION", "Send a webhook alert on daily contribution changes?"),
+            ("WEBHOOK_ERROR_NOTIFICATION", "Send a webhook alert on monitoring errors?"),
+        )
+        for name, question in questions:
+            state.values[name] = available[name] and wizard_ask_yes_no(question, False, input_func, destination)
+        return
+    recommended = ("WEBHOOK_PROFILE_NOTIFICATION", "WEBHOOK_EVENT_NOTIFICATION", "WEBHOOK_ERROR_NOTIFICATION")
+    for name, usable in available.items():
+        state.values[name] = usable and (preset == "all" or name in recommended)
+
+
+# Adds the .csv extension when the answer carries none, so a bare name still names a CSV file
+def wizard_normalize_csv_path(answer):
+    text = str(answer).strip()
+    if not text or Path(text).suffix:
+        return text
+    return text + ".csv"
+
+
+# Collects log and CSV output destinations
+def wizard_collect_destinations(state, input_func=input, stream=None):
+    destination = sys.stdout if stream is None else stream
+    state.values["DISABLE_LOGGING"] = not wizard_ask_yes_no("Write the normal per-target log file?", not bool(state.values["DISABLE_LOGGING"]), input_func, destination)
+    csv_default = str(state.values["CSV_FILE"] or "")
+    # Asked as its own question, since Enter on the path prompt takes the shown default and so could never clear a saved one
+    if wizard_ask_yes_no("Write a CSV file of the changes?", bool(csv_default), input_func, destination):
+        state.values["CSV_FILE"] = wizard_normalize_csv_path(wizard_ask_text("CSV output path", csv_default, input_func=input_func, stream=destination, required=True))
+    else:
+        state.values["CSV_FILE"] = ""
+    state.values["DOTENV_FILE"] = str(state.dotenv_path)
+
+
+# Collects every wizard section in the shared output order
+def wizard_collect_all(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
+    wizard_collect_target(state, input_func, stream)
+    destination.write("\n")
+    wizard_collect_polling(state, input_func, stream)
+    destination.write("\n")
+    wizard_collect_authentication(state, input_func, getpass_func, stream, token_validator)
+    destination.write("\n")
+    wizard_collect_email(state, input_func, getpass_func, stream)
+    destination.write("\n")
+    wizard_collect_webhook(state, input_func, getpass_func, stream)
+    destination.write("\n")
+    wizard_collect_destinations(state, input_func, stream)
+
+
+# Returns the alert categories one answer set enables, using the same labels the startup summary prints
+def _wizard_notification_categories(values, prefix=""):
+    labels = (("PROFILE_NOTIFICATION", "profile"), ("EVENT_NOTIFICATION", "events"), ("REPO_NOTIFICATION", "repositories"), ("REPO_UPDATE_DATE_NOTIFICATION", "repository updates"), ("CONTRIB_NOTIFICATION", "contributions"), ("ERROR_NOTIFICATION", "errors"))
+    return [label for name, label in labels if values.get(prefix + name)]
+
+
+# Renders one complete masked setup summary before any file is changed
+def wizard_render_summary(state, stream=None):
+    destination = sys.stdout if stream is None else stream
+    email_categories = _wizard_notification_categories(state.values)
+    webhook_categories = _wizard_notification_categories(state.values, "WEBHOOK_") if state.values["WEBHOOK_ENABLED"] else []
+    webhook_state = f"enabled ({webhook_provider_display_name(state.values['WEBHOOK_PROVIDER'])})" if state.values["WEBHOOK_ENABLED"] else "disabled"
+    _wizard_heading(destination, "Setup summary", "header")
+    rows = [
+        ("Target", state.target),
+        ("Persist target", "yes" if state.persist_target else "no"),
+        ("Polling interval", wizard_format_duration(state.values["GITHUB_CHECK_INTERVAL"])),
+        ("GitHub API", state.values["GITHUB_API_URL"]),
+        ("Authentication status", "complete" if state.authentication_complete else "incomplete"),
+        ("Email", "enabled" if email_categories else "disabled"),
+        ("Email notifications", ", ".join(email_categories) if email_categories else "none"),
+        ("Webhook", webhook_state),
+        ("Webhook alerts", ", ".join(webhook_categories) if webhook_categories else "none"),
+        ("Output log", "enabled" if not state.values["DISABLE_LOGGING"] else "disabled"),
+        ("CSV output", state.values["CSV_FILE"] or "disabled"),
+        ("Config destination", state.config_path),
+        ("Dotenv destination", state.dotenv_path),
+        ("Install method", install_method_display_name(state.install_context.install_method)),
+    ]
+    if state.authenticated_login:
+        rows.insert(5, ("Authenticated user", state.authenticated_login))
+    width = max(len(label) for label, _ in rows) + 1
+    for label, value in rows:
+        # The summary rows show a status or a path for every secret, never the value
+        # codeql[py/clear-text-logging-sensitive-data]
+        destination.write(f"  {(label + ':'):<{width}} {_wizard_summary_value(label, value)}\n")
+
+
+# Returns a validation error when one answered setup destination cannot be written
+def wizard_destination_error(value, label):
+    try:
+        wizard_validate_destination(value, label)
+    except ValueError as exc:
+        return str(exc)
+    return ""
+
+
+# Returns genuine environment credentials without treating previously loaded file values as exports
+def _wizard_exported_secrets():
+    state = globals().get("DOTENV_RELOAD_STATE", {})
+    owned = set(globals().get("DOTENV_MANAGED_KEYS", ())) | set(globals().get("DOTENV_BASE_VALUES", ())) | set(state.get("base", ()))
+    exported = set(globals().get("EXPORTED_ENVIRONMENT_KEYS", ())) | set(globals().get("EXPORTED_SECRET_KEYS", ())) | set(state.get("exported", ()))
+    sources = globals().get("SECRET_SOURCES", {})
+    return {key: os.environ[key] for key in SECRET_KEYS if os.environ.get(key) and key not in command_line_secret_keys() and (key in exported or (key not in owned and sources.get(key) not in ("dotenv file", "dotenv file reload")))}
+
+
+# Reads the selected private file before setup changes paths or pending answers
+def read_private_settings(env_path):
+    path = Path(env_path)
+    if not path.exists():
+        return {}
+    content = path.read_text(encoding="utf-8")
+    bindings = list(_dotenv_bindings(content))
+    invalid = next((binding for binding in bindings if binding.error), None)
+    if invalid is not None:
+        raise ValueError(f"Dotenv file '{path}' has invalid syntax near line {invalid.original.line}. Correct that assignment before retrying.")
+    owned = globals().get("DOTENV_RELOAD_STATE", {}).get("loaded", ())
+    environment = {key: value for key, value in os.environ.items() if value and key not in owned}
+    return resolve_dotenv_values(content, override=False, environment=environment)
+
+
+# Changes where setup writes, re-asking the sections that hold secrets when the dotenv destination moves
+def wizard_collect_file_destinations(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
+    new_config_path = state.config_path
+    config_text = wizard_ask_text("Configuration file destination", str(state.config_path), lambda value: wizard_destination_error(value, "Configuration destination"), input_func, destination, required=True)
+    selected_config = wizard_validate_destination(config_text, "Configuration destination")
+    if selected_config != state.config_path:
+        chosen_config = wizard_choose_config_destination(selected_config, input_func, destination)
+        # Giving up on every offered path keeps the current destination rather than cancelling the whole setup
+        if chosen_config is not None:
+            new_config_path = chosen_config
+    while True:
+        env_text = wizard_ask_text("Dotenv file destination", str(state.dotenv_path), lambda value: wizard_destination_error(value, "Dotenv destination"), input_func, destination, required=True)
+        if env_text.casefold() == "none":
+            destination.write("  Setup needs a writable dotenv file and cannot use 'none'." + "\n")
+            continue
+        selected_env = wizard_validate_destination(env_text, "Dotenv destination")
+        # One file cannot hold both, since saving the configuration would overwrite the secrets beside it
+        if selected_env == new_config_path:
+            destination.write("  The dotenv file has to be a different file from the configuration." + "\n")
+            continue
+        break
+    if selected_env == state.dotenv_path:
+        state.config_path = new_config_path
+        state.values["DOTENV_FILE"] = str(selected_env)
+        return
+    selected_private = read_private_settings(selected_env)
+    retained = {key: value for key, value in state.secrets.items() if key in SECRET_KEYS}
+    retained.update({key: value for key, value in selected_private.items() if key in SECRET_KEYS and isinstance(value, str)})
+    state.secrets = retained
+    state.baseline_secrets = dict(retained)
+    state.dotenv_path = selected_env
+    state.config_path = new_config_path
+    state.values["DOTENV_FILE"] = str(selected_env)
+    destination.write(colorize("info", "  The dotenv destination changed. Review authentication and notification settings. Values in the selected file are kept unless you replace them.") + "\n")
+    wizard_collect_authentication(state, input_func, getpass_func, destination, token_validator)
+    destination.write("\n")
+    wizard_collect_email(state, input_func, getpass_func, destination)
+    destination.write("\n")
+    wizard_collect_webhook(state, input_func, getpass_func, destination)
+
+
+# Recollects one selected section while preserving every other answer
+def wizard_edit_section(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
+    sections = (
+        ("Target", "Target", "Change the GitHub profile that is monitored and the monitoring feature choices."),
+        ("Polling", "Polling interval", "Change how often GitHub is checked."),
+        ("Authentication", "Authentication", "Change GitHub endpoints or the access token."),
+        ("Email", "Email notifications", "Change SMTP details and email events."),
+        ("Webhook", "Webhook alerts", "Change Discord or ntfy details and events."),
+        ("Destinations", "Output files", "Change log and CSV output settings."),
+        ("FileDestinations", "File destinations", "Change the configuration or dotenv output path."),
+        ("return", "Return to summary", "Keep every current answer."),
+    )
+    selected = wizard_ask_choice("Which setup section should be changed?", sections, "Target", input_func, destination)
+    if selected == "return":
+        return
+    wizard_reset_section(state, selected)
+    collectors = {
+        "Target": lambda: wizard_collect_target(state, input_func, destination),
+        "Polling": lambda: wizard_collect_polling(state, input_func, destination),
+        "Authentication": lambda: wizard_collect_authentication(state, input_func, getpass_func, destination, token_validator),
+        "Email": lambda: wizard_collect_email(state, input_func, getpass_func, destination),
+        "Webhook": lambda: wizard_collect_webhook(state, input_func, getpass_func, destination),
+        "Destinations": lambda: wizard_collect_destinations(state, input_func, destination),
+        "FileDestinations": lambda: wizard_collect_file_destinations(state, input_func, getpass_func, destination, token_validator),
+    }
+    collectors[selected]()
+
+
+# Reviews the complete setup until the user saves or confirms discard
+def wizard_review_setup(state, input_func=input, getpass_func=None, stream=None, token_validator=None):
+    destination = sys.stdout if stream is None else stream
+    while True:
+        wizard_render_summary(state, destination)
+        actions = (
+            ("save", "Save settings", "Write the displayed settings to the selected files."),
+            ("edit", "Review or change settings", "Edit one section without losing the other answers."),
+            ("discard", "Discard answers and exit", "Leave the destination files unchanged."),
+        )
+        action = wizard_ask_choice("What would you like to do?", actions, "save", input_func, destination)
+        if action == "save":
+            return True
+        if action == "edit":
+            wizard_edit_section(state, input_func, getpass_func, destination, token_validator)
+            continue
+        if wizard_ask_yes_no("Discard all entered answers and exit?", False, input_func, destination):
+            return False
+        destination.write(colorize("info", "  Setup answers retained.") + "\n")
+
+
+# Renders an explicit assignment for a setting the template ships commented out, so overrides the user wrote
+# survive a rewrite instead of being replaced by the commented default
+def _rendered_commented_setting(variable, values):
+    value = values.get(variable)
+    if not isinstance(value, dict) or not value:
+        return []
+    lines = ["", f"{variable} = {{"]
+    lines.extend(f"    {repr(str(name))}: {repr(str(setting))}," for name, setting in value.items())
+    lines.append("}")
+    return lines
+
+
+# Renders one configuration file from the built-in template with the chosen values substituted in
+def generate_config_with_current_values(config_values):
+    tree = ast.parse(CONFIG_BLOCK, "<built-in-config>", "exec")
+    template_defaults = _config_template_defaults()
+    replacements = {}
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1 or not isinstance(statement.targets[0], ast.Name):
+            continue
+        name = statement.targets[0].id
+        # A secret belongs in the dotenv file, so its template placeholder stays even when the running values hold the real one
+        if name not in config_values or name in SECRET_KEYS:
+            continue
+        # A setting still holding what the template ships keeps the template's own lines, so a multi-line
+        # value such as WEBHOOK_TEMPLATE is not collapsed into one unreadable line by a wizard that changed nothing
+        if name in template_defaults and config_values[name] == template_defaults[name] and type(config_values[name]) is type(template_defaults[name]):
+            continue
+        replacements[name] = (statement.lineno, getattr(statement, "end_lineno", statement.lineno), repr(config_values[name]))
+    lines = CONFIG_BLOCK.strip("\n").split("\n")
+    # The template keeps its own leading blank line, so template line numbers are one ahead of this list
+    offset = 1 if CONFIG_BLOCK.startswith("\n") else 0
+    commented_pattern = re.compile(r"^#\s*([A-Z][A-Z0-9_]*)\s*=\s*\{$")
+    commented_block = ""
+    skip_until = 0
+    output = []
+    for number, line in enumerate(lines, 1):
+        template_line = number + offset
+        if template_line < skip_until:
+            continue
+        replaced = next((name for name, (start, _end, _value) in replacements.items() if start == template_line), None)
+        if replaced is None:
+            output.append(line)
+            stripped = line.strip()
+            commented_match = commented_pattern.match(stripped)
+            if commented_match and commented_match.group(1) in COMMENTED_CONFIG_SETTINGS:
+                commented_block = commented_match.group(1)
+            elif commented_block and stripped == "# }":
+                output.extend(_rendered_commented_setting(commented_block, config_values))
+                commented_block = ""
+            continue
+        start, end, rendered = replacements[replaced]
+        output.append(f"{replaced} = {rendered}")
+        skip_until = end + 1
+    return "\n".join(output) + "\n"
+
+
+# Renders the configuration the wizard writes: the shipped template with the chosen and preserved values substituted in
+def render_wizard_config(state):
+    selected = dict(state.preserved_values)
+    for name in WIZARD_CONFIG_ORDER:
+        selected[name] = state.values[name]
+    selected["DOTENV_FILE"] = str(state.dotenv_path)
+    content = generate_config_with_current_values(selected)
+    validate_config_content(content, str(state.config_path))
+    return content
+
+
+# Updates selected dotenv assignments in memory while preserving unrelated lines
+def render_wizard_dotenv(state):
+    existing = state.dotenv_path.read_text(encoding="utf-8") if state.dotenv_path.exists() else ""
+    saved = read_private_settings(state.dotenv_path)
+    updates = {key: value for key, value in state.secrets.items() if key in SECRET_KEYS and saved.get(key) != value}
+    return render_private_settings(existing, updates)
+
+
+# Accepts finite numeric values without overflowing on unusually large integers
+def finite_number(value):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+# Preserves inline credentials privately before setup replaces their only saved source
+def preserve_inline_config_secrets(config_path, env_path):
+    from dotenv import dotenv_values
+    source = Path(config_path).expanduser()
+    if not source.is_file():
+        return None
+    original = {}
+    if not load_config_file(source, namespace=original, report_errors=False):
+        raise ValueError("Existing configuration could not be read before preserving its inline secrets")
+    defaults = _config_template_defaults()
+    destination = Path(env_path).expanduser()
+    saved = dotenv_values(str(destination), interpolate=False) if destination.exists() else {}
+    updates = {}
+    for key in SECRET_KEYS:
+        value = original.get(key)
+        if isinstance(value, str) and value and value != defaults.get(key) and saved.get(key) is None:
+            updates[key] = value
+    if not updates:
+        return None
+    try:
+        return update_dotenv_file(destination, updates)
+    except Exception as exc:
+        raise OSError(f"Could not preserve inline secrets in '{destination}'. The original configuration was not replaced") from exc
+
+
+# Removes inline secret assignments from a setup backup while preserving other configuration text
+def redact_config_backup(content):
+    import ast
+    try:
+        text = content.decode("utf-8")
+        tree = ast.parse(text)
+    except (UnicodeError, SyntaxError) as exc:
+        raise ValueError("Cannot create a secret-free configuration backup. Correct the existing file's UTF-8 encoding or assignment syntax before running setup") from exc
+    lines = text.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line.encode("utf-8")))
+    replacements = []
+    secret_values = set()
+    for statement in ast.walk(tree):
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+        if any(isinstance(target, ast.Name) and target.id in SECRET_KEYS for target in targets):
+            value = statement.value
+            if value is not None and value.end_lineno is not None and value.end_col_offset is not None:
+                start = offsets[value.lineno - 1] + value.col_offset
+                end = offsets[value.end_lineno - 1] + value.end_col_offset
+                replacements.append((start, end))
+                if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value:
+                    secret_values.add(value.value)
+    for start, end in sorted(replacements, reverse=True):
+        content = content[:start] + b'""' + content[end:]
+    import io
+    import tokenize
+    text = content.decode("utf-8")
+    lines = text.splitlines(keepends=True)
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type == tokenize.COMMENT:
+            comment = token.string
+            for secret in sorted(secret_values, key=len, reverse=True):
+                comment = comment.replace(secret, "<redacted>")
+            row, start = token.start
+            end = token.end[1]
+            lines[row - 1] = lines[row - 1][:start] + comment + lines[row - 1][end:]
+    return "".join(lines).encode("utf-8")
+
+
+# Copies an existing file to a timestamped owner-only .bak beside it, returning the backup path or None when there was nothing to copy
+def create_timestamped_backup(destination, attempts=100, redact_secrets=False):
+    destination_path = Path(destination).expanduser()
+    if not destination_path.is_file():
+        return None
+    existing_bytes = destination_path.read_bytes()
+    if redact_secrets:
+        existing_bytes = redact_config_backup(existing_bytes)
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    for attempt in range(attempts):
+        suffix = f".{stamp}.bak" if attempt == 0 else f".{stamp}-{attempt}.bak"
+        backup_path = destination_path.with_name(destination_path.name + suffix)
+        try:
+            # O_EXCL so a backup can never overwrite an earlier one, even under a concurrent run
+            descriptor = os.open(str(backup_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            continue
+        try:
+            with os.fdopen(descriptor, "wb") as backup_file:
+                backup_file.write(existing_bytes)
+                backup_file.flush()
+                os.fsync(backup_file.fileno())
+        except Exception as exc:
+            debug_print("Backup write", path=str(backup_path), outcome="failed", error=f"{type(exc).__name__}: {exc}")
+            try:
+                os.unlink(str(backup_path))
+            except OSError:
+                pass
+            raise
+        return str(backup_path)
+    raise OSError(f"Could not create a unique backup for '{destination_path}' after {attempts} attempts")
+
+
+# Prepares one fsynced mode-0600 temporary file beside its final destination
+def prepare_wizard_atomic_file(path, content):
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        os.chmod(temporary_path, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output_file:
+            output_file.write(content)
+            output_file.flush()
+            os.fsync(output_file.fileno())
+    except Exception as exc:
+        try:
+            os.close(descriptor)
+        except OSError as close_error:
+            debug_swallowed_exception("Setup temporary descriptor cleanup", close_error)
+        temporary_path.unlink(missing_ok=True)
+        debug_print("Setup temporary file write", path=path, outcome="failed", error=f"{type(exc).__name__}: {exc}")
+        raise
+    return temporary_path
+
+
+# Raised when an existing config is not replaced because nobody could confirm it, as opposed to a path in the way of writing one
+class ConfigExistsError(FileExistsError):
+    pass
+
+
+# Confirms replacing one existing generated configuration, or requires --force outside a terminal
+def confirm_generated_config_replacement(destination, force=False, interactive=None, input_func=input):
+    if not destination.exists() or force:
+        return True
+    try:
+        terminal_is_interactive = bool(sys.stdin.isatty()) if interactive is None else bool(interactive)
+    except Exception as exc:
+        debug_swallowed_exception("Generated configuration terminal detection", exc)
+        terminal_is_interactive = False
+    if not terminal_is_interactive:
+        raise ConfigExistsError(f"Config file '{destination}' already exists. Re-run with --force to replace it after a timestamped backup.")
+    try:
+        answer = str(input_func(f"Config file '{destination}' exists. Replace it and create a timestamped backup? [y/N]: ")).strip().casefold()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        answer = ""
+    return answer in {"y", "yes"}
+
+
+# Writes one generated configuration atomically after backing up any existing destination
+def write_generated_config(output_file, content, force=False, interactive=None, input_func=input):
+    destination = Path(os.path.expanduser(str(output_file)))
+    if not confirm_generated_config_replacement(destination, force, interactive, input_func):
+        return None, False
+    backup_path = create_timestamped_backup(destination) if destination.exists() else None
+    if backup_path is not None:
+        debug_print("Generated configuration backup written", path=backup_path)
+    temporary_path = prepare_wizard_atomic_file(destination, content)
+    try:
+        os.replace(temporary_path, destination)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return backup_path, True
+
+
+# Reports an interrupted setup save with the exact files already replaced
+class WizardSaveError(OSError):
+    pass
+
+
+# Stages setup files and reports partial replacements without discarding their recovery information
+def save_wizard_files(state):
+    for path in (state.config_path, state.dotenv_path):
+        if not path.parent.is_dir():
+            raise FileNotFoundError(f"Parent directory does not exist: {path.parent}")
+    preserve_inline_config_secrets(state.config_path, state.dotenv_path)
+    config_content = render_wizard_config(state)
+    dotenv_content = render_wizard_dotenv(state)
+    # Only the configuration is backed up: a copy of the credentials being replaced is the one thing not worth keeping
+    config_backup = create_timestamped_backup(state.config_path, redact_secrets=True)
+    # A dotenv with nothing in it is noise beside the config, so an empty one is never created
+    destinations = [(state.config_path, config_content)]
+    if dotenv_content.strip() or state.dotenv_path.exists():
+        destinations.append((state.dotenv_path, dotenv_content))
+    prepared = []
+    saved = []
+    cleanup_failures = []
+    failure = None
+    try:
+        # Appended one at a time so a failure on the second file still exposes the first for cleanup
+        for path, content in destinations:
+            prepared.append(prepare_wizard_atomic_file(path, content))
+        for (path, _), temporary_path in zip(destinations, prepared, strict=True):
+            os.replace(temporary_path, path)
+            saved.append(path)
+    except (Exception, KeyboardInterrupt) as exc:
+        failure = exc
+    finally:
+        for temporary_path in prepared:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError as exc:
+                cleanup_failures.append(temporary_path)
+                debug_swallowed_exception("Setup temporary file cleanup", exc)
+    if failure is not None or cleanup_failures:
+        if not saved and not cleanup_failures and failure is not None:
+            raise failure
+        saved_text = ", ".join(str(path) for path in saved) or "none"
+        pending_text = ", ".join(str(path) for path, _ in destinations if path not in saved) or "none"
+        cleanup_text = " Remove these private temporary files after restoring directory access: " + ", ".join(str(path) for path in cleanup_failures) + "." if cleanup_failures else ""
+        raise WizardSaveError(f"Setup is incomplete. Saved files: {saved_text}. Files not saved: {pending_text}. Correct destination permissions or paths then run --setup again with the same --config-file and --env-file. Review both files and run --doctor before monitoring.{cleanup_text}") from failure
+    for path, _ in destinations:
+        debug_print("Setup file write succeeded", path=path)
+    return config_backup
+
+
+# Builds the exact install-aware argument list used after setup
+def wizard_monitor_arguments(state):
+    arguments = [] if state.persist_target else [state.target]
+    # A dotenv nothing was written to does not exist, so naming it would point the command at a missing file
+    dotenv_arguments = ["--env-file", str(state.dotenv_path)] if state.dotenv_path.exists() else []
+    return [*arguments, "--config-file", str(state.config_path), *dotenv_arguments]
+
+
+# Runs the complete buffered setup interaction and optional doctor handoff
+def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, getpass_func=None, input_stream=None, stream=None, interactive=None, install_context=None, token_validator=None, doctor_runner=None, monitor_launcher=None, show_banner=True):
+    destination = terminal_surface_stream(sys.stdout if stream is None else stream)
+    source = sys.stdin if input_stream is None else input_stream
+    try:
+        terminal_is_interactive = bool(source.isatty()) if interactive is None else bool(interactive)
+    except Exception as exc:
+        debug_swallowed_exception("Setup input terminal detection", exc)
+        terminal_is_interactive = False
+    context = detect_install_context() if install_context is None else install_context
+    selected_config = Path(config_path or (Path.cwd() / DEFAULT_CONFIG_FILENAME)).expanduser().resolve()
+    selected_dotenv = Path(env_file or (Path.cwd() / ".env")).expanduser().resolve()
+    if show_banner:
+        _write_startup_banner(destination)
+    if not terminal_is_interactive:
+        destination.write(colorize("header", "Setup Wizard\n") + "\n")
+        destination.write("The setup wizard needs an interactive terminal (TTY).\n")
+        destination.write("Run --setup from an interactive shell or use --generate-config and edit the files manually.\n")
+        destination.write(f"Guide: {QUICK_START_GUIDE_URL}\n")
+        return 1
+    try:
+        selected_config = wizard_validate_destination(selected_config, "Configuration destination")
+        selected_dotenv = wizard_validate_destination(selected_dotenv, "Dotenv destination")
+    except ValueError as exc:
+        destination.write(apply_color_to_text(render_recovery_advice(classify_recovery_error(exc, "config"))) + "\n")
+        return 1
+    try:
+        state = build_wizard_state(selected_config, selected_dotenv, context, env_file_explicit=env_file is not None)
+        destination.write(colorize("header", "Setup Wizard\n") + "\n")
+        destination.write("This asks a few questions and writes a ready-to-run configuration.\n")
+        destination.write("Press Enter to accept the shown default. Ctrl+C cancels.\n\n")
+        destination.write("Secrets go to the dotenv file. Non-secret settings go to the config file.\n\n")
+        _wizard_print_setup_destinations(destination, context, state)
+        destination.write("\n")
+        # Asked before anything else, so a config that has to be replaced is agreed to rather than discovered at Save
+        chosen_config = wizard_choose_config_destination(state.config_path, input_func, destination)
+        if chosen_config is None:
+            destination.write("\n" + colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
+            return 1
+        if chosen_config != state.config_path:
+            state = build_wizard_state(chosen_config, selected_dotenv, context, env_file_explicit=env_file is not None)
+            destination.write("\n")
+        wizard_collect_all(state, input_func, getpass_func, destination, token_validator)
+        if not wizard_review_setup(state, input_func, getpass_func, destination, token_validator):
+            destination.write("\n" + colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
+            return 1
+        config_backup = save_wizard_files(state)
+    except WizardSaveError as exc:
+        destination.write("\n" + colorize("error", sanitize_error_text(exc)) + "\n")
+        return 1
+    except WizardCancelled:
+        destination.write(colorize("warning", "Setup cancelled. Destination files were not changed.") + "\n")
+        return 1
+    except Exception as exc:
+        advice = classify_recovery_error(exc, "config")
+        destination.write("\n")
+        destination.write(apply_color_to_text(render_recovery_advice(advice)) + "\n")
+        return 1
+    saved_rows = [("Configuration:", state.config_path)]
+    if config_backup is not None:
+        saved_rows.append(("Backup:", Path(config_backup)))
+    if state.dotenv_path.exists():
+        saved_rows.append(("Secrets:" if state.secrets else "Dotenv:", state.dotenv_path))
+    saved_width = max(len(label) for label, _ in saved_rows) + 1
+    _wizard_heading(destination, "Saved files", "header")
+    for label, path in saved_rows:
+        destination.write(f"  {label:<{saved_width}}{path}\n")
+    monitor_arguments = wizard_monitor_arguments(state)
+    doctor_arguments = ["--doctor", *monitor_arguments]
+    doctor_exit = None
+    try:
+        # The doctor's FAIL row is the most useful thing a user with a missing credential can see
+        if state.target:
+            destination.write("\n")
+            if wizard_ask_yes_no("Run doctor now? It writes no files and offers real delivery tests only with separate approval.", True, input_func, destination):
+                destination.write("\n")
+                doctor_args = parser.parse_args(doctor_arguments)
+                runner = run_doctor if doctor_runner is None else doctor_runner
+                doctor_exit = runner(doctor_args, parser, input_func=input_func, input_stream=source, stream=destination, show_banner=False)
+    except WizardCancelled:
+        destination.write(colorize("warning", "Setup is saved. Use the commands below when ready.") + "\n")
+    _wizard_heading(destination, "Next steps", "header")
+    _wizard_print_command(destination, "Check setup again:", render_command(doctor_arguments, install_context=context, include_paths=False))
+    start_label = "After Doctor passes, start monitoring:" if doctor_exit not in (None, 0) else "Start monitoring:"
+    _wizard_print_command(destination, start_label, render_command(monitor_arguments, install_context=context, include_paths=False))
+    destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
+    if doctor_exit == 0:
+        try:
+            start_now = wizard_ask_yes_no("Start monitoring now? Monitoring will continue until Ctrl+C.", True, input_func, destination)
+        except WizardCancelled:
+            start_now = False
+            destination.write(colorize("warning", "Setup is saved. Start monitoring with the command above when ready.") + "\n")
+        if start_now:
+            launcher = launch_wizard_monitoring if monitor_launcher is None else monitor_launcher
+            return int(launcher(monitor_arguments) or 0)
+    return 0
+
+
+# Prints the sibling-style first-run actions and optionally launches guided setup
+def print_welcome_screen(parser, input_func=input, input_stream=None, stream=None, install_context=None, setup_runner=None, show_banner=True):
+    destination = terminal_surface_stream(sys.stdout if stream is None else stream)
+    source = sys.stdin if input_stream is None else input_stream
+    context = detect_install_context() if install_context is None else install_context
+    if show_banner:
+        _write_startup_banner(destination)
+    try:
+        interactive = bool(source.isatty())
+    except Exception as exc:
+        debug_swallowed_exception("Welcome input terminal detection", exc)
+        interactive = False
+    prefix = render_command([], install_context=context, include_paths=False)
+    destination.write("For <github_target>, use a GitHub username or complete profile URL.\n\n")
+    _wizard_print_command(destination, "Quickest start (already configured):", f"{prefix} <github_target>")
+    setup_suffix = "   (or just answer Y below)" if interactive else ""
+    _wizard_print_command(destination, "Easiest start (guided setup wizard):", f"{prefix} --setup", setup_suffix)
+    _wizard_print_command(destination, "Check setup before monitoring:", f"{prefix} --doctor <github_target>")
+    destination.write(f"Full options: {colorize('section', prefix + ' --help')}\n")
+    destination.write(f"\nGuide:        {colorize('link', QUICK_START_GUIDE_URL)}\n\n")
+    if not interactive:
+        return 1
+    try:
+        start_setup = wizard_ask_yes_no("Run the guided setup wizard now?", True, input_func, destination)
+    except WizardCancelled:
+        destination.write(colorize("warning", "Setup cancelled.") + "\n")
+        return 1
+    if not start_setup:
+        return 0
+    destination.write("\n")
+    runner = run_setup_wizard if setup_runner is None else setup_runner
+    return runner(parser, input_func=input_func, input_stream=source, stream=destination, interactive=True, install_context=context, show_banner=False)
+
+
+# Restarts argument handling with the wizard's saved monitoring command
+def launch_wizard_monitoring(arguments):
+    original_argv = list(sys.argv)
+    sys.argv = [original_argv[0], *arguments]
+    try:
+        main()
+    finally:
+        sys.argv = original_argv
+    return 0
 
 
 # Parses command-line settings and starts the requested GitHub Monitor action
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
+    global CLI_CONFIG_PATH, CONFIG_DISCOVERY_DISABLED, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_REMINDER_SECONDS, GITHUB_TOKEN, GITHUB_API_URL, CSV_FILE, DISABLE_LOGGING, GITHUB_LOGFILE, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, SMTP_PASSWORD, stdout_bck, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, VERBOSE_MODE, DEBUG_MODE, COLORED_OUTPUT, TRUNCATE_CHARS, TARGET_GITHUB_USERNAME, WEBHOOK_ENABLED
 
-    if "--generate-config" in sys.argv:
+    if "--debug" in sys.argv:
+        DEBUG_MODE = True
+
+    if "--generate-config" in sys.argv and "--doctor" not in sys.argv and "--setup" not in sys.argv:
         config_content = CONFIG_BLOCK.strip("\n") + "\n"
         # Check if a filename was provided after --generate-config
         try:
@@ -5524,12 +10599,27 @@ def main():
             if idx + 1 < len(sys.argv) and not sys.argv[idx + 1].startswith("-"):
                 # Write directly to file to avoid PowerShell UTF-16 redirection issues
                 output_file = sys.argv[idx + 1]
-                with open(output_file, "w", encoding="utf-8") as f:
-                    f.write(config_content)
+                debug_print("Opening generated configuration for write", path=output_file)
+                backup_path, written = write_generated_config(output_file, config_content, force="--force" in sys.argv)
+                if not written:
+                    print("Config was not replaced. The existing file is unchanged.")
+                    sys.exit(1)
+                debug_print("Generated configuration write succeeded", path=output_file, bytes=len(config_content.encode('utf-8')))
                 print(f"Config written to: {output_file}")
+                if backup_path is not None:
+                    print(f"Previous config backed up to: {backup_path}")
                 sys.exit(0)
-        except (ValueError, IndexError):
-            pass
+        except (ValueError, IndexError) as exc:
+            debug_swallowed_exception("Generated configuration argument resolution", exc)
+        except ConfigExistsError as exc:
+            advice = make_recovery_advice("file.exists", "The generated configuration would replace an existing file", recovery_fix_with_guide(str(exc), CONFIG_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
+            print_recovery_advice(advice)
+            sys.exit(1)
+        except OSError as exc:
+            debug_print("Generated configuration write", path=locals().get('output_file', '<unknown>'), outcome="failed", error=f"{type(exc).__name__}: {exc}")
+            advice = make_recovery_advice("file.unwritable", "The generated configuration could not be written", recovery_fix_with_guide("Check the destination path and file permissions", CONFIG_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
+            print_recovery_advice(advice)
+            sys.exit(1)
         # No filename provided so write to stdout buffer as UTF-8
         sys.stdout.buffer.write(config_content.encode("utf-8"))
         sys.stdout.buffer.flush()
@@ -5541,16 +10631,26 @@ def main():
 
     stdout_bck = sys.stdout
 
+    # Screen clearing and the startup banner happen before argparse, so their output settings are resolved first
+    apply_early_output_config()
+    if "--no-color" in sys.argv:
+        COLORED_OUTPUT = False
+    init_color_output(stdout_bck)
+    if not isinstance(sys.stdout, TerminalStream):
+        sys.stdout = TerminalStream(sys.stdout)
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    clear_screen(CLEAR_SCREEN)
+    if CLEAR_SCREEN and DEBUG_MODE:
+        debug_print("Terminal screen clear skipped because debug mode is active")
+    clear_screen(CLEAR_SCREEN and not keep_terminal_history() and not DEBUG_MODE)
+    print_startup_banner()
 
-    print(f"GitHub Monitoring Tool v{VERSION}\n")
-
-    parser = argparse.ArgumentParser(
+    parser = ColoredHelpParser(
         prog="github_monitor",
-        description=("Monitor a GitHub user's profile and activity with customizable email alerts [ https://github.com/misiektoja/github_monitor/ ]"), formatter_class=argparse.RawTextHelpFormatter
+        description=(f"Monitor a GitHub user's profile and activity with customizable email or webhook alerts [ {PROJECT_URL}/ ]"), formatter_class=argparse.RawTextHelpFormatter,
+        epilog=help_examples(), **argparse_color_kwargs()
     )
 
     # Positional
@@ -5575,7 +10675,7 @@ def main():
         "--config-file",
         dest="config_file",
         metavar="PATH",
-        help="Location of the optional config file",
+        help="Location of the optional config file (auto-search if not set, disable with 'none')",
     )
     conf.add_argument(
         "--generate-config",
@@ -5586,10 +10686,34 @@ def main():
         help="Print default config template and exit (on Windows PowerShell specify a filename to avoid redirect encoding issues)",
     )
     conf.add_argument(
+        "--force",
+        dest="force",
+        action="store_true",
+        help="With --generate-config, replace an existing file without prompting after a timestamped backup",
+    )
+    conf.add_argument(
+        "--setup",
+        dest="setup",
+        action="store_true",
+        help="Run the guided setup and write a ready-to-run configuration",
+    )
+    conf.add_argument(
         "--env-file",
         dest="env_file",
         metavar="PATH",
         help="Path to optional dotenv file (auto-search if not set, disable with 'none')",
+    )
+    conf.add_argument(
+        "--set-github-token",
+        dest="set_github_token",
+        action="store_true",
+        help="Validate and save a GitHub token through a hidden prompt",
+    )
+    conf.add_argument(
+        "--set-smtp-password",
+        dest="set_smtp_password",
+        action="store_true",
+        help="Enter the SMTP password privately, check it against the mail server and save it to the dotenv file",
     )
     conf.add_argument(
         "--set-webhook-url",
@@ -5597,17 +10721,16 @@ def main():
         action="store_true",
         help="Save a Discord or ntfy webhook URL through a hidden prompt",
     )
+    conf.add_argument(
+        "--doctor",
+        dest="doctor",
+        action="store_true",
+        help="Run read-only preflight checks and report what is ready and what is not",
+    )
 
     # API settings
     creds = parser.add_argument_group("API settings")
-    token_input = creds.add_mutually_exclusive_group()
-    token_input.add_argument(
-        "--set-github-token",
-        dest="set_github_token",
-        action="store_true",
-        help="Validate and save a GitHub token through a hidden prompt"
-    )
-    token_input.add_argument(
+    creds.add_argument(
         "-t", "--github-token",
         dest="github_token",
         metavar="GITHUB_TOKEN",
@@ -5623,7 +10746,7 @@ def main():
     )
 
     # Notifications
-    notify = parser.add_argument_group("Notifications")
+    notify = parser.add_argument_group("Email notifications")
     notify.add_argument(
         "-p", "--notify-profile",
         dest="notify_profile",
@@ -5770,7 +10893,7 @@ def main():
     )
 
     # Listing
-    listing = parser.add_argument_group("Listing")
+    listing = parser.add_argument_group("User information & listing")
     listing.add_argument(
         "-r", "--list-repos",
         dest="list_repos",
@@ -5845,11 +10968,39 @@ def main():
         help="Disable logging to github_monitor_<username>.log"
     )
     opts.add_argument(
+        "--no-color",
+        dest="no_color",
+        action="store_true",
+        default=None,
+        help="Disable coloured output in the terminal"
+    )
+    opts.add_argument(
+        "--truncate",
+        dest="truncate",
+        metavar="N",
+        type=int,
+        help="Max characters per screen line (not log), use 999 to auto-detect terminal width, ignored if -d is set"
+    )
+    opts.add_argument(
         "-m", "--track-contribs-changes",
         dest="track_contribs_changes",
         action="store_true",
         default=None,
         help="Track user's daily contributions count and log changes"
+    )
+    opts.add_argument(
+        "--verbose",
+        dest="verbose",
+        action="store_true",
+        default=None,
+        help="Show user-facing decisions, degraded features and the complete startup summary"
+    )
+    opts.add_argument(
+        "--debug",
+        dest="debug",
+        action="store_true",
+        default=None,
+        help="Show sanitized operations, requests, files, retries and monitoring timing"
     )
     opts.add_argument(
         "--repos",
@@ -5861,68 +11012,99 @@ def main():
 
     args = parser.parse_args()
 
-    if len(sys.argv) == 1:
-        parser.print_help(sys.stderr)
-        sys.exit(1)
+    if args.username:
+        normalized_target = wizard_normalize_target(args.username)
+        if not normalized_target:
+            parser.error("GITHUB_USERNAME must be a GitHub username or complete profile URL")
+        args.username = normalized_target
 
-    if args.set_github_token and args.set_webhook_url:
-        parser.error("--set-github-token cannot be combined with --set-webhook-url")
+    if args.setup:
+        allowed = {"setup", "config_file", "env_file", "verbose", "debug", "no_color"}
+        incompatible = [name for name, value in vars(args).items() if name not in allowed and value not in (None, False)]
+        if incompatible:
+            parser.error("--setup can only be combined with --config-file, --env-file, --verbose or --debug")
+        if isinstance(args.config_file, str) and args.config_file.casefold() == "none":
+            print_recovery_advice(make_recovery_advice("file.unwritable", "--setup has nowhere to write the configuration", recovery_fix_with_guide(f"Replace '--config-file none' with a writable path, or drop the flag to write {DEFAULT_CONFIG_FILENAME} in the current directory", CONFIG_GUIDE_URL), False))
+            sys.exit(1)
+        if isinstance(args.env_file, str) and args.env_file.casefold() == "none":
+            print_recovery_advice(make_recovery_advice("file.unwritable", "--setup has nowhere to write the private settings", recovery_fix_with_guide("Replace '--env-file none' with a writable path, or drop the flag to write .env in the current directory", SECRETS_GUIDE_URL), False))
+            sys.exit(1)
+        sys.exit(run_setup_wizard(parser, args.config_file, args.env_file, show_banner=False))
 
-    if args.config_file:
+    if args.set_github_token and args.github_token:
+        parser.error("--set-github-token cannot be combined with -t/--github-token")
+
+    selected_secret_actions = [flag for flag, selected in (("--set-github-token", args.set_github_token), ("--set-smtp-password", args.set_smtp_password), ("--set-webhook-url", args.set_webhook_url)) if selected]
+    if len(selected_secret_actions) > 1:
+        parser.error(f"{selected_secret_actions[0]} cannot be combined with {selected_secret_actions[1]}")
+
+    # Reached only when --generate-config did not already handle and exit, so --force would do nothing here
+    if args.force:
+        parser.error("--force only applies to --generate-config with a filename")
+
+    apply_diagnostic_cli_overrides(args)
+
+    if args.doctor:
+        incompatible = (args.setup, args.generate_config, args.set_github_token, args.set_smtp_password, args.set_webhook_url, args.send_test_email, args.send_test_webhook, args.list_repos, args.list_starred_repos, args.list_followers_and_followings, args.list_recent_events)
+        if any(incompatible):
+            parser.error("--doctor cannot be combined with setup, listing or one-shot delivery commands")
+        doctor_exit = run_doctor(args, parser, show_banner=False)
+        print_doctor_next_steps(terminal_surface_stream(sys.stdout), args.username, TARGET_GITHUB_USERNAME, doctor_exit)
+        sys.exit(doctor_exit)
+
+    CONFIG_DISCOVERY_DISABLED = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
+    if args.config_file and not CONFIG_DISCOVERY_DISABLED:
         CLI_CONFIG_PATH = os.path.expanduser(args.config_file)
+    elif CONFIG_DISCOVERY_DISABLED:
+        CLI_CONFIG_PATH = None
 
-    cfg_path = find_config_file(CLI_CONFIG_PATH)
+    cfg_path = None if CONFIG_DISCOVERY_DISABLED else find_config_file(CLI_CONFIG_PATH)
+    configured_settings = set()
 
     if not cfg_path and CLI_CONFIG_PATH:
-        print(f"* Error: Config file '{CLI_CONFIG_PATH}' does not exist")
+        config_command = render_command(["--generate-config", "github_monitor.conf"], include_paths=False)
+        advice = make_recovery_advice("config.missing", f"Config file '{CLI_CONFIG_PATH}' does not exist", recovery_fix_with_guide(f"Correct --config-file or generate a new configuration with: {config_command}", CONFIG_GUIDE_URL), False, f"FileNotFoundError: {CLI_CONFIG_PATH}")
+        print_recovery_advice(advice)
         sys.exit(1)
 
     if cfg_path:
-        try:
-            with open(cfg_path, "r") as cf:
-                exec(cf.read(), globals())
-        except Exception as e:
-            print(f"* Error loading config file '{cfg_path}': {e}")
+        if not load_config_file(cfg_path, loaded_names_out=configured_settings, diagnostic_overrides=(args.verbose is True, args.debug is True)):
             sys.exit(1)
 
-    if args.env_file:
-        DOTENV_FILE = os.path.expanduser(args.env_file)
-    else:
-        if DOTENV_FILE:
-            DOTENV_FILE = os.path.expanduser(DOTENV_FILE)
+    apply_diagnostic_cli_overrides(args)
+    apply_tls_verification_setting()
+    prepare_configured_paths(args)
+    env_path = load_startup_secrets(args.env_file, configured_settings)
+    apply_startup_cli_overrides(args, configured_settings)
+    if args.no_color is True:
+        COLORED_OUTPUT = False
+    init_color_output(stdout_bck)
 
-    if DOTENV_FILE and DOTENV_FILE.lower() == 'none':
-        env_path = None
-    else:
-        try:
-            from dotenv import load_dotenv, find_dotenv
+    if not args.username and TARGET_GITHUB_USERNAME:
+        saved_target = wizard_normalize_target(TARGET_GITHUB_USERNAME)
+        if not saved_target:
+            advice = make_recovery_advice("config.value_invalid", "The saved GitHub target is invalid", recovery_fix_with_guide("Set TARGET_GITHUB_USERNAME to a GitHub username or complete profile URL", CONFIG_GUIDE_URL), False, f"Rejected target: {TARGET_GITHUB_USERNAME}")
+            print_recovery_advice(advice)
+            sys.exit(1)
+        args.username = saved_target
 
-            if DOTENV_FILE:
-                env_path = DOTENV_FILE
-                if not os.path.isfile(env_path):
-                    print(f"* Warning: dotenv file '{env_path}' does not exist\n")
-                else:
-                    load_dotenv(env_path, override=True)
-            else:
-                env_path = find_dotenv() or None
-                if env_path:
-                    load_dotenv(env_path, override=True)
-        except ImportError:
-            env_path = DOTENV_FILE if DOTENV_FILE else None
-            if env_path:
-                print(f"* Warning: Cannot load dotenv file '{env_path}' because 'python-dotenv' is not installed\n\nTo install it, run:\n    pip3 install python-dotenv\n\nOnce installed, re-run this tool\n")
-
-    if env_path:
-        for secret in SECRET_KEYS:
-            val = os.getenv(secret)
-            if val is not None:
-                globals()[secret] = val
+    if len(sys.argv) == 1 and not args.username:
+        sys.exit(print_welcome_screen(parser, show_banner=False))
 
     if args.set_github_token:
         try:
             run_set_github_token(args.env_file, api_url=args.github_url, config_path=cfg_path)
         except Exception as e:
-            print(f"* Error: {sanitize_webhook_text(e)}")
+            print_recovery_error(e, "github_token")
+            sys.exit(1)
+        sys.exit(0)
+
+    if args.set_smtp_password:
+        # Runs after the config file so the mail server it signs in to is the one monitoring would use
+        try:
+            run_set_smtp_password(args.env_file, config_path=cfg_path)
+        except Exception as e:
+            print_recovery_error(e, "email")
             sys.exit(1)
         sys.exit(0)
 
@@ -5930,76 +11112,89 @@ def main():
         try:
             run_set_webhook_url(args.env_file, config_path=cfg_path)
         except Exception as e:
-            print(f"* Error: {sanitize_webhook_text(e)}")
+            print_recovery_error(e, "webhook")
             sys.exit(1)
         sys.exit(0)
 
     apply_webhook_cli_overrides(args, parser)
+    trace_unresolved_secrets()
+    apply_monitoring_cli_overrides(args, parser)
+    liveness_error = runtime_liveness_error()
+    if liveness_error:
+        advice = make_recovery_advice("config.value_invalid", liveness_error, recovery_fix_with_guide("Set LIVENESS_CHECK_INTERVAL to seconds, or 0 to disable liveness output", CONFIG_GUIDE_URL), False)
+        print_recovery_advice(advice)
+        sys.exit(1)
 
-    local_tz = None
-    if LOCAL_TIMEZONE == "Auto":
-        if get_localzone is not None:
-            try:
-                local_tz = get_localzone()
-            except Exception:
-                pass
-        if local_tz:
-            LOCAL_TIMEZONE = str(local_tz)
-        else:
-            print("* Error: Cannot detect local timezone.")
-            print("* Hint: This can happen if the optional 'tzlocal' library is missing. Install it with: pip install tzlocal")
-            print("* Or set LOCAL_TIMEZONE to your local timezone manually.")
-            sys.exit(1)
-    else:
-        if not is_valid_timezone(LOCAL_TIMEZONE):
-            print(f"* Error: Configured LOCAL_TIMEZONE '{LOCAL_TIMEZONE}' is not valid. Please use a valid pytz timezone name.")
-            sys.exit(1)
+    configuration_errors = runtime_configuration_errors() + runtime_boolean_errors()
+    if configuration_errors:
+        print_recovery_advice(make_recovery_advice("config.invalid", "Invalid settings: " + ". ".join(configuration_errors), recovery_fix_with_guide("Correct the reported settings in the configuration file or command line", CONFIG_GUIDE_URL), False))
+        sys.exit(1)
+
+    try:
+        TRUNCATE_CHARS = resolve_truncate_chars(args.truncate, TRUNCATE_CHARS, DISABLE_LOGGING)
+    except OSError as exc:
+        print_recovery_error(exc, "terminal")
+        sys.exit(1)
+
+    if type(GITHUB_CHECK_INTERVAL) is not int or GITHUB_CHECK_INTERVAL <= 0:
+        advice = make_recovery_advice("config.value_invalid", "The GitHub polling interval is invalid", recovery_fix_with_guide("Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds", CONFIG_GUIDE_URL), False, f"GITHUB_CHECK_INTERVAL={GITHUB_CHECK_INTERVAL}")
+        print_recovery_advice(advice)
+        sys.exit(1)
+
+    timezone_advice = resolve_local_timezone()
+    if timezone_advice is not None:
+        print_recovery_advice(timezone_advice)
+        sys.exit(1)
+
+    # Missing input is reported before credentials or connectivity
+    if not args.username and not (args.send_test_email or args.send_test_webhook):
+        advice = make_recovery_advice("target.missing", "No GitHub username was provided", recovery_fix_with_guide("Add the GitHub username to the monitoring command", QUICK_START_GUIDE_URL), False, "The positional GITHUB_USERNAME argument was empty")
+        print_recovery_advice(advice)
+        sys.exit(1)
 
     if not check_internet():
         sys.exit(1)
 
     if args.send_test_email:
+        # Checked before the attempt is announced, so a mail server that was never usable is not reported as a failed send
+        validation_error = validate_email_settings()
+        if validation_error is not None:
+            print_recovery_advice(email_settings_advice(validation_error))
+            sys.exit(1)
         print("* Sending test email notification ...\n")
-        if send_email("github_monitor: test email", "This is test email - your SMTP settings seems to be correct !", "", SMTP_SSL, smtp_timeout=5) == 0:
+        if send_email("GitHub Monitor test email", "This test email was sent by --send-test-email. Your SMTP settings work.", "", SMTP_SSL, smtp_timeout=5, report_delivery=False) == 0:
             print("* Email sent successfully !")
         else:
             sys.exit(1)
         sys.exit(0)
 
     if args.send_test_webhook:
+        if not validate_webhook_url():
+            print_webhook_error("WEBHOOK_URL must contain a complete HTTPS link")
+            sys.exit(1)
         print("* Sending test webhook notification ...\n")
-        if send_webhook("GitHub Monitor test", "Your webhook alerts are set up correctly.", "event", force=True) == 0:
+        if send_webhook("GitHub Monitor test webhook", "This test notification was sent by --send-test-webhook. Your webhook settings work.", "event", force=True, report_delivery=False) == 0:
             print("* Webhook sent successfully !")
         else:
             sys.exit(1)
         sys.exit(0)
 
-    if args.github_token:
-        GITHUB_TOKEN = args.github_token
-
     if not GITHUB_TOKEN or GITHUB_TOKEN == "your_github_classic_personal_access_token":
-        print("* Error: GITHUB_TOKEN (-t / --github_token) value is empty or incorrect")
+        token_command = render_command(["--set-github-token"])
+        advice = make_recovery_advice("auth.github_token_missing", "No usable GitHub token is configured", recovery_fix_with_guide(f"Create a token then run: {token_command}", AUTH_GUIDE_URL), False, "GITHUB_TOKEN is empty or still uses the generated placeholder")
+        print_recovery_advice(advice)
         sys.exit(1)
-
-    if not args.username:
-        print("* Error: GITHUB_USERNAME argument is required !")
-        sys.exit(1)
-
-    if args.github_url:
-        GITHUB_API_URL = args.github_url
 
     if not GITHUB_API_URL:
-        print("* Error: GITHUB_API_URL (-x / --github_url) value is empty")
+        advice = make_recovery_advice("config.value_invalid", "GITHUB_API_URL is empty", recovery_fix_with_guide("Set GITHUB_API_URL in config or pass --github-url with a complete HTTPS API URL", CONFIG_GUIDE_URL), False, "The effective GITHUB_API_URL was empty")
+        print_recovery_advice(advice)
         sys.exit(1)
-
-    if args.get_all_repos is True:
-        GET_ALL_REPOS = True
 
     if args.list_followers_and_followings:
         try:
             github_print_followers_and_followings(args.username)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_recovery_error(e, "target")
             sys.exit(1)
         sys.exit(0)
 
@@ -6007,7 +11202,7 @@ def main():
         try:
             github_print_repos(args.username)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_recovery_error(e, "target")
             sys.exit(1)
         sys.exit(0)
 
@@ -6015,26 +11210,22 @@ def main():
         try:
             github_print_starred_repos(args.username)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_recovery_error(e, "target")
             sys.exit(1)
         sys.exit(0)
 
-    if args.check_interval:
-        GITHUB_CHECK_INTERVAL = args.check_interval
-        LIVENESS_CHECK_COUNTER = LIVENESS_CHECK_INTERVAL / GITHUB_CHECK_INTERVAL
-
-    if args.csv_file:
-        CSV_FILE = os.path.expanduser(args.csv_file)
-    else:
-        if CSV_FILE:
-            CSV_FILE = os.path.expanduser(CSV_FILE)
-
     if CSV_FILE:
         try:
+            debug_print("Opening CSV output for startup write check", path=CSV_FILE)
             with open(CSV_FILE, 'a', newline='', buffering=1, encoding="utf-8") as _:
                 pass
+            debug_print("CSV startup write check succeeded", path=CSV_FILE)
         except Exception as e:
-            print(f"* Error: CSV file cannot be opened for writing: {e}")
+            debug_print("CSV startup write check", path=CSV_FILE, outcome="failed", error=f"{type(e).__name__}: {e}")
+            advice = classify_recovery_error(e, "file")
+            if advice.code == "unknown":
+                advice = make_recovery_advice("file.unwritable", "The CSV file cannot be opened for writing", recovery_fix_with_guide("Check CSV_FILE and its parent directory permissions", CSV_GUIDE_URL), False, f"{type(e).__name__}: {e}")
+            print_recovery_advice(advice)
             sys.exit(1)
 
     if args.list_recent_events:
@@ -6045,104 +11236,46 @@ def main():
         try:
             github_list_events(args.username, events_n, CSV_FILE)
         except Exception as e:
-            print(f"* Error: {e}")
+            print_recovery_error(e, "target")
             sys.exit(1)
         sys.exit(0)
 
     try:
         ascii_log_separators_enabled()
     except ValueError as e:
-        print(f"* Error: {e}")
+        advice = make_recovery_advice("config.value_invalid", "ASCII_LOG_SEPARATORS is invalid", recovery_fix_with_guide("Set ASCII_LOG_SEPARATORS to Auto, On or Off", CONFIG_GUIDE_URL), False, f"{type(e).__name__}: {e}")
+        print_recovery_advice(advice)
         sys.exit(1)
 
-    if args.disable_logging is True:
-        DISABLE_LOGGING = True
-
     if not DISABLE_LOGGING:
-        log_path = Path(os.path.expanduser(GITHUB_LOGFILE))
-        if log_path.parent != Path('.'):
-            if log_path.suffix == "":
-                log_path = log_path.parent / f"{log_path.name}_{args.username}.log"
-        else:
-            if log_path.suffix == "":
-                log_path = Path(f"{log_path.name}_{args.username}.log")
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        FINAL_LOG_PATH = str(log_path)
-        sys.stdout = Logger(FINAL_LOG_PATH)
+        log_path = resolve_output_log_path(args.username)
+        try:
+            debug_print("Ensuring output log directory exists", path=log_path.parent)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            debug_print("Output log directory ready", path=log_path.parent)
+            FINAL_LOG_PATH = str(log_path)
+            sys.stdout = Logger(FINAL_LOG_PATH)
+        except Exception as e:
+            advice = make_recovery_advice("file.unwritable", "The output log could not be opened", recovery_fix_with_guide("Check GITHUB_LOGFILE and its parent directory permissions or use --disable-logging", CONFIG_GUIDE_URL), False, f"{type(e).__name__}: {e}")
+            print_recovery_advice(advice)
+            sys.exit(1)
     else:
         FINAL_LOG_PATH = None
 
-    if args.notify_profile is True:
-        PROFILE_NOTIFICATION = True
-
-    if args.notify_events is True:
-        EVENT_NOTIFICATION = True
-
-    if args.notify_repo_changes is True:
-        REPO_NOTIFICATION = True
-
-    if args.notify_repo_update_date is True:
-        REPO_UPDATE_DATE_NOTIFICATION = True
-
-    if args.notify_daily_contribs is True:
-        CONTRIB_NOTIFICATION = True
-
-    if args.notify_errors is False:
-        ERROR_NOTIFICATION = False
-
-    if args.track_repos_changes is True:
-        TRACK_REPOS_CHANGES = True
-
-    if args.repos is not None:
-        if not TRACK_REPOS_CHANGES:
-            print("* Error: --repos requires -j/--track-repos-changes to be enabled")
-            sys.exit(1)
-        # Split comma-separated repo names and strip whitespace
-        REPOS_TO_MONITOR = [repo.strip() for repo in args.repos.split(',') if repo.strip()]
-
-    if args.track_contribs_changes is True:
-        TRACK_CONTRIB_CHANGES = True
-
-    if args.no_monitor_events is True:
-        DO_NOT_MONITOR_GITHUB_EVENTS = True
-
-    if not TRACK_REPOS_CHANGES:
-        REPO_NOTIFICATION = False
-        REPO_UPDATE_DATE_NOTIFICATION = False
-        WEBHOOK_REPO_NOTIFICATION = False
-        WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION = False
-
-    if not TRACK_CONTRIB_CHANGES:
-        CONTRIB_NOTIFICATION = False
-        WEBHOOK_CONTRIB_NOTIFICATION = False
-
-    if DO_NOT_MONITOR_GITHUB_EVENTS:
-        EVENT_NOTIFICATION = False
-        WEBHOOK_EVENT_NOTIFICATION = False
-
     if SMTP_HOST.startswith("your_smtp_server_"):
+        verbose_print("Email notifications are off because SMTP_HOST is still the shipped placeholder")
         EVENT_NOTIFICATION = False
         PROFILE_NOTIFICATION = False
         REPO_NOTIFICATION = False
         REPO_UPDATE_DATE_NOTIFICATION = False
         CONTRIB_NOTIFICATION = False
         ERROR_NOTIFICATION = False
+    if WEBHOOK_ENABLED and not validate_webhook_url():
+        verbose_print("Webhook notifications are off because WEBHOOK_URL is not a complete HTTPS link")
+        WEBHOOK_ENABLED = False
 
-    print(f"* GitHub polling interval:\t[ {display_time(GITHUB_CHECK_INTERVAL)} ]")
-    for notification_summary_line in _startup_notification_summary_lines():
-        print(notification_summary_line)
-    print(f"* GitHub API URL:\t\t{GITHUB_API_URL}")
-    print(f"* Track repos changes:\t\t{TRACK_REPOS_CHANGES}")
-    print(f"* Track contrib changes:\t{TRACK_CONTRIB_CHANGES}")
-    print(f"* Monitor GitHub events:\t{not DO_NOT_MONITOR_GITHUB_EVENTS}")
-    print(f"* Get owned repos only:\t\t{not GET_ALL_REPOS}")
-    print(f"* Liveness check:\t\t{bool(LIVENESS_CHECK_INTERVAL)}" + (f" ({display_time(LIVENESS_CHECK_INTERVAL)})" if LIVENESS_CHECK_INTERVAL else ""))
-    print(f"* CSV logging enabled:\t\t{bool(CSV_FILE)}" + (f" ({CSV_FILE})" if CSV_FILE else ""))
-    print(f"* Output logging enabled:\t{not DISABLE_LOGGING}" + (f" ({FINAL_LOG_PATH})" if not DISABLE_LOGGING else ""))
-    print(f"* ASCII log separators:\t\t{ascii_log_separators_enabled()} (mode: {ASCII_LOG_SEPARATORS})")
-    print(f"* Configuration file:\t\t{cfg_path}")
-    print(f"* Dotenv file:\t\t\t{env_path or 'None'}")
-    print(f"* Local timezone:\t\t{LOCAL_TIMEZONE}")
+    startup_rows = build_startup_summary(args.username, cfg_path, env_path, FINAL_LOG_PATH)
+    emit_startup_summary(startup_rows, show_full=bool(VERBOSE_MODE or DEBUG_MODE))
 
     out = f"\nMonitoring GitHub user {args.username}"
     print(out)

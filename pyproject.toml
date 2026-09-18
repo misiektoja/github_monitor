@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "github_monitor"
-version = "2.6.3"
+version = "2.7"
 description = "Track GitHub user and repository activity in real time with instant notifications"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -13,11 +13,12 @@ authors = [{ name = "Michal Szymanski", email = "misiektoja-pypi@rm-rf.ninja" }]
 requires-python = ">=3.10"
 dependencies = [
   "PyGithub>=2.8.0",
-  "requests>=2.0",
+  "requests>=2.33.0",
+  "urllib3>=2.7.0",
   "python-dateutil>=2.8",
   "pytz>=2020.1",
   "tzlocal>=4.0",
-  "python-dotenv>=0.19",
+  "python-dotenv>=1.2.2",
 ]
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -34,10 +35,14 @@ classifiers = [
 keywords = ["github", "monitoring", "tracking", "real-time", "osint", "pygithub"]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+# wcwidth is an optional runtime dependency, installed here so the display-width truncation tests run rather than skip
+test = ["pytest>=7.0", "pyyaml>=6.0", "wcwidth>=0.2.7"]
+# Pinned so a new ruff release cannot fail CI on a rule that did not exist when the change was written
+lint = ["ruff==0.16.4"]
 
 [project.urls]
 Homepage = "https://github.com/misiektoja/github_monitor"
+Documentation = "https://misiektoja.github.io/github_monitor/"
 Source   = "https://github.com/misiektoja/github_monitor"
 Changelog= "https://github.com/misiektoja/github_monitor/blob/main/RELEASE_NOTES.md"
 
@@ -47,6 +52,16 @@ github_monitor = "github_monitor:main"
 [tool.setuptools]
 py-modules = ["github_monitor"]
 include-package-data = true
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+# Defect rules only: syntax errors, pyflakes and bugbear. Formatting and import order are left
+# to the surrounding code, which keeps each function definition on one physical line
+select = ["E9", "F", "B"]
+# Both are style preferences that would rewrite hundreds of existing lines without fixing a defect
+ignore = ["F541", "B904"]
 
 [tool.pytest.ini_options]
 # Run the in-repo source, never an installed copy, by putting the project root first on sys.path

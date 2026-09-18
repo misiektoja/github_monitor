@@ -157,7 +157,7 @@ def test_html_conversion_links_github_mentions_safely(gm_module, monkeypatch):
     assert '<a href="https://github.example/linked">@linked</a>' in event_html
     assert '<a href="https://github.example/existing">@existing</a>' in event_html
 
-    plain_html = gm_module.text_to_html("Review by @octocat and email octocat@example.com")
+    plain_html = gm_module.markdown_to_html("Review by @octocat and email octocat@example.com", convert_line_breaks=False)
     assert plain_html == 'Review by <a href="https://github.example/octocat">@octocat</a> and email octocat@example.com'
 
     multiline_html = gm_module.markdown_to_html("First\n@octocat\nLast")

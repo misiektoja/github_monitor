@@ -36,13 +36,39 @@ def gm_module():
 
 
 @pytest.fixture(autouse=True)
+# Clears the degraded-feature tracker, whose module-level state would otherwise leak between tests
+def reset_degraded_feature_tracker():
+    gm.reset_degraded_features()
+    yield
+    gm.reset_degraded_features()
+
+
+@pytest.fixture
+# Restores every module-level setting a real startup run mutates, so one test cannot leak into the next
+def restored_globals():
+    snapshot = {name: value for name, value in vars(gm).items() if name.isupper()}
+    yield
+    for name, value in snapshot.items():
+        setattr(gm, name, value)
+    for name in [name for name in vars(gm) if name.isupper() and name not in snapshot]:
+        delattr(gm, name)
+
+
+@pytest.fixture(autouse=True)
 # Resets module globals used by offline helpers to deterministic values
 def deterministic_globals(monkeypatch):
     monkeypatch.setattr(gm, "LOCAL_TIMEZONE", "UTC", raising=False)
     monkeypatch.setattr(gm, "GITHUB_CHECK_INTERVAL", 60, raising=False)
+    monkeypatch.setattr(gm, "VERBOSE_MODE", False, raising=False)
+    monkeypatch.setattr(gm, "DEBUG_MODE", False, raising=False)
+    monkeypatch.setattr(gm, "SECRET_SOURCES", {}, raising=False)
     monkeypatch.setattr(gm, "REPO_NOTIFICATION", False, raising=False)
     monkeypatch.setattr(gm, "PROFILE_NOTIFICATION", False, raising=False)
     monkeypatch.setattr(gm, "RECEIVER_EMAIL", "alerts@example.test", raising=False)
     monkeypatch.setattr(gm, "SMTP_SSL", True, raising=False)
     monkeypatch.setattr(gm, "CSV_FILE", "", raising=False)
+    # load_dotenv writes into os.environ and nothing removes it again, so a test that loads a dotenv would
+    # otherwise leak its secrets into every later test through the exported-environment lookup at startup
+    for secret in gm.SECRET_KEYS:
+        monkeypatch.delenv(secret, raising=False)
     yield

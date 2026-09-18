@@ -1,0 +1,95 @@
+name: Bug report
+description: Report incorrect or unexpected behavior
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a suspected vulnerability here. Follow [SECURITY.md](https://github.com/misiektoja/github_monitor/blob/main/SECURITY.md) instead.
+
+        Never paste a GitHub personal access token, an SMTP password, a webhook URL or a complete configuration file into an issue. Logs can name the accounts you monitor, so redact anything you do not want public. [SUPPORT.md](https://github.com/misiektoja/github_monitor/blob/main/SUPPORT.md) lists what to include.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected and what happened instead. Include the exact error text when there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The steps, including the command you ran and the relevant settings from your configuration file. Redact targets, credentials and webhook URLs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor-output
+    attributes:
+      label: Doctor preflight output
+      description: Run `github_monitor --doctor <github_target>` and paste its complete sanitized output. Review target names, paths and recipient addresses before posting.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: The lines around the failure. Repeat with `--verbose` for decisions and unavailable alerts or `--debug` for sanitized operations, delivery, files, retries and timing. The tool writes a log file unless you pass `--disable-logging`.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: github_monitor version
+      description: "Output of `github_monitor --version`."
+    validations:
+      required: true
+
+  - type: input
+    id: recovery-code
+    attributes:
+      label: Recovery code
+      description: The stable code printed with `--verbose` or `--debug`, when available.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How it is installed
+      options:
+        - PyPI (pip install github_monitor)
+        - Standalone script
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and Python version
+      description: "For example: macOS 15.5, Python 3.14.0."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the tool this concerns
+      options:
+        - Profile and follower monitoring
+        - Repository and event monitoring
+        - Daily contributions
+        - Notifications (email, Discord, ntfy)
+        - Configuration and dotenv files
+        - Log and CSV output
+        - Other
+    validations:
+      required: false
