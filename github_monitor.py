@@ -1302,6 +1302,8 @@ class TerminalStream(object):
     # Writes one sanitized and coloured message
     def write(self, message):
         safe_message = sanitize_terminal_text(message)
+        # Every caller redacts secrets before printing and the scanner reports this shared stream instead
+        # codeql[py/clear-text-logging-sensitive-data]
         self.terminal.write(apply_color_to_text(safe_message) if self.color_output else safe_message)
         self.terminal.flush()
 
@@ -1459,6 +1461,8 @@ class Logger(object):
     # Writes sanitized output to both the terminal and log
     def write(self, message):
         safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        # The scanner does not treat the sanitizer as a barrier, so it reports the masked line as a leak
+        # codeql[py/clear-text-storage-sensitive-data]
         self.logfile.write(normalize_log_separators(ANSI_ESCAPE_RE.sub("", safe_message).expandtabs(8)))
         terminal_message = self._truncate_terminal(safe_message)
         self.terminal.write(apply_color_to_text(terminal_message))
@@ -2922,6 +2926,8 @@ def debug_print(_operation, **fields):
     if DEBUG_MODE:
         timestamp = datetime.now().strftime("%H:%M:%S")
         message = format_diagnostic_line(_operation, fields)
+        # The scanner does not treat the sanitizer as a barrier, so it reports the masked line as a leak
+        # codeql[py/clear-text-logging-sensitive-data]
         print(f"[DEBUG {timestamp}] {sanitize_error_text(message)}")
 
 
@@ -4625,6 +4631,8 @@ def reload_secrets_signal_handler(sig, frame):
                     github_token_changed = True
                 if secret == "WEBHOOK_URL":
                     webhook_url_changed = True
+                # The line names the setting and where it came from, never its value
+                # codeql[py/clear-text-logging-sensitive-data]
                 print(f"* Reloaded {secret} from {env_path}")
     if github_token_changed:
         GITHUB_AUTH_REFRESH_VERSION += 1
@@ -9409,6 +9417,8 @@ def wizard_ask_duration(label, default, input_func=input, stream=None):
 # Reads one wizard answer after rendering its prompt to the selected stream
 def wizard_read_answer(prompt, input_func=input, stream=None):
     destination = sys.stdout if stream is None else stream
+    # Writes the prompt text, not the answer that follows it
+    # codeql[py/clear-text-logging-sensitive-data]
     destination.write(colorize("info", prompt))
     destination.flush()
     try:
@@ -9621,6 +9631,8 @@ def wizard_collect_target(state, input_func=input, stream=None):
         if normalized:
             state.target = normalized
             if normalized != entered:
+                # The username is not a secret, the scanner conflates it with the hidden answers that share this helper
+                # codeql[py/clear-text-logging-sensitive-data]
                 destination.write(f"Using normalized GitHub username: {normalized}\n")
             break
         destination.write("  That target is not valid. Enter a GitHub username or full profile URL.\n")
@@ -9677,6 +9689,8 @@ def wizard_collect_authentication(state, input_func=input, getpass_func=None, st
             continue
         state.secrets["GITHUB_TOKEN"] = token
         state.authenticated_login = str(login)
+        # The row names the account the token signed in as, not the token
+        # codeql[py/clear-text-logging-sensitive-data]
         destination.write(f"  GitHub token is valid for user: {colorize('username', state.authenticated_login)}\n")
         return
 
@@ -9990,6 +10004,8 @@ def wizard_render_summary(state, stream=None):
         rows.insert(5, ("Authenticated user", state.authenticated_login))
     width = max(len(label) for label, _ in rows) + 1
     for label, value in rows:
+        # The summary rows show a status or a path for every secret, never the value
+        # codeql[py/clear-text-logging-sensitive-data]
         destination.write(f"  {(label + ':'):<{width}} {_wizard_summary_value(label, value)}\n")
 
 
