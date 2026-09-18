@@ -38,7 +38,7 @@ keywords = ["github", "monitoring", "tracking", "real-time", "osint", "pygithub"
 # wcwidth is an optional runtime dependency, installed here so the display-width truncation tests run rather than skip
 test = ["pytest>=7.0", "pyyaml>=6.0", "wcwidth>=0.2.7"]
 # Pinned so a new ruff release cannot fail CI on a rule that did not exist when the change was written
-lint = ["ruff==0.16.4"]
+lint = ["ruff==0.16.7"]
 
 [project.urls]
 Homepage = "https://github.com/misiektoja/github_monitor"
