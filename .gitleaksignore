@@ -1,0 +1,6 @@
+# Known findings in history that cannot be removed without rewriting it.
+# Fingerprint format: commit:file:rule:line
+
+# A diagnostic trace assertion of the form key=GITHUB_TOKEN, outcome=failed. The value after the label is a
+# trace field, not a token. Later commits allow the outcome field in .gitleaks.toml.
+041fef891e3927fbc0e63435b4c9acf5a55d5287:tests/test_diagnostic_modes.py:generic-api-key:140
