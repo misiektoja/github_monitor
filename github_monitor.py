@@ -3349,10 +3349,12 @@ def print_liveness_banner(message):
 
 
 # Reminds about a lasting failure once an hour, so a broken run still says it is alive without repeating itself
-def print_outage_liveness(target, advice, since, failures=0):
+def print_outage_liveness(target, advice, since, failures=0, close=True):
     count = f", {failures} failed {'check' if failures == 1 else 'checks'}" if failures else ""
     print(f"* Monitoring degraded for {target}. {advice.summary} since {get_date_from_ts(since)}{count}")
-    print_cur_ts("Liveness check, timestamp:\t")
+    # A caller with an alert still to deliver closes the report itself, so the delivery lines stay inside it
+    if close:
+        print_cur_ts("Liveness check, timestamp:\t")
 
 
 # Notes that a reported outage now fails differently, in one line rather than a second full report
@@ -7416,7 +7418,7 @@ def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, 
     elif outage_outcome == "changed":
         print_outage_change(user, advice)
     elif outage_outcome == "reminder":
-        print_outage_liveness(user, advice, outage.since, outage.failures)
+        print_outage_liveness(user, advice, outage.since, outage.failures, close=False)
 
     m_subject = f"{advice.summary} (GitHub user: {user})"
     m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
@@ -7434,8 +7436,11 @@ def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, 
         delivery_reported = True
 
     # A retry can reach the screen on a check the outage reporter keeps quiet, and a delivery line
-    # with nothing under it reads as a run that stopped there
-    if outage_outcome in ("full", "changed") or delivery_reported:
+    # with nothing under it reads as a run that stopped there. The reminder closes last so the lines it
+    # carries stay inside the report rather than landing under the separator that ended it
+    if outage_outcome == "reminder":
+        print_cur_ts("Liveness check, timestamp:\t")
+    elif outage_outcome in ("full", "changed") or delivery_reported:
         print_cur_ts("Timestamp:\t\t\t")
 
 
