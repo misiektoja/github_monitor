@@ -1,15 +1,13 @@
 # github_monitor
 
-<p align="left">
-  <img src="https://img.shields.io/github/v/release/misiektoja/github_monitor?style=flat-square&color=blue" alt="GitHub Release" />
-  <img src="https://img.shields.io/pypi/v/github_monitor?style=flat-square&color=teal" alt="PyPI Version" />
-  <img src="https://img.shields.io/github/stars/misiektoja/github_monitor?style=flat-square&color=magenta" alt="GitHub Stars" />
-  <img src="https://img.shields.io/badge/python-3.10+-blueviolet?style=flat-square" alt="Python Versions" />
-  <img src="https://img.shields.io/github/license/misiektoja/github_monitor?style=flat-square&color=blue" alt="License" />
-  <a href="https://scorecard.dev/viewer/?uri=github.com/misiektoja/github_monitor"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.scorecard.dev%2Fprojects%2Fgithub.com%2Fmisiektoja%2Fgithub_monitor&query=%24.score&label=openssf%20scorecard&style=flat-square" alt="OpenSSF Scorecard" /></a>
-  <img src="https://img.shields.io/github/last-commit/misiektoja/github_monitor?style=flat-square&color=green" alt="Last Commit" />
-  <img src="https://img.shields.io/badge/maintenance-active-brightgreen?style=flat-square" alt="Maintenance" />
-</p>
+[![GitHub Release](https://img.shields.io/github/v/release/misiektoja/github_monitor?style=flat-square&color=blue)](https://github.com/misiektoja/github_monitor/releases)
+[![PyPI Version](https://img.shields.io/pypi/v/github_monitor?style=flat-square&color=teal)](https://pypi.org/project/github-monitor/)
+[![GitHub Stars](https://img.shields.io/github/stars/misiektoja/github_monitor?style=flat-square&color=magenta)](https://github.com/misiektoja/github_monitor)
+[![Python Versions](https://img.shields.io/badge/python-3.10+-blueviolet?style=flat-square)](https://pypi.org/project/github-monitor/)
+[![License](https://img.shields.io/github/license/misiektoja/github_monitor?style=flat-square&color=blue)](https://github.com/misiektoja/github_monitor/blob/main/LICENSE)
+[![OpenSSF Scorecard](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.scorecard.dev%2Fprojects%2Fgithub.com%2Fmisiektoja%2Fgithub_monitor&query=%24.score&label=openssf%20scorecard&style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/misiektoja/github_monitor)
+[![Last Commit](https://img.shields.io/github/last-commit/misiektoja/github_monitor?style=flat-square&color=green)](https://github.com/misiektoja/github_monitor/commits/main)
+[![Maintenance](https://img.shields.io/badge/maintenance-active-brightgreen?style=flat-square)](https://github.com/misiektoja/github_monitor)
 
 Powerful real-time GitHub OSINT tool that tracks everything from profile updates and contribution streaks to repository engagement and follower changes - even detecting when you've been blocked, all with instant email and webhook notifications.
 
