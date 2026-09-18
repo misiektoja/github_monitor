@@ -242,6 +242,8 @@ def test_verification_transport_settings(gm_module, monkeypatch, kind, api_url):
     def send(session, request, **kwargs):
         calls.append(request)
         if kind == "discussions":
+            # A substring check on the fixture URL, not a URL allowlist
+            # codeql[py/incomplete-url-substring-sanitization]
             expected = "https://api.github.com/graphql" if "api.github.com" in api_url else "https://git.example/api/graphql"
             assert request.method == "POST"
             assert json.loads(request.body)["variables"] == {"owner": "owner", "name": "monitor", "number": 60}
