@@ -95,7 +95,7 @@ REPO_UPDATE_DATE_NOTIFICATION = False
 # Can also be enabled via the -y flag
 CONTRIB_NOTIFICATION = False
 
-# Whether to send an email on errors
+# Whether to send an email on errors and the recovery alert that follows once the failure clears
 # Can also be disabled via the -e flag
 ERROR_NOTIFICATION = True
 
@@ -151,7 +151,7 @@ WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION = False
 # Can also be enabled via the --webhook-daily-contribs flag
 WEBHOOK_CONTRIB_NOTIFICATION = False
 
-# Whether to send a webhook notification on monitoring errors
+# Whether to send a webhook notification on monitoring errors and the recovery alert that follows once the failure clears
 # Can also be enabled via --webhook-errors or disabled via --no-webhook-error-notify
 WEBHOOK_ERROR_NOTIFICATION = True
 
@@ -557,6 +557,8 @@ SECRETS_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#storing-secrets"
 SMTP_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#smtp-settings"
 WEBHOOK_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#webhook-settings"
 DIAGNOSTICS_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#verbose-and-debug-output"
+CONNECTION_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#connection-problems"
+DESCRIPTOR_LIMIT_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#too-many-open-files"
 TLS_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#tls-verification"
 SUPPORT_GUIDE_URL = f"{DOCS_BASE_URL}/about/#support"
 DOCTOR_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#doctor-preflight"
@@ -798,9 +800,10 @@ DAILY_CONTRIBUTION_LOOKBACK_DAYS = 30
 MIN_REDACTABLE_SECRET_LENGTH = 12
 
 
-# Tracks the error alert per channel: what was delivered, and how long a channel that failed waits before the next attempt
+# Tracks the error alert per channel: what was delivered, how long a channel that failed waits before the next
+# attempt, and the failure and outage start the recovery alert names once the outage clears
 class ErrorAlertState:
-    # Starts with nothing delivered and no channel on hold
+    # Starts with nothing delivered, no channel on hold and no failure remembered
     def __init__(self) -> None:
         self.email_sent = False
         self.webhook_sent = False
@@ -808,10 +811,21 @@ class ErrorAlertState:
         self.webhook_failures = 0
         self.email_retry_at = 0
         self.webhook_retry_at = 0
+        self.advice = None
+        self.since = 0
 
-    # Forgets the delivered alert and any hold, so the next failure earns each channel a new one
+    # Forgets the delivered alert, any hold and the remembered failure, so the next outage earns each channel a new alert
     def reset(self) -> None:
         self.__init__()
+
+    # Remembers the latest failure and when the outage began, so the recovery alert can say what cleared and how long it took
+    def remember(self, advice, since: int) -> None:
+        self.advice = advice
+        self.since = since
+
+    # Tells whether a channel delivered the failure alert of this outage and is still switched on, so it is owed the recovery alert
+    def delivered(self, channel: str, enabled) -> bool:
+        return bool(enabled) and getattr(self, f"{channel}_sent")
 
     # Tells whether a channel still owes the alert and its wait after a failed attempt, if any, has passed
     def pending(self, channel: str, enabled, now: int) -> bool:
@@ -3196,6 +3210,9 @@ def render_command(arguments=None, include_paths=True, *, install_context=None):
 # One sentence for every surface that reports the startup connectivity check
 CONNECTIVITY_ENDPOINT_FIX = "Check network, DNS, proxy and CHECK_INTERNET_URL settings"
 
+# What to do about a network failure the monitor retries on its own, shared by the timeout and unreachable advices
+TRANSIENT_NETWORK_FIX = "Usually nothing to do, the tool retries on its own. If it continues, check network access, DNS, firewall and proxy settings"
+
 
 RECOVERY_CODES = frozenset({
     "auth.github_token_invalid",
@@ -3213,6 +3230,7 @@ RECOVERY_CODES = frozenset({
     "github.forbidden",
     "github.not_found",
     "github.rate_limited",
+    "github.unavailable",
     "network.timeout",
     "resource.exhausted",
     "network.unavailable",
@@ -3402,9 +3420,62 @@ def print_outage_change(target, advice):
 
 
 # Reports that a failure cleared, since a throttled failure no longer stops printing when it is over
-def print_outage_recovery(target, lasted):
+def print_outage_recovery(target, lasted, close=True):
     print(f"* Monitoring recovered for {target} after {display_time(max(1, lasted))}")
-    print_cur_ts("Timestamp:\t\t\t")
+    # A caller with a recovery alert to deliver closes the report itself, so the delivery lines stay inside it
+    if close:
+        print_cur_ts("Timestamp:\t\t\t")
+
+
+# Builds the subject every failure alert shares, so an inbox fed by several monitors sorts them by tool
+def recovery_alert_subject(advice, target):
+    return f"GitHub Monitor error: {advice.summary} (user: {target})"
+
+
+# Returns the text groups a failure alert lists under its summary, shared by the plain and HTML bodies
+def recovery_alert_sections(advice, retry_seconds, failed_checks=0, failing_since=0):
+    retry_lines = []
+    # A first failure has no run to count, so the count and its start appear once a second check has failed
+    if failed_checks > 1:
+        retry_lines.append(f"Failed checks in a row: {failed_checks}")
+        retry_lines.append(f"Failing since: {get_date_from_ts(failing_since)}")
+    retry_lines.append(f"Next retry in: {display_time(retry_seconds)}")
+    sections = [f"To fix: {advice.fix}", "\n".join(retry_lines)]
+    # A detail that only repeats the summary spends a line saying nothing
+    if DEBUG_MODE and advice.detail and advice.detail != advice.summary:
+        sections.append(f"Technical detail: {advice.detail}")
+    return sections
+
+
+# Builds the plain text of a failure alert, without the timestamp when a webhook service shows its own
+def recovery_alert_body(advice, retry_seconds, failed_checks=0, failing_since=0, timestamp=True):
+    body = "\n\n".join([advice.summary, *recovery_alert_sections(advice, retry_seconds, failed_checks, failing_since)])
+    return body + get_cur_ts("\n\nTimestamp: ") if timestamp else body
+
+
+# Builds the HTML email body of a failure alert with the same parts as the plain text and the summary in bold
+def recovery_alert_body_html(advice, retry_seconds, failed_checks=0, failing_since=0, timestamp=True):
+    parts = [f"<b>{html_text(advice.summary)}</b>", *(html_text(section) for section in recovery_alert_sections(advice, retry_seconds, failed_checks, failing_since))]
+    if timestamp:
+        parts.append(get_cur_ts("Timestamp: "))
+    return f"<html><head></head><body>{'<br><br>'.join(parts)}</body></html>"
+
+
+# Builds the subject of the alert that answers a delivered failure alert once the outage clears
+def outage_recovered_alert_subject(target, lasted):
+    return f"GitHub Monitor recovered: monitoring {target} resumed after {display_time(lasted)}"
+
+
+# Builds the plain text of the recovery alert, naming the failure it closes
+def outage_recovered_alert_body(advice, target, lasted, timestamp=True):
+    body = f"Monitoring recovered for {target} after {display_time(lasted)}.\n\nThe failure was: {advice.summary}"
+    return body + get_cur_ts("\n\nTimestamp: ") if timestamp else body
+
+
+# Builds the HTML email body of the recovery alert
+def outage_recovered_alert_body_html(advice, target, lasted, timestamp=True):
+    body = f"Monitoring recovered for <b>{html.escape(target)}</b> after {html.escape(display_time(lasted))}.<br><br>The failure was: {html_text(advice.summary)}"
+    return f"<html><head></head><body>{body}{get_cur_ts('<br><br>Timestamp: ') if timestamp else ''}</body></html>"
 
 
 # Yields the exception and each cause or context up to max_depth, to walk an exception chain
@@ -3449,7 +3520,7 @@ def classify_recovery_error(error, context="runtime", detail="", install_context
     debug_command = render_command(["--debug"], install_context=install_context)
     # Checked ahead of every context, since a local descriptor limit is not a failure of whatever call hit it
     if error is not None and is_too_many_open_files(error):
-        return make_recovery_advice("resource.exhausted", "This process ran out of file descriptors, which is a local limit and not a GitHub problem", recovery_fix_with_guide("Raise the file descriptor limit, for example with 'ulimit -n 4096', or set LimitNOFILE= if you run under systemd, then restart the tool", DIAGNOSTICS_GUIDE_URL), False, detail)
+        return make_recovery_advice("resource.exhausted", "This process ran out of file descriptors, which is a local limit and not a GitHub problem", recovery_fix_with_guide("Raise the file descriptor limit, for example with 'ulimit -n 4096', or set LimitNOFILE= if you run under systemd, then restart the tool", DESCRIPTOR_LIMIT_GUIDE_URL), False, detail)
     if selected_context == "connectivity":
         # Classified from the error, because a failed endpoint check has one answer whatever the exception was
         timed_out = isinstance(error, (req.Timeout, TimeoutError, socket.timeout))
@@ -3457,24 +3528,23 @@ def classify_recovery_error(error, context="runtime", detail="", install_context
         # No guide, because no page covers this check and the doctor report already ends with the troubleshooting link
         return make_recovery_advice("network.timeout" if timed_out else "network.unavailable", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail)
     if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
-        return make_recovery_advice("network.timeout", "The network request timed out", recovery_fix_with_guide("Check connectivity and increase the configured timeout before trying again", DIAGNOSTICS_GUIDE_URL), True, detail)
-    if isinstance(error, (req.ConnectionError, socket.gaierror)):
-        return make_recovery_advice("network.unavailable", "The configured service could not be reached", recovery_fix_with_guide("Check the network and configured service URL then try again", DIAGNOSTICS_GUIDE_URL), True, detail)
-    if isinstance(error, req.RequestException):
-        return make_recovery_advice("network.unavailable", "The configured service request failed", recovery_fix_with_guide("Check the network and configured service URL then try again", DIAGNOSTICS_GUIDE_URL), True, detail)
+        return make_recovery_advice("network.timeout", "GitHub did not answer in time", recovery_fix_with_guide(TRANSIENT_NETWORK_FIX, CONNECTION_GUIDE_URL), True, detail)
+    if isinstance(error, (req.ConnectionError, socket.gaierror, req.RequestException)):
+        return make_recovery_advice("network.unavailable", "GitHub could not be reached", recovery_fix_with_guide(TRANSIENT_NETWORK_FIX, CONNECTION_GUIDE_URL), True, detail)
     if isinstance(error, BadCredentialsException):
         return make_recovery_advice("auth.github_token_invalid", "GitHub rejected the configured token", recovery_fix_with_guide(f"Create or review the token then run: {token_command}", AUTH_GUIDE_URL), False, detail)
     if isinstance(error, RateLimitExceededException):
-        return make_recovery_advice("github.rate_limited", "GitHub API rate limiting paused the request", recovery_fix_with_guide("Wait for the reported reset time before trying again", DIAGNOSTICS_GUIDE_URL), True, detail)
+        return make_recovery_advice("github.rate_limited", "GitHub API rate limiting paused the request", recovery_fix_with_guide("Wait for the reported reset time before trying again", INTERVALS_GUIDE_URL), True, detail)
     if isinstance(error, UnknownObjectException):
         code = "target.not_found" if selected_context == "target" else "github.not_found"
-        return make_recovery_advice(code, "GitHub could not find the requested resource", recovery_fix_with_guide("Check the target name and token access then try again", DIAGNOSTICS_GUIDE_URL), False, detail)
+        return make_recovery_advice(code, "GitHub could not find the requested resource", recovery_fix_with_guide("Check the target name and token access then try again", QUICK_START_GUIDE_URL), False, detail)
     if isinstance(error, GithubException):
         status = getattr(error, "status", None)
         if status == 403:
             return make_recovery_advice("github.forbidden", "GitHub refused access to the requested resource", recovery_fix_with_guide("Check token permissions and resource visibility", AUTH_GUIDE_URL), False, detail)
-        retryable = status is None or (isinstance(status, int) and status >= 500)
-        return make_recovery_advice("github.api_error", "GitHub returned an API error", recovery_fix_with_guide(f"Try again or run {debug_command} for sanitized technical detail", DIAGNOSTICS_GUIDE_URL), retryable, detail)
+        if isinstance(status, int) and status >= 500:
+            return make_recovery_advice("github.unavailable", "GitHub is temporarily unavailable", recovery_fix_with_guide("Usually nothing to do, the tool retries on its own. If it continues, wait for GitHub to recover", CONNECTION_GUIDE_URL), True, detail)
+        return make_recovery_advice("github.api_error", "GitHub returned an API error", recovery_fix_with_guide(f"Try again or run {debug_command} for sanitized technical detail", DIAGNOSTICS_GUIDE_URL), status is None, detail)
     if isinstance(error, smtplib.SMTPAuthenticationError):
         return make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", recovery_fix_with_guide("Check SMTP_USER and replace SMTP_PASSWORD before sending another test", SMTP_GUIDE_URL), False, detail)
     if isinstance(error, PermissionError):
@@ -4228,8 +4298,9 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
     return 1
 
 
-# Sends one alert through the independently enabled email and webhook channels
-def send_notification_channels(notification_type: str, subject: str, body: str, body_html: str = "", email_enabled: bool = False, webhook_enabled: Optional[bool] = None) -> tuple[bool, bool]:
+# Sends one alert through the independently enabled email and webhook channels, with its own webhook text when the
+# email body carries a part such as the timestamp that the webhook service already shows
+def send_notification_channels(notification_type: str, subject: str, body: str, body_html: str = "", email_enabled: bool = False, webhook_enabled: Optional[bool] = None, webhook_body: Optional[str] = None, webhook_body_html: Optional[str] = None) -> tuple[bool, bool]:
     email_attempted = bool(email_enabled)
     webhook_attempted = webhook_event_enabled(notification_type) if webhook_enabled is None else bool(webhook_enabled)
     email_delivered = False
@@ -4239,7 +4310,9 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
         email_delivered = send_email(subject, body, body_html, SMTP_SSL) == 0
     if webhook_attempted:
         print(f"Sending webhook notification via {webhook_provider_display_name()}")
-        webhook_delivered = send_webhook(subject, body, notification_type, force=True, discord_description=html_body_to_discord_markdown(body_html)) == 0
+        webhook_description = body if webhook_body is None else webhook_body
+        webhook_markdown = html_body_to_discord_markdown(body_html if webhook_body_html is None else webhook_body_html)
+        webhook_delivered = send_webhook(subject, webhook_description, notification_type, force=True, discord_description=webhook_markdown) == 0
     # Delivery, not the attempt, so a channel that failed is retried while one that succeeded is not resent
     return email_delivered, webhook_delivered
 
@@ -7521,9 +7594,7 @@ def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, 
     elif outage_outcome == "reminder":
         print_outage_liveness(user, advice, outage.since, outage.failures, close=False)
 
-    m_subject = f"{advice.summary} (GitHub user: {user})"
-    m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
-    m_body_html = f"<html><head></head><body><b>{html_text(advice.summary)}</b><br><br>To fix: {html_text(advice.fix)}<br><br>GitHub Monitor will retry in {html.escape(display_time(GITHUB_CHECK_INTERVAL))}.{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
+    error_alert.remember(advice, outage.since)
     # Attempted on every failing check rather than only on the report, so a channel that failed is tried again
     # A failure the tool can retry away is alerted once the outage has lasted ERROR_ALERT_AFTER_SECONDS, one it cannot at once
     alert_due = not advice.retryable or int(time.time()) - outage.since >= ERROR_ALERT_AFTER_SECONDS
@@ -7531,7 +7602,13 @@ def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, 
     error_email_pending = alert_due and error_alert.pending("email", ERROR_NOTIFICATION, now)
     error_webhook_pending = alert_due and error_alert.pending("webhook", webhook_event_enabled("error"), now)
     if error_email_pending or error_webhook_pending:
-        email_delivered, webhook_delivered = send_notification_channels("error", m_subject, m_body, m_body_html, error_email_pending, error_webhook_pending)
+        m_subject = recovery_alert_subject(advice, user)
+        # Built once without the timestamp, which the webhook service shows itself and only the email carries
+        webhook_body = recovery_alert_body(advice, GITHUB_CHECK_INTERVAL, outage.failures, outage.since, timestamp=False)
+        webhook_body_html = recovery_alert_body_html(advice, GITHUB_CHECK_INTERVAL, outage.failures, outage.since, timestamp=False)
+        m_body = webhook_body + get_cur_ts(nl_ch + nl_ch + "Timestamp: ")
+        m_body_html = recovery_alert_body_html(advice, GITHUB_CHECK_INTERVAL, outage.failures, outage.since)
+        email_delivered, webhook_delivered = send_notification_channels("error", m_subject, m_body, m_body_html, error_email_pending, error_webhook_pending, webhook_body=webhook_body, webhook_body_html=webhook_body_html)
         error_alert.record("email", error_email_pending, email_delivered, now)
         error_alert.record("webhook", error_webhook_pending, webhook_delivered, now)
         delivery_reported = True
@@ -7543,6 +7620,27 @@ def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, 
         print_cur_ts("Liveness check, timestamp:\t")
     elif outage_outcome in ("full", "changed") or delivery_reported:
         print_cur_ts("Timestamp:\t\t\t")
+
+
+# Reports a successful check after an outage and answers each delivered failure alert with a recovery alert on the same channel
+def report_monitor_recovery(user, error_alert, outage):
+    lasted = outage.recovered()
+    if lasted is not None:
+        lasted = max(1, lasted)
+        advice = error_alert.advice
+        # Gated on the channels the failure alert reached and on their switches, so a channel that never heard of the outage stays quiet
+        email_owed = advice is not None and error_alert.delivered("email", ERROR_NOTIFICATION)
+        webhook_owed = advice is not None and error_alert.delivered("webhook", webhook_event_enabled("error"))
+        print_outage_recovery(user, lasted, close=False)
+        if email_owed or webhook_owed:
+            m_subject = outage_recovered_alert_subject(user, lasted)
+            webhook_body = outage_recovered_alert_body(advice, user, lasted, timestamp=False)
+            webhook_body_html = outage_recovered_alert_body_html(advice, user, lasted, timestamp=False)
+            m_body = webhook_body + get_cur_ts(nl_ch + nl_ch + "Timestamp: ")
+            m_body_html = outage_recovered_alert_body_html(advice, user, lasted)
+            send_notification_channels("error", m_subject, m_body, m_body_html, email_owed, webhook_owed, webhook_body=webhook_body, webhook_body_html=webhook_body_html)
+        print_cur_ts("Timestamp:\t\t\t")
+    error_alert.reset()
 
 
 # Monitors activity of the specified GitHub user
@@ -8435,7 +8533,7 @@ def github_monitor_user(user, csv_file_name):
                 verbose_degraded_feature("Recent events", "new event alerts")
 
         if MONITOR_CHECK_FAILURES:
-            failures = [(feature, classify_recovery_error(error) if error is not None else make_recovery_advice("github.api_error", "The monitoring check did not return usable data", recovery_fix_with_guide("Check connectivity and resource access, then let the next check retry", DIAGNOSTICS_GUIDE_URL), True)) for feature, error in MONITOR_CHECK_FAILURES.items()]
+            failures = [(feature, classify_recovery_error(error) if error is not None else make_recovery_advice("github.api_error", "The monitoring check did not return usable data", recovery_fix_with_guide("Check connectivity and resource access, then let the next check retry", CONNECTION_GUIDE_URL), True)) for feature, error in MONITOR_CHECK_FAILURES.items()]
             feature, advice = next(((feature, advice) for feature, advice in failures if not advice.retryable), failures[0])
             # One failure carries the fix, but an alert that hides the rest understates the outage. The
             # count rather than the names keeps the text stable while a per-repository failure set changes
@@ -8444,11 +8542,8 @@ def github_monitor_user(user, csv_file_name):
             advice = make_recovery_advice(advice.code, summary, advice.fix, advice.retryable, advice.detail)
             report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage)
         else:
-            error_alert.reset()
+            report_monitor_recovery(user, error_alert, outage)
             monitor_recovery_tracker.reset()
-            outage_lasted = outage.recovered()
-            if outage_lasted is not None:
-                print_outage_recovery(user, outage_lasted)
 
         report_recovered_features()
         close_pending_notice_block()
@@ -9029,7 +9124,7 @@ def doctor_check_monitoring(report, contribution_checker=None):
                 doctor_probe_feed(operation, factory)
                 report.add("Monitoring", "PASS", label)
             except Exception as exc:
-                advice = make_recovery_advice("github.api_error", label.replace(" is accessible", " is unavailable"), recovery_fix_with_guide("Check target visibility, token access and GitHub API availability", DIAGNOSTICS_GUIDE_URL), False)
+                advice = make_recovery_advice("github.api_error", label.replace(" is accessible", " is unavailable"), recovery_fix_with_guide("Check target visibility, token access and GitHub API availability", QUICK_START_GUIDE_URL), False)
                 report.add("Monitoring", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
         if DO_NOT_MONITOR_GITHUB_EVENTS:
             report.add("Monitoring", "PASS", "GitHub event monitoring is disabled", "No event feed check was needed")
@@ -9047,7 +9142,7 @@ def doctor_check_monitoring(report, contribution_checker=None):
             checker(report.target_name, today_local(), report.github_token)
             report.add("Monitoring", "PASS", "Daily contribution feed is accessible")
         except Exception as exc:
-            advice = make_recovery_advice("github.api_error", "Daily contribution feed is unavailable", recovery_fix_with_guide("Check token access, timezone and GitHub GraphQL availability", DIAGNOSTICS_GUIDE_URL), False)
+            advice = make_recovery_advice("github.api_error", "Daily contribution feed is unavailable", recovery_fix_with_guide("Check token access, timezone and GitHub GraphQL availability", QUICK_START_GUIDE_URL), False)
             report.add("Monitoring", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
     elif TRACK_CONTRIB_CHANGES:
         report.add("Monitoring", "SKIP", "Daily contribution feed was not checked", "The target profile was not fetched, so no lookup was attempted")
@@ -10934,7 +11029,7 @@ def main():
         dest="notify_errors",
         action="store_false",
         default=None,
-        help="Disable email on errors"
+        help="Disable email on errors and the recovery alert that follows"
     )
     notify.add_argument(
         "--send-test-email",
@@ -11020,7 +11115,7 @@ def main():
         dest="webhook_errors",
         action="store_false",
         default=None,
-        help="Disable webhook alerts when monitoring has a problem"
+        help="Disable webhook alerts when monitoring has a problem and the recovery alert that follows"
     )
     webhook_notify.add_argument(
         "--send-test-webhook",
