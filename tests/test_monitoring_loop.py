@@ -139,9 +139,9 @@ def test_any_failure_alerts_both_channels_once(gm_module, monkeypatch, tmp_path)
     errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE], [(True, True)], 6)
 
     assert [(call["email"], call["webhook"]) for call in errors] == [(True, True)]
-    assert errors[0]["subject"] == "An unexpected error stopped the requested action (GitHub user: watched)"
+    assert errors[0]["subject"] == "GitHub Monitor error: An unexpected error stopped the requested action (user: watched)"
     assert "To fix:" in errors[0]["body"]
-    assert f"retry in {gm_module.display_time(300)}" in errors[0]["body"]
+    assert f"Next retry in: {gm_module.display_time(300)}" in errors[0]["body"]
 
 
 # The guide link sits under the fix in the HTML body too, since HTML renders the newline the fix carries as a space
@@ -181,7 +181,9 @@ def test_a_failed_channel_is_retried_and_a_delivered_one_is_not(gm_module, monke
 def test_a_new_outage_after_a_recovery_alerts_again(gm_module, monkeypatch, tmp_path):
     errors = error_alerts_for(gm_module, monkeypatch, tmp_path, [OUTAGE, OUTAGE, None, OUTAGE], [(True, True)], 6)
 
-    assert [(call["email"], call["webhook"]) for call in errors] == [(True, True), (True, True)]
+    # The first outage, the recovery that closes it and the outage that follows, each on both channels
+    assert [(call["email"], call["webhook"]) for call in errors] == [(True, True), (True, True), (True, True)]
+    assert [call["subject"].split(":")[0] for call in errors] == ["GitHub Monitor error", "GitHub Monitor recovered", "GitHub Monitor error"]
 
 
 # A failure the loop can retry away is alerted only once the outage has lasted the alert delay, which the second
@@ -224,7 +226,7 @@ def test_a_second_failure_category_is_noted_in_one_line(gm_module, monkeypatch, 
     reports = [line for line in lines if line.startswith("* Error:")]
     changes = [number for number, line in enumerate(lines) if line.startswith("* Monitoring failure changed for watched. ")]
     assert len(reports) == 1
-    assert len(changes) == 1 and lines[changes[0]].endswith("The network request timed out")
+    assert len(changes) == 1 and lines[changes[0]].endswith("GitHub did not answer in time")
     assert lines[changes[0] + 1].startswith("Timestamp:")
     assert "\n".join(lines).count("To fix: ") == 1
 

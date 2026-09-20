@@ -200,6 +200,7 @@ def test_failed_feed_alerts_until_whole_check_recovers(gm_module, monkeypatch, c
     monkeypatch.setattr(requests.Session, "send", send)
     with pytest.raises(MonitorComplete):
         gm.github_monitor_user("watched", "")
-    assert deliveries == [2, 5]
+    # The failed feed alerts on check 2, the complete check on 4 answers it with a recovery alert and check 5 fails again
+    assert deliveries == [2, 4, 5]
     output = capsys.readouterr().out
     assert "GitHub rejected the configured token" in output
