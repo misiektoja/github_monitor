@@ -2,9 +2,13 @@
 
 This is a high-level summary of the most important changes.
 
-# Changes in 2.7.1 (TBD)
+# Changes in 2.8 (TBD)
 
-Version **2.7.1** reports a change over the window it was actually observed in, keeps the alert a failing check sends inside that check's report on screen and reports an alert channel that still holds the values from the sample configuration as unset.
+Version **2.8** caps how much of a large push a single notification reports, reports a change over the window it was actually observed in, keeps the alert a failing check sends inside that check's report on screen and reports an alert channel that still holds the values from the sample configuration as unset.
+
+**Features and improvements**:
+
+- **NEW:** **Push event commit limits** - A push with hundreds of commits no longer spends one API request per commit and no longer fills the notification. **`PUSH_COMMITS_LIMIT`** (default **10**, also **`--push-commits-limit`**) sets how many commits of one push are reported with their date, author URL, statistics and changed files. **`PUSH_COMMITS_ORDER`** picks which end of the push keeps them, **`newest`** by default. The remaining commits are replaced by one line naming how many were left out, or listed one line each with their SHA, author and first message line by setting **`PUSH_COMMITS_OVERFLOW = 'summary'`**. **`PUSH_FILES_LIMIT`** (default **20**, also **`--push-files-limit`**) caps the changed files listed per commit. Set either limit to **0** to report everything in full. The compare URL in the same report still links the complete diff
 
 **Bug fixes**:
 
