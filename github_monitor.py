@@ -3687,6 +3687,22 @@ def startup_webhook_provider():
     return f"{webhook_provider_display_name()} ({'enabled' if WEBHOOK_ENABLED else 'disabled'})"
 
 
+# Describes how much of a push the run reports in full
+def startup_push_commit_details():
+    if DO_NOT_MONITOR_GITHUB_EVENTS:
+        return "Inactive"
+    if not PUSH_COMMITS_LIMIT:
+        return "Every commit in full"
+    return f"{PUSH_COMMITS_LIMIT} {PUSH_COMMITS_ORDER} per push, rest by {PUSH_COMMITS_OVERFLOW}"
+
+
+# Describes how many changed files each detailed commit lists
+def startup_push_changed_files():
+    if DO_NOT_MONITOR_GITHUB_EVENTS:
+        return "Inactive"
+    return f"{PUSH_FILES_LIMIT} per commit" if PUSH_FILES_LIMIT else "Every changed file"
+
+
 # Builds concise and complete startup rows without exposing private values
 def build_startup_summary(target, config_path, env_path, output_path):
     install_context = detect_install_context()
@@ -3714,7 +3730,8 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Closure verification budget", f"{REPOSITORY_CLOSURE_REQUEST_BUDGET} requests/check (shared)" if TRACK_REPOS_CHANGES and VERIFY_REPOSITORY_CLOSURES else "Inactive"),
         StartupSummaryRow("Track contribution changes", str(TRACK_CONTRIB_CHANGES)),
         StartupSummaryRow("Monitor GitHub events", str(not DO_NOT_MONITOR_GITHUB_EVENTS)),
-        StartupSummaryRow("Push commit details", f"{PUSH_COMMITS_LIMIT} {PUSH_COMMITS_ORDER} per push, rest by {PUSH_COMMITS_OVERFLOW}" if PUSH_COMMITS_LIMIT else "Every commit"),
+        StartupSummaryRow("Push commit details", startup_push_commit_details()),
+        StartupSummaryRow("Push changed files", startup_push_changed_files()),
         StartupSummaryRow("Owned repositories only", str(not GET_ALL_REPOS)),
         StartupSummaryRow("Liveness output", display_time(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_INTERVAL else "Disabled", concise=bool(LIVENESS_CHECK_INTERVAL)),
         StartupSummaryRow("CSV output", str(CSV_FILE) if CSV_FILE else "Disabled", concise=bool(CSV_FILE)),
