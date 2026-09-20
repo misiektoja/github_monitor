@@ -80,6 +80,8 @@ PUSH_FILES_LIMIT = 20
 
 With the built-in values a 300-commit push spends about 12 requests instead of about 300. It reports the 10 newest commits in full and replaces the other 290 with `Commits 1-290 not reported in full`. The compare URL in the same report links the complete diff.
 
+The limits in effect appear as `Push commit details` and `Push changed files` in the startup summary, which `--verbose` and `--debug` print on screen and every run writes to the log file.
+
 Set `PUSH_COMMITS_OVERFLOW = 'summary'` to list those commits one line each instead, with their SHA, author and first message line. Those lines are built from data the tool already fetched, so they cost no extra requests, but a large push then produces a long notification. Set `PUSH_COMMITS_LIMIT = 0` to report every commit of every push in full.
 
 <a id="repositories-to-monitor"></a>

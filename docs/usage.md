@@ -97,7 +97,7 @@ Monitoring mode prints the settings that are actually in effect before the first
 
 Optional features appear once you switch them on.
 
-Use `--verbose` or `--debug` for the full startup summary, including output paths, notification settings, secret sources and runtime information.
+Use `--verbose` or `--debug` for the full startup summary, including output paths, notification settings, push event limits, secret sources and runtime information.
 
 Use `--truncate N` or `TRUNCATE_CHARS` to limit screen line width. Set it to `999` to detect the terminal width automatically. Truncation does not change log files and is ignored when logging is disabled with `-d`.
 
