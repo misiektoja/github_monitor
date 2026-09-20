@@ -238,6 +238,27 @@ EVENTS_TO_MONITOR = [
 # any events older than the most recent EVENTS_NUMBER will be missed
 EVENTS_NUMBER = 30  # 1 page
 
+# Maximum number of commits from a single push event reported in full, with date, author URL, stats and
+# changed files. Every detailed commit costs one extra API request, so a large push would otherwise spend
+# hundreds of requests and produce a notification nobody reads
+# Set to 0 to report every commit in full
+# Can also be set using the --push-commits-limit flag
+PUSH_COMMITS_LIMIT = 10
+
+# Which end of an oversized push keeps the detailed commits
+# 'newest' keeps the head of the push, 'oldest' keeps the start of the pushed range
+PUSH_COMMITS_ORDER = 'newest'
+
+# How the commits beyond PUSH_COMMITS_LIMIT are reported
+# 'count' replaces them with one line stating how many were left out
+# 'summary' lists each one on a single line with its SHA, author and first message line, at no request cost
+PUSH_COMMITS_OVERFLOW = 'count'
+
+# Maximum number of changed files listed per commit, with the remainder replaced by a count
+# Set to 0 to list every changed file
+# Can also be set using the --push-files-limit flag
+PUSH_FILES_LIMIT = 20
+
 # If True, track user's repository changes (changed stargazers, watchers, forks, issues, PRs, discussions, description, update date etc.)
 # Can also be enabled using the -j flag
 TRACK_REPOS_CHANGES = False
@@ -457,6 +478,10 @@ LOCAL_TIMEZONE = ""
 LOCAL_TIMEZONE_STATE = "config"
 EVENTS_TO_MONITOR = []
 EVENTS_NUMBER = 0
+PUSH_COMMITS_LIMIT = 0
+PUSH_COMMITS_ORDER = ""
+PUSH_COMMITS_OVERFLOW = ""
+PUSH_FILES_LIMIT = 0
 TRACK_REPOS_CHANGES = False
 VERIFY_REPOSITORY_CLOSURES = True
 REPOS_TO_MONITOR = []
@@ -3689,6 +3714,7 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Closure verification budget", f"{REPOSITORY_CLOSURE_REQUEST_BUDGET} requests/check (shared)" if TRACK_REPOS_CHANGES and VERIFY_REPOSITORY_CLOSURES else "Inactive"),
         StartupSummaryRow("Track contribution changes", str(TRACK_CONTRIB_CHANGES)),
         StartupSummaryRow("Monitor GitHub events", str(not DO_NOT_MONITOR_GITHUB_EVENTS)),
+        StartupSummaryRow("Push commit details", f"{PUSH_COMMITS_LIMIT} {PUSH_COMMITS_ORDER} per push, rest by {PUSH_COMMITS_OVERFLOW}" if PUSH_COMMITS_LIMIT else "Every commit"),
         StartupSummaryRow("Owned repositories only", str(not GET_ALL_REPOS)),
         StartupSummaryRow("Liveness output", display_time(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_INTERVAL else "Disabled", concise=bool(LIVENESS_CHECK_INTERVAL)),
         StartupSummaryRow("CSV output", str(CSV_FILE) if CSV_FILE else "Disabled", concise=bool(CSV_FILE)),
@@ -5512,6 +5538,141 @@ def safe_truncate_text(text, max_length=MAX_EVENT_BODY_LENGTH):
     return result
 
 
+@dataclass(frozen=True)
+class PushCommit:
+    sha: str | None
+    message: str
+    author: str | None
+    # The listing entry a push comparison already returned, used only when the detail request fails
+    known: object | None = None
+
+
+# Builds a push commit from an event payload entry, which carries no date, stats or file list
+def push_commit_from_payload(entry): return PushCommit(entry.get("sha"), entry.get("message") or "", (entry.get("author") or {}).get("name"))
+
+
+# Builds a push commit from a comparison entry, whose message and author cost no extra request
+def push_commit_from_compare(entry):
+    git_commit = getattr(entry, "commit", None)
+    author = getattr(git_commit, "author", None)
+    return PushCommit(getattr(entry, "sha", None) or getattr(entry, "id", None), getattr(git_commit, "message", "") or "", getattr(author, "name", None), entry)
+
+
+# The index range of the commits a push reports in full, given the configured limit and the end it keeps
+def push_detail_range(total, limit=None, order=None):
+    limit = PUSH_COMMITS_LIMIT if limit is None else limit
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0 or limit >= total:
+        return 0, total
+    if str(PUSH_COMMITS_ORDER if order is None else order).strip().casefold() == "oldest":
+        return 0, limit
+    return total - limit, total
+
+
+# Prints the changed files of one commit, capped so a single large commit cannot fill the notification
+def print_push_changed_files(files, limit=None):
+    limit = PUSH_FILES_LIMIT if limit is None else limit
+    shown = files[:limit] if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else files
+    st = ""
+    for changed in shown:
+        st += print_v(f"     • '{changed.filename}' - {changed.status} (+{changed.additions} / -{changed.deletions})")
+    remaining = len(files) - len(shown)
+    if remaining > 0:
+        st += print_v(f"     • ... and {remaining} more {'file' if remaining == 1 else 'files'}")
+    return st
+
+
+# Prints the commits a push left undetailed, either as one line each or as a single count
+def print_push_skipped_commits(commits, first_number, overflow=None):
+    if not commits:
+        return ""
+    last_number = first_number + len(commits) - 1
+    span = f"Commit {first_number}" if first_number == last_number else f"Commits {first_number}-{last_number}"
+    if str(PUSH_COMMITS_OVERFLOW if overflow is None else overflow).strip().casefold() == "count":
+        return print_v(f"\n{span} not reported in full ({len(commits)} {'commit' if len(commits) == 1 else 'commits'}, PUSH_COMMITS_LIMIT is {PUSH_COMMITS_LIMIT})")
+    st = print_v(f"\n{span} (summary only):")
+    for commit in commits:
+        first_line = (commit.message or "").split("\n", 1)[0].strip() or "(no commit message)"
+        author = f" - {commit.author}" if commit.author else ""
+        st += print_v(f"     • {(commit.sha or 'unknown')[:12]}{author} - '{first_line}'")
+    return st
+
+
+# Prints the full report for one commit of a push, including the request its stats and file list need
+def print_push_commit(repo, number, total, commit):
+    st = print_v(f"\n=== Commit {number}/{total} ===")
+    st += print_v("." * HORIZONTAL_LINE1)
+
+    message = commit.message or ""
+    is_multiline = "\n" in message
+    if message:
+        first_line = message.split("\n", 1)[0]
+        st += print_v(f" - Commit message:\t\t'{first_line}...'" if is_multiline else f" - Commit message:\t\t'{message}'")
+
+    commit_details = None
+    if repo and commit.sha:
+        debug_github_operation("event commit lookup", commit.sha)
+        commit_details = gh_call(lambda: repo.get_commit(commit.sha))()
+
+    # The comparison entry already holds the date and links, so a failed detail request still reports them
+    described = commit_details or commit.known
+    commit_date = getattr(getattr(getattr(described, "commit", None), "author", None), "date", None)
+    if commit_date:
+        st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date)}")
+
+    if commit.sha:
+        st += print_v(f" - Commit SHA:\t\t\t{commit.sha}")
+    st += print_v(f" - Commit author:\t\t{commit.author or 'N/A'}")
+
+    author_url = getattr(getattr(described, "author", None), "html_url", None)
+    if author_url:
+        st += print_v(f" - Commit author URL:\t\t{author_url}")
+
+    html_url = getattr(described, "html_url", None)
+    if html_url:
+        st += print_v(f" - Commit URL:\t\t\t{html_url}")
+        st += print_v(f" - Commit raw patch URL:\t{html_url}.patch")
+
+    if commit_details:
+        stats = getattr(commit_details, "stats", None)
+        additions = stats.additions if stats else 0
+        deletions = stats.deletions if stats else 0
+        stats_total = stats.total if stats else 0
+        st += print_v(f"\n - Additions/Deletions:\t\t+{additions} / -{deletions} ({stats_total})")
+
+        try:
+            files = list(commit_details.files)
+        except Exception as exc:
+            verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
+            files = None
+        st += print_v(f" - Files changed:\t\t{len(files) if files is not None else 'N/A'}")
+        if files:
+            st += print_v(" - Changed files list:")
+            st += print_push_changed_files(files)
+
+    if is_multiline:
+        st += print_v("\n - Commit full message:")
+        st += print_v(f"\n'{message}'")
+
+    st += print_v("." * HORIZONTAL_LINE1)
+    return st
+
+
+# Prints the commits of a push, detailing at most PUSH_COMMITS_LIMIT of them and reporting the rest cheaply
+def print_push_commits(repo, commits):
+    total = len(commits)
+    if not total:
+        return ""
+    start, end = push_detail_range(total)
+    st = ""
+    if end - start < total:
+        st = print_v(f"Detailed commits:\t\t{end - start} of {total} ({'oldest' if start == 0 else 'newest'})")
+    st += print_push_skipped_commits(commits[:start], 1)
+    for number, commit in enumerate(commits[start:end], start=start + 1):
+        st += print_push_commit(repo, number, total, commit)
+    st += print_push_skipped_commits(commits[end:], end + 1)
+    return st
+
+
 # Prints details about passed GitHub event
 def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
@@ -5595,76 +5756,14 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
     # Prefer commits from payload when present (older API behavior)
     if event.payload.get("commits"):
-        commits = event.payload["commits"]
-        commits_total = len(commits)
-        st += print_v(f"\nNumber of commits:\t\t{commits_total}")
-        for commit_count, commit in enumerate(commits, start=1):
-            st += print_v(f"\n=== Commit {commit_count}/{commits_total} ===")
-            st += print_v("." * HORIZONTAL_LINE1)
-
-            commit_message = commit['message']
-            is_multiline = '\n' in commit_message
-            if is_multiline:
-                first_line = commit_message.split('\n', 1)[0]
-                st += print_v(f" - Commit message:\t\t'{first_line}...'")
-            else:
-                st += print_v(f" - Commit message:\t\t'{commit_message}'")
-
-            commit_details = None
-            if repo:
-                debug_github_operation("event commit lookup", commit["sha"])
-                commit_details = gh_call(lambda: repo.get_commit(commit["sha"]))()  # noqa: B023
-
-            if commit_details:
-                commit_date = commit_details.commit.author.date
-                st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date)}")
-
-            st += print_v(f" - Commit SHA:\t\t\t{commit['sha']}")
-            st += print_v(f" - Commit author:\t\t{commit['author']['name']}")
-
-            if commit_details and commit_details.author:
-                st += print_v(f" - Commit author URL:\t\t{commit_details.author.html_url}")
-
-            if commit_details:
-                st += print_v(f" - Commit URL:\t\t\t{commit_details.html_url}")
-                st += print_v(f" - Commit raw patch URL:\t{commit_details.html_url}.patch")
-
-            stats = getattr(commit_details, "stats", None)
-            additions = stats.additions if stats else 0
-            deletions = stats.deletions if stats else 0
-            stats_total = stats.total if stats else 0
-            st += print_v(f"\n - Additions/Deletions:\t\t+{additions} / -{deletions} ({stats_total})")
-
-            if commit_details:
-                try:
-                    file_count = sum(1 for _ in commit_details.files)
-                except Exception as exc:
-                    verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
-                    file_count = "N/A"
-                st += print_v(f" - Files changed:\t\t{file_count}")
-                if file_count:
-                    st += print_v(f" - Changed files list:")
-                    for f in commit_details.files:
-                        st += print_v(f"     • '{f.filename}' - {f.status} (+{f.additions} / -{f.deletions})")
-
-            if is_multiline:
-                st += print_v(f"\n - Commit full message:")
-                st += print_v(f"\n'{commit_message}'")
-            else:
-                pass
-            st += print_v("." * HORIZONTAL_LINE1)
+        commits = [push_commit_from_payload(entry) for entry in event.payload["commits"]]
+        st += print_v(f"\nNumber of commits:\t\t{len(commits)}")
+        st += print_push_commits(repo, commits)
 
     # Fallback for new Events API where PushEvent no longer includes commit summaries
     elif event.type == "PushEvent" and repo:
         before_sha = event.payload.get("before")
         head_sha = event.payload.get("head") or event.payload.get("after")
-
-        # Debug when payload has no commits
-        # st += print_v("\n[debug] PushEvent payload has no 'commits' array; using compare API")
-        # st += print_v(f"[debug] before:\t\t\t{before_sha}")
-        # st += print_v(f"[debug] head/after:\t\t{head_sha}")
-        # if size_hint is not None:
-        #     st += print_v(f"[debug] size (hint):\t\t{size_hint}")
 
         if before_sha and head_sha and before_sha != head_sha:
             try:
@@ -5675,72 +5774,12 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
                 st += print_v(f"* Error using compare({before_sha[:12]}...{head_sha[:12]}): {sanitize_error_text(e)}")
 
             if compare:
-                commits = list(compare.commits)
-                commits_total = len(commits)
+                commits = [push_commit_from_compare(entry) for entry in compare.commits]
                 short_repo = getattr(repo, "full_name", repo_name)
                 compare_url = f"{github_web_base()}/{short_repo}/compare/{before_sha[:12]}...{head_sha[:12]}"
-                st += print_v(f"\nNumber of commits:\t\t{commits_total}")
+                st += print_v(f"\nNumber of commits:\t\t{len(commits)}")
                 st += print_v(f"Compare URL:\t\t\t{compare_url}")
-
-                for commit_count, c in enumerate(commits, start=1):
-                    st += print_v(f"\n=== Commit {commit_count}/{commits_total} ===")
-                    st += print_v("." * HORIZONTAL_LINE1)
-
-                    commit_sha = getattr(c, "sha", None) or getattr(c, "id", None)
-                    if repo and commit_sha:
-                        debug_github_operation("event commit lookup", commit_sha)
-                    commit_details = gh_call(lambda: repo.get_commit(commit_sha))() if (repo and commit_sha) else None  # noqa: B023
-
-                    commit_message = commit_details.commit.message if commit_details and commit_details.commit else ""
-                    is_multiline = '\n' in commit_message if commit_message else False
-                    if commit_message:
-                        if is_multiline:
-                            first_line = commit_message.split('\n', 1)[0]
-                            st += print_v(f" - Commit message:\t\t'{first_line}...'")
-                        else:
-                            st += print_v(f" - Commit message:\t\t'{commit_message}'")
-
-                    if commit_details:
-                        commit_date = commit_details.commit.author.date
-                        st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date)}")
-
-                    if commit_sha:
-                        st += print_v(f" - Commit SHA:\t\t\t{commit_sha}")
-
-                    author_name = None
-                    if commit_details and commit_details.commit and commit_details.commit.author:
-                        author_name = commit_details.commit.author.name
-                    st += print_v(f" - Commit author:\t\t{author_name or 'N/A'}")
-
-                    if commit_details and commit_details.author:
-                        st += print_v(f" - Commit author URL:\t\t{commit_details.author.html_url}")
-
-                    if commit_details:
-                        st += print_v(f" - Commit URL:\t\t\t{commit_details.html_url}")
-                        st += print_v(f" - Commit raw patch URL:\t{commit_details.html_url}.patch")
-
-                        stats = getattr(commit_details, "stats", None)
-                        additions = stats.additions if stats else 0
-                        deletions = stats.deletions if stats else 0
-                        stats_total = stats.total if stats else 0
-                        st += print_v(f"\n - Additions/Deletions:\t\t+{additions} / -{deletions} ({stats_total})")
-
-                        try:
-                            file_count = sum(1 for _ in commit_details.files)
-                        except Exception as exc:
-                            verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
-                            file_count = "N/A"
-                        st += print_v(f" - Files changed:\t\t{file_count}")
-                        if file_count and file_count != "N/A":
-                            st += print_v(" - Changed files list:")
-                            for f in commit_details.files:
-                                st += print_v(f"     • '{f.filename}' - {f.status} (+{f.additions} / -{f.deletions})")
-
-                        if is_multiline and commit_message:
-                            st += print_v(f"\n - Commit full message:")
-                            st += print_v(f"\n'{commit_message}'")
-
-                        st += print_v("." * HORIZONTAL_LINE1)
+                st += print_push_commits(repo, commits)
         else:
             st += print_v("\nNo compare range available (forced push, tag push, or identical before/after)")
 
@@ -8454,9 +8493,13 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
 
 # Applies monitoring, output and email command-line overrides to effective settings
 def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser, strict=True) -> None:
-    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_REMINDER_SECONDS, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
+    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_REMINDER_SECONDS, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, PUSH_COMMITS_LIMIT, PUSH_FILES_LIMIT
     if args.check_interval is not None:
         GITHUB_CHECK_INTERVAL = args.check_interval
+    if getattr(args, "push_commits_limit", None) is not None:
+        PUSH_COMMITS_LIMIT = args.push_commits_limit
+    if getattr(args, "push_files_limit", None) is not None:
+        PUSH_FILES_LIMIT = args.push_files_limit
     if args.csv_file is not None:
         CSV_FILE = os.path.expanduser(args.csv_file)
     elif CSV_FILE:
@@ -8687,6 +8730,8 @@ def runtime_configuration_errors():
     positive_numbers = (("CHECK_INTERNET_TIMEOUT", CHECK_INTERNET_TIMEOUT),)
     nonnegative_numbers = (("NET_BASE_BACKOFF_SEC", NET_BASE_BACKOFF_SEC),)
     positive_integers = (("GITHUB_CHECK_INTERVAL", GITHUB_CHECK_INTERVAL), ("EVENTS_NUMBER", EVENTS_NUMBER), ("NET_MAX_RETRIES", NET_MAX_RETRIES))
+    nonnegative_integers = (("PUSH_COMMITS_LIMIT", PUSH_COMMITS_LIMIT), ("PUSH_FILES_LIMIT", PUSH_FILES_LIMIT))
+    choices = (("PUSH_COMMITS_ORDER", PUSH_COMMITS_ORDER, ("newest", "oldest")), ("PUSH_COMMITS_OVERFLOW", PUSH_COMMITS_OVERFLOW, ("summary", "count")))
     for name, value in positive_numbers:
         if not finite_number(value) or value <= 0:
             errors.append(f"{name} must be a number greater than zero, not {value!r}")
@@ -8696,6 +8741,12 @@ def runtime_configuration_errors():
     for name, value in positive_integers:
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             errors.append(f"{name} must be an integer greater than zero, not {value!r}")
+    for name, value in nonnegative_integers:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            errors.append(f"{name} must be an integer zero or greater, not {value!r}")
+    for name, value, allowed in choices:
+        if not isinstance(value, str) or value.strip().casefold() not in allowed:
+            errors.append(f"{name} must be {' or '.join(repr(choice) for choice in allowed)}, not {value!r}")
     if not isinstance(SMTP_PORT, int) or isinstance(SMTP_PORT, bool) or not 1 <= SMTP_PORT <= 65535:
         errors.append(f"SMTP_PORT must be an integer from 1 through 65535, not {SMTP_PORT!r}")
     return errors
@@ -11055,6 +11106,20 @@ def main():
         metavar="N",
         type=int,
         help="Max characters per screen line (not log), use 999 to auto-detect terminal width, ignored if -d is set"
+    )
+    opts.add_argument(
+        "--push-commits-limit",
+        dest="push_commits_limit",
+        metavar="N",
+        type=int,
+        help="Max commits of one push event reported in full, use 0 for no limit, the rest are summarized"
+    )
+    opts.add_argument(
+        "--push-files-limit",
+        dest="push_files_limit",
+        metavar="N",
+        type=int,
+        help="Max changed files listed per commit, use 0 for no limit"
     )
     opts.add_argument(
         "-m", "--track-contribs-changes",
