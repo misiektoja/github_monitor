@@ -1,5 +1,6 @@
 """Offline tests for the push event commit and changed-file limits."""
 
+import io
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -166,3 +167,39 @@ def test_changed_file_list_can_be_uncapped(gm_module, monkeypatch, capsys):
 def test_invalid_push_settings_are_reported(gm_module, monkeypatch, name, value, expected):
     monkeypatch.setattr(gm_module, name, value)
     assert any(error.startswith(expected) for error in gm_module.runtime_configuration_errors())
+
+
+# Builds the startup rows describing the push limits
+def _push_rows(gm_module):
+    return [row for row in gm_module.build_startup_summary("octocat", "github_monitor.conf", None, "out.log") if row.label.startswith("Push ")]
+
+
+# Confirms the startup summary names every push limit in effect
+def test_startup_summary_reports_the_push_limits(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "DO_NOT_MONITOR_GITHUB_EVENTS", False)
+    assert [(row.label, row.value) for row in _push_rows(gm_module)] == [("Push commit details", "10 newest per push, rest by count"), ("Push changed files", "20 per commit")]
+
+
+# Confirms the push limits reach the screen in verbose and debug mode and stay out of the concise summary
+def test_push_limit_rows_are_part_of_the_full_summary(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "DO_NOT_MONITOR_GITHUB_EVENTS", False)
+    rows = _push_rows(gm_module)
+    full, concise = io.StringIO(), io.StringIO()
+    gm_module.emit_startup_summary(rows, show_full=True, stream=full)
+    gm_module.emit_startup_summary(rows, show_full=False, stream=concise)
+    assert "Push commit details" in full.getvalue() and "Push changed files" in full.getvalue()
+    assert concise.getvalue().strip() == ""
+
+
+# Confirms an uncapped run says so rather than printing a limit nothing applies
+def test_startup_summary_reports_uncapped_push_reporting(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "DO_NOT_MONITOR_GITHUB_EVENTS", False)
+    monkeypatch.setattr(gm_module, "PUSH_COMMITS_LIMIT", 0)
+    monkeypatch.setattr(gm_module, "PUSH_FILES_LIMIT", 0)
+    assert [row.value for row in _push_rows(gm_module)] == ["Every commit in full", "Every changed file"]
+
+
+# Confirms the push limits are reported as inactive when no event is monitored
+def test_startup_summary_reports_push_limits_as_inactive(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "DO_NOT_MONITOR_GITHUB_EVENTS", True)
+    assert [row.value for row in _push_rows(gm_module)] == ["Inactive", "Inactive"]
