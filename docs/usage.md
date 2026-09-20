@@ -221,16 +221,18 @@ github_monitor github_username -m -y
 
 The `-y` flag only works if tracking of daily contributions is enabled (`-m`).
 
-To disable sending an email on errors (enabled by default):
+To disable sending an email on errors and the recovery alert that follows (both enabled by default):
 
 - set `ERROR_NOTIFICATION` to `False`
-- or use the `-e` flag
+- or use the `-e` / `--no-error-notify` flag
 
 ```sh
 github_monitor github_username -e
 ```
 
-Email and webhook error alerts are sent after **5 minutes** of a continuing failure. Problems that need your action, such as a rejected token, alert immediately. Each kind of failure alerts once per channel. Failed deliveries are retried after 5 minutes, with increasing waits up to an hour. Alerts can fire again after monitoring recovers.
+Email and webhook error alerts are sent after **5 minutes** of a continuing failure. Problems that need your action, such as a rejected token, alert immediately. Each kind of failure alerts once per channel. Failed deliveries are retried after 5 minutes, with increasing waits up to an hour. A new outage after a recovery alerts again.
+
+A failure alert carries the subject `GitHub Monitor error: <what went wrong> (user: <username>)` and lists the fix, the guide link, how many checks failed in a row, since when and when the next retry is. When the failure clears, a matching `GitHub Monitor recovered: ...` alert goes to the channels the failure alert reached. `-e` / `--no-error-notify` switches both off for email and `--no-webhook-error-notify` switches both off for webhooks.
 
 Missing optional details, such as a push event's file list, are reported on screen without triggering an error alert. When several checks fail, the alert shows the action to take and the number of other failures.
 
@@ -256,7 +258,9 @@ Webhook event controls mirror the email categories but work independently:
 | Repository changes | `WEBHOOK_REPO_NOTIFICATION` | `--webhook-repo-changes` |
 | Repository update date changes | `WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION` | `--webhook-repo-update-date` |
 | Daily contribution changes | `WEBHOOK_CONTRIB_NOTIFICATION` | `--webhook-daily-contribs` |
-| Monitoring errors | `WEBHOOK_ERROR_NOTIFICATION` | Enable with `--webhook-errors` or disable with `--no-webhook-error-notify` |
+| Monitoring errors and recoveries | `WEBHOOK_ERROR_NOTIFICATION` | Enable with `--webhook-errors` or disable with `--no-webhook-error-notify` |
+
+A monitoring error webhook carries the same title and fields as the error email, without the timestamp the webhook service shows itself, and the matching recovery alert follows on the same channel. `--no-webhook-error-notify` switches both off.
 
 Use `--webhook` or `--no-webhook` to turn all configured webhook alerts on or off for one run. A category override also enables the master webhook switch. For example:
 
