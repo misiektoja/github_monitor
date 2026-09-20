@@ -59,6 +59,29 @@ By default all events are monitored, but if you want to limit it, then remove th
 EVENTS_TO_MONITOR=['PushEvent', 'PullRequestEvent', 'IssuesEvent', 'ForkEvent', 'ReleaseEvent', 'DiscussionEvent']
 ```
 
+<a id="push-event-commits"></a>
+## Push Event Commits
+
+A push can carry hundreds of commits. Reporting every one in full costs an extra GitHub API request each and produces a notification nobody reads, so only `PUSH_COMMITS_LIMIT` commits of a push are reported with their date, author URL, statistics and changed files. The rest are replaced by one line naming how many were left out.
+
+```ini
+PUSH_COMMITS_LIMIT = 10
+PUSH_COMMITS_ORDER = 'newest'
+PUSH_COMMITS_OVERFLOW = 'count'
+PUSH_FILES_LIMIT = 20
+```
+
+| Option | Values | Effect |
+| --- | --- | --- |
+| `PUSH_COMMITS_LIMIT` | integer, `0` for no limit | Commits of one push reported in full, also `--push-commits-limit` |
+| `PUSH_COMMITS_ORDER` | `'newest'`, `'oldest'` | Which end of the push keeps the detailed commits |
+| `PUSH_COMMITS_OVERFLOW` | `'count'`, `'summary'` | Whether the remaining commits become a single count or get one line each |
+| `PUSH_FILES_LIMIT` | integer, `0` for no limit | Changed files listed per commit, also `--push-files-limit` |
+
+With the built-in values a 300-commit push spends about 12 requests instead of about 300. It reports the 10 newest commits in full and replaces the other 290 with `Commits 1-290 not reported in full`. The compare URL in the same report links the complete diff.
+
+Set `PUSH_COMMITS_OVERFLOW = 'summary'` to list those commits one line each instead, with their SHA, author and first message line. Those lines are built from data the tool already fetched, so they cost no extra requests, but a large push then produces a long notification. Set `PUSH_COMMITS_LIMIT = 0` to report every commit of every push in full.
+
 <a id="repositories-to-monitor"></a>
 ## Repositories to Monitor
 

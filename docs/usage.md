@@ -101,6 +101,8 @@ Use `--verbose` or `--debug` for the full startup summary, including output path
 
 Use `--truncate N` or `TRUNCATE_CHARS` to limit screen line width. Set it to `999` to detect the terminal width automatically. Truncation does not change log files and is ignored when logging is disabled with `-d`.
 
+Use `--push-commits-limit N` and `--push-files-limit N` to control how much of a large push is reported in full. See [Push Event Commits](configuration.md#push-event-commits).
+
 The tool clears the terminal when monitoring starts. Set `CLEAR_SCREEN` to `False` to keep whatever is already on the screen.
 
 The screen is never cleared when output is redirected to a file or a pipe, in debug mode or for a command that prints a result and exits, such as `--doctor`, `--help` and the test senders.
