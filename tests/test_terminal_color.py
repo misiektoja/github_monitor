@@ -575,7 +575,7 @@ def test_target_username_uses_the_username_colour_everywhere(colored, line):
 
 
 # Verifies prose following the word "user" is not mistaken for a login
-@pytest.mark.parametrize("line", ["- Stargazer/watcher user lists:\tFetched for 16/16 repositories", "* Error: The user details could not be read: boom", "Old user name:\t\t\tOcto Cat", "* Monitored user refresh failed"])
+@pytest.mark.parametrize("line", ["- Stargazer/watcher user lists:\tFetched for 16/16 repositories", "* Error: The user details could not be read: boom", "Old user name:\t\t\tOcto Cat", "* Monitored account lookup failed"])
 def test_prose_after_the_word_user_is_not_coloured(colored, line):
     result = monitor._colorize_line(line)
     assert monitor.ANSI_ESCAPE_RE.sub("", result) == line
