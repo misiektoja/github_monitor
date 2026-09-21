@@ -7419,8 +7419,8 @@ def has_private_banner(user):
         return False
 
 
-# Returns True if the user's GitHub profile is public
-def is_profile_public(g: Github, user, new_account_days=30):
+# Returns whether the user's GitHub profile is public, or None when the lookup could not answer
+def is_profile_public(g: Github, user, new_account_days=30) -> Optional[bool]:
 
     if has_private_banner(user):
         return False
@@ -7443,11 +7443,15 @@ def is_profile_public(g: Github, user, new_account_days=30):
             return True
         except StopIteration as exc:
             debug_swallowed_exception("Recent public event probe returned no events", exc)
-        except GithubException as exc:
+        except NET_ERRORS as exc:
+            # A probe that never reached GitHub cannot say the profile is private, so the caller is told nothing
             verbose_degraded_feature("Public profile detection", "profile visibility alerts", exc)
+            return None
 
-    except GithubException as exc:
+    # Broad on purpose, since a best-effort visibility probe must never end the monitoring run
+    except Exception as exc:
         verbose_degraded_feature("Public profile detection", "profile visibility alerts", exc)
+        return None
 
     return False
 
@@ -8274,7 +8278,10 @@ def github_monitor_user(user, csv_file_name):
 
         # Profile visibility changed
         public = is_profile_public(g, user)
-        if public != public_old:
+        # A lookup that could not answer neither alerts nor becomes the baseline the next check compares against
+        if public is not None and public_old is None:
+            public_old = public
+        if public is not None and public != public_old:
 
             def _get_profile_status(public):
                 return "public" if public else "private"
