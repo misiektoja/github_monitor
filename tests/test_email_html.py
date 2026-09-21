@@ -39,7 +39,7 @@ def line_agrees(plain_line, html_line):
 def structural_diff(body, body_html):
     plain_lines = body.split("\n")
     html_lines = re.sub(r"(?is)</?(?:html|head|body)\s*>", "", str(body_html or "")).split("<br>")
-    if len(plain_lines) == len(html_lines) and all(line_agrees(*pair) for pair in zip(plain_lines, html_lines)):
+    if len(plain_lines) == len(html_lines) and all(line_agrees(*pair) for pair in zip(plain_lines, html_lines, strict=True)):
         return ""
     return "\n".join(difflib.unified_diff(plain_lines, [html_to_text(line) for line in html_lines], fromfile="plain", tofile="html-reduced", lineterm=""))
 
