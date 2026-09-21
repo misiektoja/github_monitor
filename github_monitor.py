@@ -3488,6 +3488,24 @@ def iter_exc_chain(error, max_depth=8):
         current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
 
 
+# Names the transport failure behind an exception chain, since a timeout raised with no message leaves the text rules nothing to read
+def network_failure_code(error):
+    timed_out = False
+    unreachable = False
+    for current in iter_exc_chain(error):
+        name = type(current).__name__
+        # A TLS failure has its own advice, so a chain that names one is left to the rules that recognize it
+        if "SSL" in name or "Certificate" in name:
+            return ""
+        if isinstance(current, TimeoutError) or "Timeout" in name:
+            timed_out = True
+        elif isinstance(current, ConnectionError) or name in ("gaierror", "herror") or any(term in name for term in ("Connect", "ProxyError", "NameResolution", "Unreachable")):
+            unreachable = True
+    if timed_out:
+        return "network.timeout"
+    return "network.unavailable" if unreachable else ""
+
+
 # Reports whether this process hit the local file descriptor limit rather than a remote failure
 def is_too_many_open_files(error):
     for current in iter_exc_chain(error):
@@ -3527,9 +3545,11 @@ def classify_recovery_error(error, context="runtime", detail="", install_context
         summary = "The connectivity endpoint did not answer in time" if timed_out else "The connectivity endpoint could not be reached"
         # No guide, because no page covers this check and the doctor report already ends with the troubleshooting link
         return make_recovery_advice("network.timeout" if timed_out else "network.unavailable", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail)
-    if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
+    # The chain is read alongside the type, since a transport error can arrive wrapped and with an empty message
+    transport_code = network_failure_code(error)
+    if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)) or transport_code == "network.timeout":
         return make_recovery_advice("network.timeout", "GitHub did not answer in time", recovery_fix_with_guide(TRANSIENT_NETWORK_FIX, CONNECTION_GUIDE_URL), True, detail)
-    if isinstance(error, (req.ConnectionError, socket.gaierror, req.RequestException)):
+    if isinstance(error, (req.ConnectionError, socket.gaierror, req.RequestException)) or transport_code == "network.unavailable":
         return make_recovery_advice("network.unavailable", "GitHub could not be reached", recovery_fix_with_guide(TRANSIENT_NETWORK_FIX, CONNECTION_GUIDE_URL), True, detail)
     if isinstance(error, BadCredentialsException):
         return make_recovery_advice("auth.github_token_invalid", "GitHub rejected the configured token", recovery_fix_with_guide(f"Create or review the token then run: {token_command}", AUTH_GUIDE_URL), False, detail)
