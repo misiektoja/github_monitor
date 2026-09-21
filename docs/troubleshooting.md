@@ -48,7 +48,7 @@ A continuing outage produces a `* Monitoring degraded` reminder once an hour, ev
 <a id="connection-problems"></a>
 ## Connection Problems
 
-`GitHub did not answer in time` and `GitHub could not be reached` mean a check got no answer from GitHub. `GitHub is temporarily unavailable` means GitHub answered with a server error. The report names the interval after which the check is retried, so a short outage needs no action. A failure that lasts produces the hourly `Monitoring degraded` reminder and `Monitoring recovered` when it clears.
+`GitHub did not answer in time` and `GitHub could not be reached` mean a check got no answer from GitHub. `GitHub is temporarily unavailable` means GitHub answered with a server error. The report names the interval after which the check is retried, so a short outage needs no action. While the network is down only the first request prints its retry attempts, because the requests behind it stop retrying once it has shown that GitHub cannot be reached. A failure that lasts produces the hourly `Monitoring degraded` reminder and `Monitoring recovered` when it clears.
 
 If the failure continues, check the internet connection, DNS and any firewall or proxy between this machine and GitHub. A certificate error points at TLS interception on the network, see [TLS Verification](configuration.md#tls-verification). A server error that lasts is a GitHub outage, so wait for it to end.
 
