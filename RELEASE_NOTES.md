@@ -2,7 +2,7 @@
 
 This is a high-level summary of the most important changes.
 
-# Changes in 2.8 (TBD)
+# Changes in 2.8 (22 Sep 2026)
 
 Version **2.8** caps how much of a large push a single notification reports and gives every monitoring failure unified subject and body across email and webhook, followed by a **recovery alert** when monitoring resumes. Network failures now link to a new **Connection Problems** page section. Alert delivery messages stay within the correct check report and alert channels that still use placeholder configuration values are shown as not configured.
 
