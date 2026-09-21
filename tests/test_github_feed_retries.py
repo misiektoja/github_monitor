@@ -306,7 +306,7 @@ def test_a_permanent_failure_is_not_retried(gm_module, monkeypatch, restored_glo
         monkeypatch.setattr(requests.sessions.Session, "send", send)
 
     client = gm.Github(auth=gm.Auth.Token("synthetic-token"))
-    with pytest.raises(BaseException):
+    with pytest.raises(gm.NET_ERRORS):
         gm.gh_call(lambda: client.get_user("watched").name, operation="Profile name", raise_on_failure=True)()
 
     assert len(calls) == 1
