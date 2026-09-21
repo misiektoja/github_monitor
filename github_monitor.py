@@ -522,6 +522,10 @@ DEGRADED_FEATURES_SEEN: set = set()
 # Failures from the current check, retained until all enabled monitoring paths have finished
 MONITOR_CHECK_FAILURES: dict = {}
 
+# True once a call has proved the network unreachable, so the calls behind it fail fast rather than each paying
+# the full retry schedule for a connection that is already known to be down
+NET_OUTAGE_CONFIRMED = False
+
 VERBOSE_MODE = False
 DEBUG_MODE = False
 DELIVERY_CONFIRMATIONS = True
@@ -3070,9 +3074,11 @@ def verbose_degraded_feature(feature, alert, error=None, enrichment=False):
 
 # Forgets every tracked outage, so the checks that follow report the state they find rather than an older one
 def reset_degraded_features():
+    global NET_OUTAGE_CONFIRMED
     DEGRADED_FEATURES.clear()
     DEGRADED_FEATURES_SEEN.clear()
     MONITOR_CHECK_FAILURES.clear()
+    NET_OUTAGE_CONFIRMED = False
 
 
 # Reports every feature that was unavailable before this check and worked during it
@@ -4914,12 +4920,18 @@ def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = N
 
     # Keeps the original exception available to callers that must distinguish an unavailable feed from an empty one
     def wrapped(*args: Any, **kwargs: Any) -> Any:
+        global NET_OUTAGE_CONFIRMED
         last_error = None
-        for i in range(1, retries + 1):
+        outage_proved = False
+        # Retrying every later call of a check learns nothing once one has proved the network unreachable, so the
+        # schedule collapses to a single attempt until a call gets through again
+        attempts = 1 if NET_OUTAGE_CONFIRMED else retries
+        for i in range(1, attempts + 1):
             try:
-                debug_print("PyGithub retry wrapper", operation=label, attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=label, attempt=f"{i}/{attempts}")
                 result = fn(*args, **kwargs)
-                debug_print("PyGithub retry wrapper", operation=label, outcome="OK", attempt=f"{i}/{retries}")
+                NET_OUTAGE_CONFIRMED = False
+                debug_print("PyGithub retry wrapper", operation=label, outcome="OK", attempt=f"{i}/{attempts}")
                 return result
             except RateLimitExceededException as e:
                 last_error = e
@@ -4946,27 +4958,38 @@ def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = N
                     else:
                         sleep_for = int(backoff * i)
 
-                retryable = i < retries
-                debug_print("PyGithub retry wrapper", operation=label, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                retryable = i < attempts
+                debug_print("PyGithub retry wrapper", operation=label, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{attempts}")
                 if retryable:
-                    print(f"* {label} rate limited by GitHub, sleeping {sleep_for}s (retry {i}/{retries})")
-                    debug_monitor_wait_timing(f"GitHub rate limit before attempt {i + 1}/{retries}", sleep_for)
+                    print(f"* {label} rate limited by GitHub, sleeping {sleep_for}s (retry {i}/{attempts})")
+                    debug_monitor_wait_timing(f"GitHub rate limit before attempt {i + 1}/{attempts}", sleep_for)
                     time.sleep(sleep_for)
                 continue
 
             except NET_ERRORS as e:
                 last_error = e
-                retryable = i < retries
+                advice = classify_recovery_error(e)
+                # A missing resource, a refused token or a local descriptor limit answers the same way every
+                # time, so the schedule ends rather than spending attempts proving it
+                permanent = not advice.retryable
+                retryable = i < attempts and not permanent
                 delay = backoff * i
-                debug_print("PyGithub retry wrapper", operation=label, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=label, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, permanent=permanent, attempt=f"{i}/{attempts}")
+                if permanent:
+                    break
+                # Only a transport failure says the network itself is down, which is what the breaker reads
+                outage_proved = bool(network_failure_code(e))
                 if retryable:
-                    print(f"* {label} failed: {classify_recovery_error(e).summary} (retry {i}/{retries})")
-                    debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{retries}", delay)
+                    print(f"* {label} failed: {advice.summary} (retry {i}/{attempts})")
+                    debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{attempts}", delay)
                     time.sleep(delay)
+        # Set before the raise, so a caller that handles its own failure still shortens the rest of the check
+        if outage_proved:
+            NET_OUTAGE_CONFIRMED = True
         if raise_on_failure and last_error is not None:
             raise last_error
         verbose_degraded_feature(label, "its dependent alerts", last_error)
-        debug_print("PyGithub retry wrapper", operation=label, outcome="default", after=f"{retries} attempts")
+        debug_print("PyGithub retry wrapper", operation=label, outcome="default", after=f"{attempts} attempts")
         return default
     return wrapped
 
@@ -7349,7 +7372,7 @@ def is_blocked_by(user):
 
         user_endpoint = f"{GITHUB_API_URL}/user"
         debug_http_request("GET", user_endpoint, "authenticated viewer lookup for block detection", 15, headers=headers, token=GITHUB_TOKEN)
-        response = req.get(user_endpoint, headers=headers, timeout=15, verify=VERIFY_SSL)
+        response = gh_call(lambda: req.get(user_endpoint, headers=headers, timeout=15, verify=VERIFY_SSL), operation="Block status", raise_on_failure=True)()
         debug_http_response("GET", user_endpoint, "authenticated viewer lookup for block detection", response.status_code)
         if response.status_code != 200:
             verbose_degraded_feature("Block status", "block and unblock alerts")
@@ -7368,7 +7391,7 @@ def is_blocked_by(user):
         """
         payload = {"query": query, "variables": {"login": user}}
         debug_http_request("POST", graphql_endpoint, "target block relationship lookup", 15, headers=headers, token=GITHUB_TOKEN)
-        response_graphql = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL)
+        response_graphql = gh_call(lambda: req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL), operation="Block status", raise_on_failure=True)()
         debug_http_response("POST", graphql_endpoint, "target block relationship lookup", response_graphql.status_code)
 
         if response_graphql.status_code == 404:
@@ -7409,7 +7432,7 @@ def get_starred_count(user):
         """
         payload = {"query": query, "variables": {"login": user}}
         debug_http_request("POST", graphql_endpoint, "starred repository count", 15, headers=headers, token=GITHUB_TOKEN)
-        response = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL)
+        response = gh_call(lambda: req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL), operation="Starred repository count", raise_on_failure=True)()
         debug_http_response("POST", graphql_endpoint, "starred repository count", response.status_code)
 
         if not response.ok:
@@ -7430,7 +7453,7 @@ def has_private_banner(user):
     try:
         url = f"{GITHUB_HTML_URL.rstrip('/')}/{user}"
         debug_http_request("GET", url, "public profile visibility page", 15)
-        r = req.get(url, timeout=15, verify=VERIFY_SSL)
+        r = gh_call(lambda: req.get(url, timeout=15, verify=VERIFY_SSL), operation="Profile visibility", raise_on_failure=True)()
         debug_http_response("GET", url, "public profile visibility page", r.status_code)
         return r.ok and "activity is private" in r.text.lower()
     except Exception as exc:
@@ -7457,8 +7480,7 @@ def is_profile_public(g: Github, user, new_account_days=30) -> Optional[bool]:
 
         try:
             debug_print("PyGithub", operation="recent public event probe", endpoint=diagnostic_endpoint(GITHUB_API_URL), timeout=f"{PYGITHUB_TIMEOUT_SECONDS}s", token=mask_secret(GITHUB_TOKEN), target=user)
-            events_iter = iter(u.get_events())
-            next(events_iter)
+            gh_call(lambda: next(iter(u.get_events())), operation="Public profile detection", raise_on_failure=True)()
             return True
         except StopIteration as exc:
             debug_swallowed_exception("Recent public event probe returned no events", exc)
@@ -7532,7 +7554,7 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
 
         variables = {"login": username, "from": start_iso, "to": end_iso}
         debug_http_request("POST", url, "daily contribution calendar", 30, headers=headers, token=token)
-        r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30, verify=VERIFY_SSL)
+        r = gh_call(lambda: requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30, verify=VERIFY_SSL), operation="Daily contribution count", raise_on_failure=True)()  # noqa: B023
         debug_http_response("POST", url, "daily contribution calendar", r.status_code)
         r.raise_for_status()
         data = r.json()
@@ -7706,7 +7728,7 @@ def report_monitor_recovery(user, error_alert, outage):
 
 # Monitors activity of the specified GitHub user
 def github_monitor_user(user, csv_file_name):
-    global LAST_CHECK_TS
+    global LAST_CHECK_TS, NET_OUTAGE_CONFIRMED
 
     mark_monitoring_started()
 
@@ -7964,6 +7986,8 @@ def github_monitor_user(user, csv_file_name):
         check_number += 1
         MONITOR_CHECK_FAILURES.clear()
         DEGRADED_FEATURES_SEEN.clear()
+        # Each check decides for itself whether the network is reachable, so the breaker never outlives one
+        NET_OUTAGE_CONFIRMED = False
         reports_before_check = REPORTS_PRINTED
         check_started_at = debug_monitor_check_start(check_number, user)
 
