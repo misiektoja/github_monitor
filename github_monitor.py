@@ -3284,6 +3284,11 @@ def html_text(text):
     return html.escape(text).replace("\n", "<br>")
 
 
+# Turns a bare URL inside already escaped HTML text into a link, so an alert that prints an address is clickable
+def html_autolink_urls(content):
+    return re.sub(r"(?<![\"'=])(https?://[^\s<>\"']+[^\s<>\"'.,;:!?)\]])", r'<a href="\1">\1</a>', str(content))
+
+
 # Returns the advice a cancelled secret entry reports, worded the same way by every one-shot secret command
 def secret_entry_cancelled_advice(subject, flag, guide_url):
     return make_recovery_advice("secret.entry", f"{subject[:1].upper()}{subject[1:]} setup was cancelled and the dotenv file was not changed", recovery_fix_with_guide(f"Run {flag} again when you have the value ready", guide_url), False)
@@ -3453,17 +3458,19 @@ def recovery_alert_body(advice, retry_seconds, failed_checks=0, failing_since=0,
     return body + get_cur_ts("\n\nTimestamp: ") if timestamp else body
 
 
-# Bolds the moment an outage started, the field a reader looks for first in a failure alert
-def html_bold_failing_since(content):
-    return re.sub(r"(Failing since: )([^<]+)", r"\1<b>\2</b>", content, count=1)
+# Bolds the values a reader scans a failure alert for: how often it has failed and since when
+def html_bold_outage_fields(content):
+    for label in ("Failed checks in a row: ", "Failing since: "):
+        content = re.sub(f"({re.escape(label)})([^<]+)", r"\1<b>\2</b>", content, count=1)
+    return content
 
 
 # Builds the HTML email body of a failure alert with the same parts as the plain text and the summary in bold
 def recovery_alert_body_html(advice, retry_seconds, failed_checks=0, failing_since=0, timestamp=True):
-    parts = [f"<b>{html_text(advice.summary)}</b>", *(html_text(section) for section in recovery_alert_sections(advice, retry_seconds, failed_checks, failing_since))]
+    parts = [f"<b>{html_text(advice.summary)}</b>", *(html_autolink_urls(html_text(section)) for section in recovery_alert_sections(advice, retry_seconds, failed_checks, failing_since))]
     if timestamp:
         parts.append(get_cur_ts("Timestamp: "))
-    return html_bold_failing_since(f"<html><head></head><body>{'<br><br>'.join(parts)}</body></html>")
+    return html_bold_outage_fields(f"<html><head></head><body>{'<br><br>'.join(parts)}</body></html>")
 
 
 # Builds the subject of the alert that answers a delivered failure alert once the outage clears
@@ -8062,8 +8069,8 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} bio has changed!"
             m_body = f"GitHub user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
-            bio_old_html = markdown_to_html(bio_old, convert_line_breaks=True) if bio_old else ""
-            bio_html = markdown_to_html(bio, convert_line_breaks=True) if bio else ""
+            bio_old_html = markdown_to_html(bio_old, convert_line_breaks=True) if bio_old else html.escape(str(bio_old))
+            bio_html = markdown_to_html(bio, convert_line_breaks=True) if bio else html.escape(str(bio))
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> bio has changed<br><br>"
@@ -8098,8 +8105,8 @@ def github_monitor_user(user, csv_file_name):
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> location has changed<br><br>"
-                f"Old location: <b>{html.escape(location_old or '')}</b><br><br>"
-                f"New location: <b>{html.escape(location or '')}</b><br><br>"
+                f"Old location: <b>{html.escape(str(location_old))}</b><br><br>"
+                f"New location: <b>{html.escape(str(location))}</b><br><br>"
                 f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
             )
@@ -8129,8 +8136,8 @@ def github_monitor_user(user, csv_file_name):
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> name has changed<br><br>"
-                f"Old user name: <b>{html.escape(user_name_old or '')}</b><br><br>"
-                f"New user name: <b>{html.escape(user_name or '')}</b><br><br>"
+                f"Old user name: <b>{html.escape(str(user_name_old))}</b><br><br>"
+                f"New user name: <b>{html.escape(str(user_name))}</b><br><br>"
                 f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
             )
@@ -8160,8 +8167,8 @@ def github_monitor_user(user, csv_file_name):
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> company has changed<br><br>"
-                f"Old company: <b>{html.escape(company_old or '')}</b><br><br>"
-                f"New company: <b>{html.escape(company or '')}</b><br><br>"
+                f"Old company: <b>{html.escape(str(company_old))}</b><br><br>"
+                f"New company: <b>{html.escape(str(company))}</b><br><br>"
                 f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
             )
@@ -8191,8 +8198,8 @@ def github_monitor_user(user, csv_file_name):
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> email has changed<br><br>"
-                f"Old email: <b>{html.escape(email_old or '')}</b><br><br>"
-                f"New email: <b>{html.escape(email or '')}</b><br><br>"
+                f"Old email: <b>{html.escape(str(email_old))}</b><br><br>"
+                f"New email: <b>{html.escape(str(email))}</b><br><br>"
                 f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
             )
@@ -8219,8 +8226,16 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} blog URL has changed!"
             m_body = f"GitHub user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> blog URL has changed<br><br>"
+                f"Old blog URL: <b>{html_autolink_urls(html.escape(str(blog_old)))}</b><br><br>"
+                f"New blog URL: <b>{html_autolink_urls(html.escape(str(blog)))}</b><br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
-            send_notification_channels("profile", m_subject, m_body, "", PROFILE_NOTIFICATION)
+            send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             blog_old = blog
             print(f"Check interval:\t\t\t{check_window_text()}")
@@ -8241,8 +8256,17 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
             m_body = f"GitHub user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            updated_timespan = calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> account has been updated (after <b>{html.escape(updated_timespan)}</b>)<br><br>"
+                f"Old account update date: <b>{html.escape(get_date_from_ts(account_updated_date_old))}</b><br><br>"
+                f"New account update date: <b>{html.escape(get_date_from_ts(account_updated_date))}</b><br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
-            send_notification_channels("profile", m_subject, m_body, "", PROFILE_NOTIFICATION)
+            send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             account_updated_date_old = account_updated_date
             print(f"Check interval:\t\t\t{check_window_text()}")
@@ -8265,8 +8289,14 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !"
             m_body = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> has changed profile visibility to '<b>{html.escape(_get_profile_status(public))}</b>' !<br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
-            send_notification_channels("profile", m_subject, m_body, "", PROFILE_NOTIFICATION)
+            send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             public_old = public
             print(f"Check interval:\t\t\t{check_window_text()}")
@@ -8293,8 +8323,14 @@ def github_monitor_user(user, csv_file_name):
 
             m_subject = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!"
             m_body = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> has <b>{'blocked' if blocked else 'unblocked'}</b> you!<br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
-            send_notification_channels("profile", m_subject, m_body, "", PROFILE_NOTIFICATION)
+            send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             blocked_old = blocked
             print(f"Check interval:\t\t\t{check_window_text()}")
