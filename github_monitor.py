@@ -6865,7 +6865,7 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
         except Exception as exc:
             env_path = DOTENV_FILE if DOTENV_FILE else None
             verbose_degraded_feature("Dotenv loading", "dotenv-based private settings", exc)
-            advice = make_recovery_advice("file.unreadable", "The dotenv file could not be read", recovery_fix_with_guide("Check DOTENV_FILE and its permissions or disable it with --env-file none", CONFIG_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
+            advice = make_recovery_advice("file.unreadable", "The dotenv file could not be read", recovery_fix_with_guide("Check DOTENV_FILE and its permissions or disable it with --env-file none", SECRETS_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
             if errors_out is not None:
                 errors_out.append(advice.summary + f": {advice.detail}")
             if report_errors:
