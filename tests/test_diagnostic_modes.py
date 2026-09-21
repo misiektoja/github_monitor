@@ -105,8 +105,8 @@ def test_degraded_feature_lines_are_closed_once_by_the_check(gm_module, monkeypa
     gm_module.close_pending_notice_block()
 
     lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
-    assert lines[0] == "* Block status is unavailable, so block and unblock alerts cannot fire"
-    assert lines[1] == "* Starred repository count is unavailable, so starred repository change alerts cannot fire"
+    assert lines[0] == "* Block status: unavailable, so block and unblock alerts cannot fire"
+    assert lines[1] == "* Starred repository count: unavailable, so starred repository change alerts cannot fire"
     assert lines[2].startswith("Timestamp:")
     assert set(lines[3]) == {"\u2500"}
 
@@ -136,7 +136,7 @@ def test_a_lasting_degraded_feature_is_reported_once(gm_module, monkeypatch, cap
         gm_module.report_recovered_features()
 
     output = capsys.readouterr().out
-    assert output.count("Block status is unavailable, so block and unblock alerts cannot fire") == 1
+    assert output.count("Block status: unavailable, so block and unblock alerts cannot fire") == 1
     assert "is available again" not in output
 
 
@@ -153,7 +153,7 @@ def test_a_recovered_feature_is_reported_once(gm_module, monkeypatch, capsys):
     gm_module.report_recovered_features()
 
     output = capsys.readouterr().out
-    assert output.count("Block status is available again, so block and unblock alerts can fire again") == 1
+    assert output.count("Block status: available again, so block and unblock alerts can fire again") == 1
 
 
 # Verifies a verbose notice stays silent while verbose mode is off, so the trailer cannot leak into a quiet run
@@ -211,7 +211,7 @@ def test_swallowed_exception_reports_degraded_feature(gm_module, monkeypatch, ca
     assert gm_module.is_blocked_by("octocat") is None
 
     output = capsys.readouterr().out
-    assert "Block status is unavailable, so block and unblock alerts cannot fire" in output
+    assert "Block status: unavailable, so block and unblock alerts cannot fire" in output
     assert "Block status: outcome=degraded, error=ConnectionError" in output
     assert token not in output
 
