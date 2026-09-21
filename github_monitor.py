@@ -5873,7 +5873,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             # For ForkEvent, prefer the source repo if available
             if event.type == "ForkEvent" and repo is not None:
                 try:
-                    parent = gh_call(lambda: getattr(repo, "parent", None), operation="Fork source repository")()
+                    parent = gh_call(lambda: getattr(repo, "parent", None), operation="Fork source repository metadata")()
                     if parent:
                         repo = parent
                 except Exception as exc:
@@ -8017,7 +8017,7 @@ def github_monitor_user(user, csv_file_name):
         # Changed followings
         try:
             debug_github_operation("followings refresh", user)
-            followings_raw = gh_call(lambda: list(g_user.get_following()), operation="Following list", raise_on_failure=True)()  # noqa: B023
+            followings_raw = gh_call(lambda: list(g_user.get_following()), operation="Followings", raise_on_failure=True)()  # noqa: B023
             followings_count = gh_call(lambda: g_user.following, operation="Following count")()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followings", "following change alerts", e)
@@ -8032,7 +8032,7 @@ def github_monitor_user(user, csv_file_name):
         # Changed followers
         try:
             debug_github_operation("followers refresh", user)
-            followers_raw = gh_call(lambda: list(g_user.get_followers()), operation="Follower list", raise_on_failure=True)()  # noqa: B023
+            followers_raw = gh_call(lambda: list(g_user.get_followers()), operation="Followers", raise_on_failure=True)()  # noqa: B023
             followers_count = gh_call(lambda: g_user.followers, operation="Follower count")()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followers", "follower change alerts", e)
@@ -8067,7 +8067,7 @@ def github_monitor_user(user, csv_file_name):
         # Changed starred repositories
         try:
             debug_github_operation("starred repository refresh", user)
-            starred_list = gh_call(lambda: list(g_user.get_starred()), operation="Starred repository list", raise_on_failure=True)()  # noqa: B023
+            starred_list = gh_call(lambda: list(g_user.get_starred()), operation="Starred repositories", raise_on_failure=True)()  # noqa: B023
             starred_count = len(starred_list)
         except NET_ERRORS as e:
             verbose_degraded_feature("Starred repositories", "starred repository change alerts", e)
@@ -8560,7 +8560,7 @@ def github_monitor_user(user, csv_file_name):
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
             debug_github_operation("recent event refresh", user)
             try:
-                events = gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)), operation="Event list", raise_on_failure=True)()  # noqa: B023
+                events = gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)), operation="Recent events", raise_on_failure=True)()  # noqa: B023
             except NET_ERRORS as e:
                 events = None
                 verbose_degraded_feature("Recent events", "new event alerts", e)
