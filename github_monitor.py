@@ -4906,18 +4906,20 @@ def github_object_name(value):
 # Callers wrap a lambda and invoke the result immediately, so a lambda that reads a loop variable is
 # evaluated inside the same iteration. Those call sites carry a noqa marker for the loop-binding rule
 # Retries a GitHub operation with current settings and either returns its fallback or raises the final failure
-def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = None, *, raise_on_failure=False) -> Callable[..., Any]:
+def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = None, *, operation: str = "", raise_on_failure=False) -> Callable[..., Any]:
     retries = NET_MAX_RETRIES if retries is None else retries
     backoff = NET_BASE_BACKOFF_SEC if backoff is None else backoff
+    # Callers wrap a lambda, whose __name__ says nothing, so the label they pass is what a reader sees
+    label = operation or fn.__name__
 
     # Keeps the original exception available to callers that must distinguish an unavailable feed from an empty one
     def wrapped(*args: Any, **kwargs: Any) -> Any:
         last_error = None
         for i in range(1, retries + 1):
             try:
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=label, attempt=f"{i}/{retries}")
                 result = fn(*args, **kwargs)
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="OK", attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=label, outcome="OK", attempt=f"{i}/{retries}")
                 return result
             except RateLimitExceededException as e:
                 last_error = e
@@ -4945,9 +4947,9 @@ def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = N
                         sleep_for = int(backoff * i)
 
                 retryable = i < retries
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=label, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
                 if retryable:
-                    print(f"* {fn.__name__} rate limited, sleeping {sleep_for}s (retry {i}/{retries})")
+                    print(f"* {label} rate limited by GitHub, sleeping {sleep_for}s (retry {i}/{retries})")
                     debug_monitor_wait_timing(f"GitHub rate limit before attempt {i + 1}/{retries}", sleep_for)
                     time.sleep(sleep_for)
                 continue
@@ -4956,15 +4958,15 @@ def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = N
                 last_error = e
                 retryable = i < retries
                 delay = backoff * i
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=label, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
                 if retryable:
-                    print(f"* {fn.__name__} error: {sanitize_error_text(e)} (retry {i}/{retries})")
+                    print(f"* {label} failed: {classify_recovery_error(e).summary} (retry {i}/{retries})")
                     debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{retries}", delay)
                     time.sleep(delay)
         if raise_on_failure and last_error is not None:
             raise last_error
-        verbose_degraded_feature(f"GitHub operation {fn.__name__}", "its dependent alerts", last_error)
-        debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="default", after=f"{retries} attempts")
+        verbose_degraded_feature(label, "its dependent alerts", last_error)
+        debug_print("PyGithub retry wrapper", operation=label, outcome="default", after=f"{retries} attempts")
         return default
     return wrapped
 
@@ -5754,7 +5756,7 @@ def print_push_commit(repo, number, total, commit):
     commit_details = None
     if repo and commit.sha:
         debug_github_operation("event commit lookup", commit.sha)
-        commit_details = gh_call(lambda: repo.get_commit(commit.sha))()
+        commit_details = gh_call(lambda: repo.get_commit(commit.sha), operation="Commit details")()
 
     # The comparison entry already holds the date and links, so a failed detail request still reports them
     described = commit_details or commit.known
@@ -5848,7 +5850,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             # For ForkEvent, prefer the source repo if available
             if event.type == "ForkEvent" and repo is not None:
                 try:
-                    parent = gh_call(lambda: getattr(repo, "parent", None))()
+                    parent = gh_call(lambda: getattr(repo, "parent", None), operation="Fork source repository")()
                     if parent:
                         repo = parent
                 except Exception as exc:
@@ -5910,7 +5912,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
         if before_sha and head_sha and before_sha != head_sha:
             try:
-                compare = gh_call(lambda: repo.compare(before_sha, head_sha))()
+                compare = gh_call(lambda: repo.compare(before_sha, head_sha), operation="Push comparison")()
             except Exception as e:
                 verbose_degraded_feature("Push comparison", "complete push event details", e, enrichment=True)
                 compare = None
@@ -7991,8 +7993,8 @@ def github_monitor_user(user, csv_file_name):
         # Changed followings
         try:
             debug_github_operation("followings refresh", user)
-            followings_raw = gh_call(lambda: list(g_user.get_following()), raise_on_failure=True)()  # noqa: B023
-            followings_count = gh_call(lambda: g_user.following)()  # noqa: B023
+            followings_raw = gh_call(lambda: list(g_user.get_following()), operation="Following list", raise_on_failure=True)()  # noqa: B023
+            followings_count = gh_call(lambda: g_user.following, operation="Following count")()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followings", "following change alerts", e)
             print_degraded_error("Followings could not be refreshed", e)
@@ -8006,8 +8008,8 @@ def github_monitor_user(user, csv_file_name):
         # Changed followers
         try:
             debug_github_operation("followers refresh", user)
-            followers_raw = gh_call(lambda: list(g_user.get_followers()), raise_on_failure=True)()  # noqa: B023
-            followers_count = gh_call(lambda: g_user.followers)()  # noqa: B023
+            followers_raw = gh_call(lambda: list(g_user.get_followers()), operation="Follower list", raise_on_failure=True)()  # noqa: B023
+            followers_count = gh_call(lambda: g_user.followers, operation="Follower count")()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followers", "follower change alerts", e)
             print_degraded_error("Followers could not be refreshed", e)
@@ -8022,11 +8024,11 @@ def github_monitor_user(user, csv_file_name):
         try:
             if GET_ALL_REPOS:
                 debug_github_operation("all repository refresh", user)
-                repos_raw = gh_call(lambda: list(g_user.get_repos()), raise_on_failure=True)()  # noqa: B023
-                repos_count = gh_call(lambda: g_user.public_repos)()  # noqa: B023
+                repos_raw = gh_call(lambda: list(g_user.get_repos()), operation="Public repository list", raise_on_failure=True)()  # noqa: B023
+                repos_count = gh_call(lambda: g_user.public_repos, operation="Public repository count")()  # noqa: B023
             else:
                 debug_github_operation("owned repository refresh", user)
-                repos_raw = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], raise_on_failure=True)()  # noqa: B023
+                repos_raw = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], operation="Public repository list", raise_on_failure=True)()  # noqa: B023
                 repos_count = len(repos_raw)
         except NET_ERRORS as e:
             verbose_degraded_feature("Public repository list", "repository list change alerts", e)
@@ -8041,7 +8043,7 @@ def github_monitor_user(user, csv_file_name):
         # Changed starred repositories
         try:
             debug_github_operation("starred repository refresh", user)
-            starred_list = gh_call(lambda: list(g_user.get_starred()), raise_on_failure=True)()  # noqa: B023
+            starred_list = gh_call(lambda: list(g_user.get_starred()), operation="Starred repository list", raise_on_failure=True)()  # noqa: B023
             starred_count = len(starred_list)
         except NET_ERRORS as e:
             verbose_degraded_feature("Starred repositories", "starred repository change alerts", e)
@@ -8081,7 +8083,7 @@ def github_monitor_user(user, csv_file_name):
                 print_cur_ts("Timestamp:\t\t\t")
 
         # Changed bio
-        bio = gh_call(lambda: g_user.bio, default=profile_field_unavailable)()  # noqa: B023
+        bio = gh_call(lambda: g_user.bio, default=profile_field_unavailable, operation="Profile bio")()  # noqa: B023
         report_unavailable_profile_field("bio", bio, profile_field_unavailable)
         if has_nullable_profile_field_changed(bio, bio_old, profile_field_unavailable):
             print(f"* Bio has changed for user {user} !\n")
@@ -8114,7 +8116,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed location
-        location = gh_call(lambda: g_user.location, default=profile_field_unavailable)()  # noqa: B023
+        location = gh_call(lambda: g_user.location, default=profile_field_unavailable, operation="Profile location")()  # noqa: B023
         report_unavailable_profile_field("location", location, profile_field_unavailable)
         if has_nullable_profile_field_changed(location, location_old, profile_field_unavailable):
             print(f"* Location has changed for user {user} !\n")
@@ -8145,7 +8147,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed user name
-        user_name = gh_call(lambda: g_user.name, default=profile_field_unavailable)()  # noqa: B023
+        user_name = gh_call(lambda: g_user.name, default=profile_field_unavailable, operation="Profile name")()  # noqa: B023
         report_unavailable_profile_field("name", user_name, profile_field_unavailable)
         if has_nullable_profile_field_changed(user_name, user_name_old, profile_field_unavailable):
             print(f"* User name has changed for user {user} !\n")
@@ -8176,7 +8178,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed company
-        company = gh_call(lambda: g_user.company, default=profile_field_unavailable)()  # noqa: B023
+        company = gh_call(lambda: g_user.company, default=profile_field_unavailable, operation="Profile company")()  # noqa: B023
         report_unavailable_profile_field("company", company, profile_field_unavailable)
         if has_nullable_profile_field_changed(company, company_old, profile_field_unavailable):
             print(f"* User company has changed for user {user} !\n")
@@ -8207,7 +8209,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed email
-        email = gh_call(lambda: g_user.email, default=profile_field_unavailable)()  # noqa: B023
+        email = gh_call(lambda: g_user.email, default=profile_field_unavailable, operation="Profile email")()  # noqa: B023
         report_unavailable_profile_field("email", email, profile_field_unavailable)
         if has_nullable_profile_field_changed(email, email_old, profile_field_unavailable):
             print(f"* User email has changed for user {user} !\n")
@@ -8238,7 +8240,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed blog URL
-        blog = gh_call(lambda: g_user.blog, default=profile_field_unavailable)()  # noqa: B023
+        blog = gh_call(lambda: g_user.blog, default=profile_field_unavailable, operation="Profile blog")()  # noqa: B023
         report_unavailable_profile_field("blog URL", blog, profile_field_unavailable)
         if has_nullable_profile_field_changed(blog, blog_old, profile_field_unavailable):
             print(f"* User blog URL has changed for user {user} !\n")
@@ -8269,7 +8271,7 @@ def github_monitor_user(user, csv_file_name):
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed account update date
-        account_updated_date = gh_call(lambda: g_user.updated_at)()  # noqa: B023
+        account_updated_date = gh_call(lambda: g_user.updated_at, operation="Profile update date")()  # noqa: B023
         if account_updated_date is not None and account_updated_date != account_updated_date_old:
             print(f"* User account has been updated for user {user} ! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n")
             print(f"Old account update date:\t{get_date_from_ts(account_updated_date_old)}\n")
@@ -8373,10 +8375,10 @@ def github_monitor_user(user, csv_file_name):
 
             try:
                 if GET_ALL_REPOS:
-                    repos_list = gh_call(lambda: list(g_user.get_repos()), raise_on_failure=True)()  # noqa: B023
+                    repos_list = gh_call(lambda: list(g_user.get_repos()), operation="Public repository list", raise_on_failure=True)()  # noqa: B023
                 else:
                     debug_github_operation("owned repository detail refresh", user)
-                    repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], raise_on_failure=True)()  # noqa: B023
+                    repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], operation="Public repository list", raise_on_failure=True)()  # noqa: B023
             except NET_ERRORS as e:
                 repos_list = None
                 verbose_degraded_feature("Repository detail feed", "repository detail alerts", e)
@@ -8534,7 +8536,7 @@ def github_monitor_user(user, csv_file_name):
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
             debug_github_operation("recent event refresh", user)
             try:
-                events = gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)), raise_on_failure=True)()  # noqa: B023
+                events = gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)), operation="Event list", raise_on_failure=True)()  # noqa: B023
             except NET_ERRORS as e:
                 events = None
                 verbose_degraded_feature("Recent events", "new event alerts", e)
