@@ -3486,7 +3486,7 @@ def outage_recovered_alert_body(advice, target, lasted, timestamp=True):
 
 # Builds the HTML email body of the recovery alert
 def outage_recovered_alert_body_html(advice, target, lasted, timestamp=True):
-    body = f"Monitoring recovered for <b>{html.escape(target)}</b> after {html.escape(display_time(lasted))}.<br><br>The failure was: {html_text(advice.summary)}"
+    body = f"Monitoring recovered for <b>{html.escape(target)}</b> after <b>{html.escape(display_time(lasted))}</b>.<br><br>The failure was: {html_text(advice.summary)}"
     return f"<html><head></head><body>{body}{get_cur_ts('<br><br>Timestamp: ') if timestamp else ''}</body></html>"
 
 
