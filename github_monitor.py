@@ -11108,7 +11108,7 @@ def main():
         dest="webhook_errors",
         action="store_true",
         default=None,
-        help="Send webhook alerts when monitoring has a problem"
+        help="Send webhook alerts when monitoring has a problem and the recovery alert that follows"
     )
     webhook_error_toggle.add_argument(
         "--no-webhook-error-notify",
