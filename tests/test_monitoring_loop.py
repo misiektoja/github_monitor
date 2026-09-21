@@ -3,6 +3,7 @@
 import datetime
 import json
 from itertools import count
+from typing import Optional
 
 import pytest
 import requests
@@ -35,7 +36,11 @@ class FakeUser:
         self.login = login
         self.name = "Watched Person"
         self.html_url = f"https://github.com/{login}"
-        self.location = self.bio = self.company = self.email = self.blog = None
+        self.location: Optional[str] = None
+        self.bio: Optional[str] = None
+        self.company: Optional[str] = None
+        self.email: Optional[str] = None
+        self.blog: Optional[str] = None
         self.created_at = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
         self.updated_at = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
         self.followers = self.following = self.public_repos = 0
@@ -150,7 +155,7 @@ def test_the_guide_link_keeps_its_own_line_in_the_html_body(gm_module, monkeypat
 
     parts = errors[0]["body_html"].split("<br>")
     fix_index = next(index for index, part in enumerate(parts) if part.startswith("To fix: "))
-    assert parts[fix_index + 1].startswith("Guide: https://")
+    assert parts[fix_index + 1].startswith('Guide: <a href="https://')
     assert "\n" not in parts[fix_index]
 
 
