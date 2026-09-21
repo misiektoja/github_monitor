@@ -230,7 +230,7 @@ To disable sending an email on errors and the recovery alert that follows (both 
 github_monitor github_username -e
 ```
 
-Email and webhook error alerts are sent after **5 minutes** of a continuing failure. Problems that need your action, such as a rejected token, alert immediately. Each kind of failure alerts once per channel. Failed deliveries are retried after 5 minutes, with increasing waits up to an hour. A new outage after a recovery alerts again.
+Email and webhook error alerts are sent after **5 minutes** of a continuing failure. Problems that need your action, such as a rejected token, alert immediately. Each kind of failure alerts once per channel. Failed deliveries are retried after 5 minutes, with increasing waits up to an hour. A new outage after a recovery alerts again. A channel that could not receive the failure alert while the outage lasted is told about the failure and its recovery together, so a blocked channel is not left without any word of an outage.
 
 A failure alert carries the subject `GitHub Monitor error: <what went wrong> (user: <username>)` and lists the fix, the guide link, how many checks failed in a row, since when and when the next retry is. When the failure clears, a matching `GitHub Monitor recovered: ...` alert goes to the channels the failure alert reached. `-e` / `--no-error-notify` switches both off for email and `--no-webhook-error-notify` switches both off for webhooks.
 
