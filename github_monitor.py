@@ -7952,11 +7952,11 @@ def github_monitor_user(user, csv_file_name):
                 user_myself_url = g_user_myself.html_url
                 auth_refresh_version = GITHUB_AUTH_REFRESH_VERSION
                 print("* GitHub API client recreated after token reload")
-            debug_github_operation("monitored user profile refresh", user)
+            debug_github_operation("monitored account lookup", user)
             g_user = g.get_user(user)
 
         except (GithubException, Exception) as e:
-            verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
+            verbose_degraded_feature("Monitored account lookup", "all profile, repository and event alerts", e)
             advice = classify_recovery_error(e, "target")
 
             report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage)
