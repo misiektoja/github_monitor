@@ -62,6 +62,7 @@ and again before anything is published to PyPI.
 | `test_github_token_setup.py` | Hidden token entry, targeted dotenv updates and refusal to save an invalid token |
 | `test_help_screen.py` | The `--help` screen: the shared argument group names, the task-grouped examples and the startup banner |
 | `test_install_method_commands.py` | PyPI and downloaded-script detection with portable plus exact POSIX and Windows commands |
+| `test_email_html.py` | HTML notification bodies: escaping, the Discord markdown form and the plain-text match |
 | `test_monitoring_loop.py` | The primary monitoring loop driven through outages: the error alert on both channels, once per failure category, retried per channel and re-armed after a recovery |
 | `test_profile_fields.py` | Addition, removal and failure handling for nullable profile fields |
 | `test_push_commit_limits.py` | Push commit detail limits: the kept range, summarized and counted overflow, the changed-file cap, rejected settings and the startup summary rows |
