@@ -3062,7 +3062,7 @@ def verbose_degraded_feature(feature, alert, error=None, enrichment=False):
         if DEGRADED_FEATURES.get(feature) == alert:
             return
         DEGRADED_FEATURES[feature] = alert
-    verbose_print(f"{feature} is unavailable, so {alert} cannot fire")
+    verbose_print(f"{feature}: unavailable, so {alert} cannot fire")
     # A degraded feature can be reported from inside a report, so the check closes the block instead of this line
     if VERBOSE_MODE and MONITORING_ACTIVE:
         PENDING_NOTICE_BLOCK = True
@@ -3081,7 +3081,7 @@ def report_recovered_features():
     recovered = [(feature, alert) for feature, alert in DEGRADED_FEATURES.items() if feature not in DEGRADED_FEATURES_SEEN]
     for feature, alert in recovered:
         del DEGRADED_FEATURES[feature]
-        verbose_print(f"{feature} is available again, so {alert} can fire again")
+        verbose_print(f"{feature}: available again, so {alert} can fire again")
     DEGRADED_FEATURES_SEEN.clear()
     if recovered and VERBOSE_MODE and MONITORING_ACTIVE:
         PENDING_NOTICE_BLOCK = True
@@ -8029,8 +8029,8 @@ def github_monitor_user(user, csv_file_name):
                 repos_raw = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], raise_on_failure=True)()  # noqa: B023
                 repos_count = len(repos_raw)
         except NET_ERRORS as e:
-            verbose_degraded_feature("Repositories", "repository change alerts", e)
-            print_degraded_error("Repositories could not be refreshed", e)
+            verbose_degraded_feature("Public repository list", "repository list change alerts", e)
+            print_degraded_error("The public repository list could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             repos_raw = None
             repos_count = None
