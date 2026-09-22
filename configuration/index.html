@@ -436,6 +436,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#push-event-commits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Push Event Commits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#repositories-to-monitor" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -738,6 +749,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#push-event-commits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Push Event Commits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#repositories-to-monitor" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -929,11 +951,53 @@
 <p>By default all events are monitored, but if you want to limit it, then remove the <code>ALL</code> keyword and leave the events you are interested in, for example:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="na">EVENTS_TO_MONITOR</span><span class="o">=</span><span class="s">['PushEvent', 'PullRequestEvent', 'IssuesEvent', 'ForkEvent', 'ReleaseEvent', 'DiscussionEvent']</span>
 </code></pre></div>
+<p><a id="push-event-commits"></a></p>
+<h2 id="push-event-commits">Push Event Commits<a class="headerlink" href="#push-event-commits" title="Permanent link">&para;</a></h2>
+<p>A push can carry hundreds of commits. Reporting every one in full costs an extra GitHub API request each and produces a notification nobody reads, so only <code>PUSH_COMMITS_LIMIT</code> commits of a push are reported with their date, author URL, statistics and changed files. The rest are replaced by one line naming how many were left out.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="na">PUSH_COMMITS_LIMIT</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">10</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="na">PUSH_COMMITS_ORDER</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">'newest'</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="na">PUSH_COMMITS_OVERFLOW</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">'count'</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="na">PUSH_FILES_LIMIT</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">20</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Values</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PUSH_COMMITS_LIMIT</code></td>
+<td>integer, <code>0</code> for no limit</td>
+<td>Commits of one push reported in full, also <code>--push-commits-limit</code></td>
+</tr>
+<tr>
+<td><code>PUSH_COMMITS_ORDER</code></td>
+<td><code>'newest'</code>, <code>'oldest'</code></td>
+<td>Which end of the push keeps the detailed commits</td>
+</tr>
+<tr>
+<td><code>PUSH_COMMITS_OVERFLOW</code></td>
+<td><code>'count'</code>, <code>'summary'</code></td>
+<td>Whether the remaining commits become a single count or get one line each</td>
+</tr>
+<tr>
+<td><code>PUSH_FILES_LIMIT</code></td>
+<td>integer, <code>0</code> for no limit</td>
+<td>Changed files listed per commit, also <code>--push-files-limit</code></td>
+</tr>
+</tbody>
+</table>
+<p>With the built-in values a 300-commit push spends about 12 requests instead of about 300. It reports the 10 newest commits in full and replaces the other 290 with <code>Commits 1-290 not reported in full</code>. The compare URL in the same report links the complete diff.</p>
+<p>The limits in effect appear as <code>Push commit details</code> and <code>Push changed files</code> in the startup summary, which <code>--verbose</code> and <code>--debug</code> print on screen and every run writes to the log file.</p>
+<p>Set <code>PUSH_COMMITS_OVERFLOW = 'summary'</code> to list those commits one line each instead, with their SHA, author and first message line. Those lines are built from data the tool already fetched, so they cost no extra requests, but a large push then produces a long notification. Set <code>PUSH_COMMITS_LIMIT = 0</code> to report every commit of every push in full.</p>
 <p><a id="repositories-to-monitor"></a></p>
 <h2 id="repositories-to-monitor">Repositories to Monitor<a class="headerlink" href="#repositories-to-monitor" title="Permanent link">&para;</a></h2>
 <p>When tracking repository changes (<code>-j</code> flag), you can limit which repositories will be monitored for detailed changes (stargazers, watchers, forks, issues, PRs, discussions, etc.). You can do it by changing the <code>REPOS_TO_MONITOR</code> configuration option or via the <code>--repos</code> command-line argument (see <a href="../usage/#monitoring-mode">Monitoring Mode</a>).</p>
 <p>By default all repositories are monitored (<code>REPOS_TO_MONITOR = ['ALL']</code>), but if you want to monitor only specific repositories, you can use the <code>'user/repo_name'</code> format:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="na">REPOS_TO_MONITOR</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">['user1/repo1', 'user2/repo2', 'user1/repo3']</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="na">REPOS_TO_MONITOR</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">['user1/repo1', 'user2/repo2', 'user1/repo3']</span>
 </code></pre></div>
 <p>This allows you to have different repository lists for different users. When the tool runs for a specific user, it will only monitor repositories where the user matches the user in the list.</p>
 <p>A failed repository-detail request keeps that repository's last successful snapshot. Other repositories still update and changes made during the outage are compared when access recovers. A repository absent from a successfully fetched list is no longer retained for detail comparisons. Expected counts-only stargazer and watcher monitoring does not count as an outage.</p>
@@ -945,67 +1009,68 @@
 <p><a id="monitored-target"></a></p>
 <h2 id="monitored-target">Monitored Target<a class="headerlink" href="#monitored-target" title="Permanent link">&para;</a></h2>
 <p>The GitHub target is a positional argument. It is required to start monitoring:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>github_monitor<span class="w"> </span>&lt;github_target&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>github_monitor<span class="w"> </span>&lt;github_target&gt;
 </code></pre></div>
 <p>The target can be a GitHub username or a complete profile URL.</p>
 <p>To stop repeating it, save it in the configuration file:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="na">TARGET_GITHUB_USERNAME</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"github_username"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="na">TARGET_GITHUB_USERNAME</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"github_username"</span>
 </code></pre></div>
 <p><code>TARGET_GITHUB_USERNAME</code> accepts the same forms as the command line. Then <code>github_monitor</code> alone starts monitoring that user. A positional argument still wins, so you can watch someone else for one run without editing the file:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>github_monitor<span class="w"> </span>other_username
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>github_monitor<span class="w"> </span>other_username
 </code></pre></div>
 <p><a id="time-zone"></a></p>
 <h2 id="time-zone">Time Zone<a class="headerlink" href="#time-zone" title="Permanent link">&para;</a></h2>
 <p>By default, time zone is auto-detected using <code>tzlocal</code>. You can set it manually in <code>github_monitor.conf</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="na">LOCAL_TIMEZONE</span><span class="o">=</span><span class="s">'Europe/Warsaw'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="na">LOCAL_TIMEZONE</span><span class="o">=</span><span class="s">'Europe/Warsaw'</span>
 </code></pre></div>
 <p>You can get the list of all time zones supported by pytz like this:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import pytz; print('\n'.join(pytz.all_timezones))"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import pytz; print('\n'.join(pytz.all_timezones))"</span>
 </code></pre></div>
 <p><a id="smtp-settings"></a></p>
 <h2 id="smtp-settings">SMTP Settings<a class="headerlink" href="#smtp-settings" title="Permanent link">&para;</a></h2>
 <p>Email notifications need SMTP server details for the sending account. Add them to <code>github_monitor.conf</code> or use the setup wizard. Setup checks the login without sending an email. To replace only the password, run <code>github_monitor --set-smtp-password</code>. Password entry is hidden and preserves spaces.</p>
+<p>Every alert is sent as both HTML and plain text in one message. Mail clients that render HTML show the account, the changed value and the check interval in bold, with repositories, commits, issues and profile addresses linked. Clients that do not fall back to the plain text, which is unchanged.</p>
 <p>Send one test message to verify the settings:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>github_monitor<span class="w"> </span>--send-test-email
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>github_monitor<span class="w"> </span>--send-test-email
 </code></pre></div>
 <p>Which alerts each channel sends is covered in <a href="../usage/#email-notifications">Email Notifications</a>.</p>
 <p><a id="webhook-settings"></a></p>
 <h2 id="webhook-settings">Webhook Settings<a class="headerlink" href="#webhook-settings" title="Permanent link">&para;</a></h2>
 <p>GitHub Monitor can send activity alerts through Discord or the native <a href="https://docs.ntfy.sh/publish/">ntfy publish API</a>. Webhook alerts work with or without email.</p>
 <p>Enable the master switch and select the alert categories you want:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="na">WEBHOOK_ENABLED</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">True</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="na">WEBHOOK_PROVIDER</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"discord"</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="na">WEBHOOK_PROFILE_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">True</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="na">WEBHOOK_EVENT_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">True</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="na">WEBHOOK_REPO_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">False</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="na">WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">False</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="na">WEBHOOK_CONTRIB_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">False</span>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="na">WEBHOOK_ERROR_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">True</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="na">WEBHOOK_ENABLED</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">True</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="na">WEBHOOK_PROVIDER</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"discord"</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="na">WEBHOOK_PROFILE_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">True</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="na">WEBHOOK_EVENT_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">True</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="na">WEBHOOK_REPO_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">False</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="na">WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">False</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="na">WEBHOOK_CONTRIB_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">False</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="na">WEBHOOK_ERROR_NOTIFICATION</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">True</span>
 </code></pre></div>
 <p>A <code>WEBHOOK_URL</code> left unset, or left at its <code>your_webhook_url</code> placeholder, switches webhook alerts off at startup instead of failing at the first alert. <code>--verbose</code> reports why.</p>
 <p>Known Discord and <code>ntfy.sh</code> URLs automatically select the matching request format even if the configured provider is stale. While <code>WEBHOOK_PROVIDER</code> is left at its default, that detection is silent and <code>--verbose</code> reports it. A warning appears only when your configuration file sets a provider the URL disagrees with. Set <code>WEBHOOK_PROVIDER</code> in <code>github_monitor.conf</code> or use <code>--webhook-provider {discord,ntfy}</code> for self-hosted ntfy or compatible endpoints.</p>
 <p>Send one test webhook without starting monitoring:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>github_monitor<span class="w"> </span>--send-test-webhook
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>github_monitor<span class="w"> </span>--send-test-webhook
 </code></pre></div>
 <p>For a one-run test, the provider and destination can be overridden without changing the config file:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>github_monitor<span class="w"> </span>--webhook-provider<span class="w"> </span>ntfy<span class="w"> </span>--webhook-url<span class="w"> </span><span class="s2">"https://ntfy.sh/your-private-topic"</span><span class="w"> </span>--send-test-webhook
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>github_monitor<span class="w"> </span>--webhook-provider<span class="w"> </span>ntfy<span class="w"> </span>--webhook-url<span class="w"> </span><span class="s2">"https://ntfy.sh/your-private-topic"</span><span class="w"> </span>--send-test-webhook
 </code></pre></div>
 <p>A URL passed on the command line may remain visible in shell history or process listings. Prefer <code>--set-webhook-url</code>, an environment variable or a dotenv file for normal setup.</p>
 <p>Which alerts each channel sends is covered in <a href="../usage/#webhook-notifications">Webhook Notifications</a>.</p>
 <p><a id="ntfy"></a></p>
 <h3 id="ntfy">ntfy<a class="headerlink" href="#ntfy" title="Permanent link">&para;</a></h3>
 <p>For ntfy.sh or a self-hosted ntfy server, choose a private topic and save its complete HTTPS URL such as <code>https://ntfy.sh/github-monitor-long-random-value</code>. Public <code>ntfy.sh</code> URLs select the ntfy request format automatically. Set the provider in <code>github_monitor.conf</code> for a self-hosted endpoint:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="na">WEBHOOK_PROVIDER</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"ntfy"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="na">WEBHOOK_PROVIDER</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"ntfy"</span>
 </code></pre></div>
 <p>The ntfy provider needs no template. GitHub Monitor sends the alert body as a native ntfy message with the subject as its title. Query parameters already present in the topic URL are preserved. Long ntfy messages are visibly truncated below ntfy's 4 KB boundary so they remain notifications instead of temporary attachments.</p>
 <p>Topics on the public ntfy.sh service are public unless protected through an account reservation. Treat an unprotected topic name like a password. For a protected topic, store the access token in an environment variable or dotenv file:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="na">NTFY_ACCESS_TOKEN</span><span class="o">=</span><span class="s">"tk_your_ntfy_access_token"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="na">NTFY_ACCESS_TOKEN</span><span class="o">=</span><span class="s">"tk_your_ntfy_access_token"</span>
 </code></pre></div>
 <p>GitHub Monitor sends this value as <code>Authorization: Bearer &lt;token&gt;</code>. <code>NTFY_ACCESS_TOKEN</code> takes precedence over an <code>Authorization</code> entry in <code>WEBHOOK_HEADERS</code>.</p>
 <p>For compatibility with advanced webhook integrations, custom headers are also supported:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="na">WEBHOOK_HEADERS</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">{</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">    </span><span class="na">"X-Webhook-Title"</span><span class="o">:</span><span class="w"> </span><span class="s">"{title}"</span><span class="na">,</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="na">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="na">WEBHOOK_HEADERS</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">{</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">    </span><span class="na">"X-Webhook-Title"</span><span class="o">:</span><span class="w"> </span><span class="s">"{title}"</span><span class="na">,</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="na">}</span>
 </code></pre></div>
 <p>Header values support the same placeholders as <code>WEBHOOK_TEMPLATE</code>. GitHub Monitor validates header names and values before and after placeholder expansion so formatted values cannot introduce line breaks or invalid headers. Headers apply to both Discord and ntfy. Prefer <code>NTFY_ACCESS_TOKEN</code> for ntfy bearer authentication. Basic authentication remains available through a custom <code>Authorization</code> header. Customize ntfy delivery further through <code>WEBHOOK_HEADERS</code>, for example <code>X-Priority</code> or <code>X-Tags</code>.</p>
 <p><a id="discord"></a></p>
@@ -1017,18 +1082,18 @@
 <li>Create a webhook, choose a name if you want then copy its private URL.</li>
 <li>Save it through the hidden prompt:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>github_monitor<span class="w"> </span>--set-webhook-url
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>github_monitor<span class="w"> </span>--set-webhook-url
 </code></pre></div>
 <p>The command writes only <code>WEBHOOK_URL</code> to <code>.env</code> so the link does not appear in your command history. Treat this link like a password because anyone who has it can post through it.</p>
 <p>Keep the default provider in <code>github_monitor.conf</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="na">WEBHOOK_PROVIDER</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"discord"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="na">WEBHOOK_PROVIDER</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"discord"</span>
 </code></pre></div>
 <p>Discord alerts carry the same emphasis as the HTML email, since Discord renders markdown in an embed. Bold values stay bold and links stay clickable. Only Discord gets that wording: ntfy receives the plain body, because it would show the markers literally.</p>
 <p><a id="advanced-discord-format-customization"></a></p>
 <h3 id="advanced-discord-format-customization">Advanced Discord-format customization<a class="headerlink" href="#advanced-discord-format-customization" title="Permanent link">&para;</a></h3>
 <p><code>WEBHOOK_USERNAME</code> and <code>WEBHOOK_AVATAR_URL</code> change the sender name and HTTPS avatar for Discord-format payloads:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="na">WEBHOOK_USERNAME</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"GitHub Monitor"</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="na">WEBHOOK_AVATAR_URL</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"https://example.com/path/avatar.png"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="na">WEBHOOK_USERNAME</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"GitHub Monitor"</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="na">WEBHOOK_AVATAR_URL</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"https://example.com/path/avatar.png"</span>
 </code></pre></div>
 <p><code>WEBHOOK_TEMPLATE</code> controls the Discord-format request body. It supports these placeholders:</p>
 <ul>
@@ -1044,11 +1109,11 @@
 </ul>
 <p>Discord templates must produce a JSON object. Use a dictionary or a JSON string encoding an object, including legacy strings with doubled object braces. Lists, non-JSON strings and unsupported placeholders are rejected before delivery. Alert text is kept literal and all payloads replace <code>allowed_mentions</code> with <code>{"parse": []}</code> so alert text cannot trigger Discord mentions. Reloaded settings apply to the next delivery.</p>
 <p><code>WEBHOOK_TRANSFORMS</code> applies string methods to shared placeholder values before the template and headers are rendered:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="na">WEBHOOK_TRANSFORMS</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">[</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">    </span><span class="na">("title", "upper"),</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">    </span><span class="na">("description", "replace", "**", ""),</span>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">    </span><span class="na">("description", "strip"),</span>
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="na">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="na">WEBHOOK_TRANSFORMS</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">[</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">    </span><span class="na">("title", "upper"),</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">    </span><span class="na">("description", "replace", "**", ""),</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">    </span><span class="na">("description", "strip"),</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="na">]</span>
 </code></pre></div>
 <p>The tuple format is <code>(field_to_target, method_name, *optional_arguments)</code>. Invalid templates, avatar URLs, transforms or formatted headers fail before a request is attempted. <code>WEBHOOK_TEMPLATE</code>, <code>WEBHOOK_USERNAME</code> and <code>WEBHOOK_AVATAR_URL</code> apply only to the Discord request format and are ignored when <code>WEBHOOK_PROVIDER</code> is <code>"ntfy"</code>. ntfy continues to use its native publish API while transformations and header placeholders use the same shared title and description values.</p>
 <p>If a webhook service returns a rate limit or temporary server error, GitHub Monitor retries once and waits at most five seconds. GitHub monitoring continues normally if delivery fails.</p>
@@ -1058,7 +1123,7 @@
 <p>The <code>--help</code> screen is coloured too. Group headings, option names, the values those options take, the example commands and the comments above them each get their own colour, so the screen can be scanned instead of read.</p>
 <p><code>COLOR_THEME</code> overrides individual colours. It is merged over the built-in theme, so name only the parts you want to change:</p>
 <p>The built-in colours apply unless you set <code>COLOR_THEME</code>. Older configurations may set every colour explicitly. Remove that block to use current defaults or edit individual values to keep a custom theme.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="na">COLOR_THEME = { "repository"</span><span class="o">:</span><span class="w"> </span><span class="s">"bright_magenta bold"</span><span class="na">, "username"</span><span class="o">:</span><span class="w"> </span><span class="s">"green"</span><span class="w"> </span><span class="na">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="na">COLOR_THEME = { "repository"</span><span class="o">:</span><span class="w"> </span><span class="s">"bright_magenta bold"</span><span class="na">, "username"</span><span class="o">:</span><span class="w"> </span><span class="s">"green"</span><span class="w"> </span><span class="na">}</span>
 </code></pre></div>
 <p>A value combines one colour with any number of style attributes separated by spaces or <code>+</code>. Examples include <code>"bright_cyan bold"</code>, <code>"red underline"</code> and <code>"bright_magenta bold underline"</code>. An empty string leaves that part uncoloured.</p>
 <table>
@@ -1231,26 +1296,26 @@
 <h2 id="storing-secrets">Storing Secrets<a class="headerlink" href="#storing-secrets" title="Permanent link">&para;</a></h2>
 <p>Use <code>--set-github-token</code>, <code>--set-smtp-password</code> or <code>--set-webhook-url</code> to enter secrets through hidden prompts. Token setup validates with GitHub. SMTP setup checks sign-in without sending an email and requires the other mail settings first. Store <code>NTFY_ACCESS_TOKEN</code> in an environment variable or dotenv file.</p>
 <p>As a fallback, set environment variables using <code>export</code> on <strong>Linux/Unix/macOS/WSL</strong> systems:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">GITHUB_TOKEN</span><span class="o">=</span><span class="s2">"your_github_classic_personal_access_token"</span>
-<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SMTP_PASSWORD</span><span class="o">=</span><span class="s2">"your_smtp_password"</span>
-<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WEBHOOK_URL</span><span class="o">=</span><span class="s2">"https://discord.com/api/webhooks/your_id/your_token"</span>
-<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="nb">export</span><span class="w"> </span><span class="nv">NTFY_ACCESS_TOKEN</span><span class="o">=</span><span class="s2">"tk_your_ntfy_access_token"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">GITHUB_TOKEN</span><span class="o">=</span><span class="s2">"your_github_classic_personal_access_token"</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">SMTP_PASSWORD</span><span class="o">=</span><span class="s2">"your_smtp_password"</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">WEBHOOK_URL</span><span class="o">=</span><span class="s2">"https://discord.com/api/webhooks/your_id/your_token"</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="nb">export</span><span class="w"> </span><span class="nv">NTFY_ACCESS_TOKEN</span><span class="o">=</span><span class="s2">"tk_your_ntfy_access_token"</span>
 </code></pre></div>
 <p>On <strong>Windows Command Prompt</strong> use <code>set</code> instead of <code>export</code> and on <strong>Windows PowerShell</strong> use <code>$env</code>.</p>
 <p>Alternatively add them manually to a dotenv file:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="na">GITHUB_TOKEN</span><span class="o">=</span><span class="s">"your_github_classic_personal_access_token"</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="na">SMTP_PASSWORD</span><span class="o">=</span><span class="s">"your_smtp_password"</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="na">WEBHOOK_URL</span><span class="o">=</span><span class="s">"https://discord.com/api/webhooks/your_id/your_token"</span>
-<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="na">NTFY_ACCESS_TOKEN</span><span class="o">=</span><span class="s">"tk_your_ntfy_access_token"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="na">GITHUB_TOKEN</span><span class="o">=</span><span class="s">"your_github_classic_personal_access_token"</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="na">SMTP_PASSWORD</span><span class="o">=</span><span class="s">"your_smtp_password"</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="na">WEBHOOK_URL</span><span class="o">=</span><span class="s">"https://discord.com/api/webhooks/your_id/your_token"</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="na">NTFY_ACCESS_TOKEN</span><span class="o">=</span><span class="s">"tk_your_ntfy_access_token"</span>
 </code></pre></div>
 <p>An <code>export</code> prefix in front of a dotenv line is accepted, so the same file can be sourced by a shell. <code>--set-github-token</code>, <code>--set-webhook-url</code> and <code>--setup</code> replace such a line in place and keep its prefix, rather than leaving the old value behind.</p>
 <p>If the same secret is set in more than one place, an exported environment variable wins over the dotenv file, which wins over the config file, and an explicit command-line value wins over all of them. <code>--verbose</code> and <code>--doctor</code> both report which source each secret came from, so a forgotten <code>export</code> is visible rather than silent.</p>
 <p>By default the tool will auto-search for a dotenv file named <code>.env</code> in the current directory and then upward from it.</p>
 <p>You can specify a custom file with <code>DOTENV_FILE</code> or the <code>--env-file</code> flag:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>github_monitor<span class="w"> </span>&lt;github_target&gt;<span class="w"> </span>--env-file<span class="w"> </span>/path/.env-github_monitor
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>github_monitor<span class="w"> </span>&lt;github_target&gt;<span class="w"> </span>--env-file<span class="w"> </span>/path/.env-github_monitor
 </code></pre></div>
 <p>You can also disable <code>.env</code> auto-search with <code>DOTENV_FILE = "none"</code> or <code>--env-file none</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>github_monitor<span class="w"> </span>&lt;github_target&gt;<span class="w"> </span>--env-file<span class="w"> </span>none
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>github_monitor<span class="w"> </span>&lt;github_target&gt;<span class="w"> </span>--env-file<span class="w"> </span>none
 </code></pre></div>
 <p>Exported secret environment variables continue to work when dotenv auto-search is disabled or no dotenv file exists.</p>
 <p>The final fallback is storing secrets in the configuration file or source code.</p>

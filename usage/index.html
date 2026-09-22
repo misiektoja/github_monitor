@@ -927,8 +927,9 @@
 <p>Use <code>--help</code> for examples grouped by task and matched to your installation.</p>
 <p>Monitoring mode prints the settings that are actually in effect before the first check.</p>
 <p>Optional features appear once you switch them on.</p>
-<p>Use <code>--verbose</code> or <code>--debug</code> for the full startup summary, including output paths, notification settings, secret sources and runtime information.</p>
+<p>Use <code>--verbose</code> or <code>--debug</code> for the full startup summary, including output paths, notification settings, push event limits, secret sources and runtime information.</p>
 <p>Use <code>--truncate N</code> or <code>TRUNCATE_CHARS</code> to limit screen line width. Set it to <code>999</code> to detect the terminal width automatically. Truncation does not change log files and is ignored when logging is disabled with <code>-d</code>.</p>
+<p>Use <code>--push-commits-limit N</code> and <code>--push-files-limit N</code> to control how much of a large push is reported in full. See <a href="../configuration/#push-event-commits">Push Event Commits</a>.</p>
 <p>The tool clears the terminal when monitoring starts. Set <code>CLEAR_SCREEN</code> to <code>False</code> to keep whatever is already on the screen.</p>
 <p>The screen is never cleared when output is redirected to a file or a pipe, in debug mode or for a command that prints a result and exits, such as <code>--doctor</code>, <code>--help</code> and the test senders.</p>
 <p>Two settings add detail to what a run prints. <code>VERBOSE_MODE</code> adds the decisions the run made and <code>DEBUG_MODE</code> adds timestamped technical traces. Both are off by default, both are independent of each other and both have a flag that wins over the file, <code>--verbose</code> and <code>--debug</code>. <code>DELIVERY_CONFIRMATIONS</code> is on by default and controls whether verbose mode confirms each delivered email and webhook alert. See <a href="../troubleshooting/#verbose-and-debug-output">Verbose and Debug Output</a>.</p>
@@ -1004,14 +1005,15 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>github_monitor<span class="w"> </span>github_username<span class="w"> </span>-m<span class="w"> </span>-y
 </code></pre></div>
 <p>The <code>-y</code> flag only works if tracking of daily contributions is enabled (<code>-m</code>).</p>
-<p>To disable sending an email on errors (enabled by default):</p>
+<p>To disable sending an email on errors and the recovery alert that follows (both enabled by default):</p>
 <ul>
 <li>set <code>ERROR_NOTIFICATION</code> to <code>False</code></li>
-<li>or use the <code>-e</code> flag</li>
+<li>or use the <code>-e</code> / <code>--no-error-notify</code> flag</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>github_monitor<span class="w"> </span>github_username<span class="w"> </span>-e
 </code></pre></div>
-<p>Email and webhook error alerts are sent after <strong>5 minutes</strong> of a continuing failure. Problems that need your action, such as a rejected token, alert immediately. Each kind of failure alerts once per channel. Failed deliveries are retried after 5 minutes, with increasing waits up to an hour. Alerts can fire again after monitoring recovers.</p>
+<p>Email and webhook error alerts are sent after <strong>5 minutes</strong> of a continuing failure. Problems that need your action, such as a rejected token, alert immediately. Each kind of failure alerts once per channel. Failed deliveries are retried after 5 minutes, with increasing waits up to an hour. A new outage after a recovery alerts again. A channel that could not receive the failure alert while the outage lasted is told about the failure and its recovery together, so a blocked channel is not left without any word of an outage.</p>
+<p>A failure alert carries the subject <code>GitHub Monitor error: &lt;what went wrong&gt; (user: &lt;username&gt;)</code> and lists the fix, the guide link, how many checks failed in a row, since when and when the next retry is. When the failure clears, a matching <code>GitHub Monitor recovered: ...</code> alert goes to the channels the failure alert reached. <code>-e</code> / <code>--no-error-notify</code> switches both off for email and <code>--no-webhook-error-notify</code> switches both off for webhooks.</p>
 <p>Missing optional details, such as a push event's file list, are reported on screen without triggering an error alert. When several checks fail, the alert shows the action to take and the number of other failures.</p>
 <p>You can combine all email notifications flags together if needed.</p>
 <p>Make sure you defined your SMTP settings first, as described in <a href="../configuration/#smtp-settings">SMTP Settings</a>.</p>
@@ -1058,12 +1060,13 @@
 <td><code>--webhook-daily-contribs</code></td>
 </tr>
 <tr>
-<td>Monitoring errors</td>
+<td>Monitoring errors and recoveries</td>
 <td><code>WEBHOOK_ERROR_NOTIFICATION</code></td>
 <td>Enable with <code>--webhook-errors</code> or disable with <code>--no-webhook-error-notify</code></td>
 </tr>
 </tbody>
 </table>
+<p>A monitoring error webhook carries the same title and fields as the error email, without the timestamp the webhook service shows itself, and the matching recovery alert follows on the same channel. <code>--no-webhook-error-notify</code> switches both off.</p>
 <p>Use <code>--webhook</code> or <code>--no-webhook</code> to turn all configured webhook alerts on or off for one run. A category override also enables the master webhook switch. For example:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>github_monitor<span class="w"> </span>github_username<span class="w"> </span>--webhook-profile<span class="w"> </span>--webhook-events
 </code></pre></div>
