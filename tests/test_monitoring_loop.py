@@ -83,6 +83,8 @@ class FakeGithub:
 # Records every alert the loop hands to the delivery helper and answers with the outcome each call is given
 def recording_channels(gm_module, monkeypatch, outcomes):
     calls = []
+    for name, value in (("SMTP_HOST", "smtp.example.com"), ("SMTP_PORT", 587), ("SMTP_USER", "sender@example.com"), ("SMTP_PASSWORD", "test-password"), ("SENDER_EMAIL", "sender@example.com"), ("RECEIVER_EMAIL", "receiver@example.com"), ("WEBHOOK_PROVIDER", "discord"), ("WEBHOOK_URL", "https://discord.com/api/webhooks/123/private-token")):
+        monkeypatch.setattr(gm_module, name, value)
 
     def record(notification_type, subject, body, body_html="", email_enabled=False, webhook_enabled=None, **kwargs):
         calls.append({"type": notification_type, "subject": subject, "body": body, "body_html": body_html, "email": bool(email_enabled), "webhook": bool(webhook_enabled)})
