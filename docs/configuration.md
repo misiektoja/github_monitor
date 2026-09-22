@@ -147,6 +147,8 @@ python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
 
 Email notifications need SMTP server details for the sending account. Add them to `github_monitor.conf` or use the setup wizard. Setup checks the login without sending an email. To replace only the password, run `github_monitor --set-smtp-password`. Password entry is hidden and preserves spaces.
 
+If email alerts are selected but local SMTP settings are missing or invalid, the startup summary shows `Unavailable` with the reason. Automatic email sends are skipped silently until the settings are fixed. `Off` means no email alert types are selected.
+
 Every alert is sent as both HTML and plain text in one message. Mail clients that render HTML show the account, the changed value and the check interval in bold, with repositories, commits, issues and profile addresses linked. Clients that do not fall back to the plain text, which is unchanged.
 
 Send one test message to verify the settings:
@@ -175,7 +177,7 @@ WEBHOOK_CONTRIB_NOTIFICATION = False
 WEBHOOK_ERROR_NOTIFICATION = True
 ```
 
-A `WEBHOOK_URL` left unset, or left at its `your_webhook_url` placeholder, switches webhook alerts off at startup instead of failing at the first alert. `--verbose` reports why.
+If webhook alerts are selected but the URL, provider or other local settings are invalid, the startup summary shows `Unavailable` with the reason. Automatic webhook sends are skipped silently until the settings are fixed. `Off` means the master switch or all webhook alert types are off.
 
 Known Discord and `ntfy.sh` URLs automatically select the matching request format even if the configured provider is stale. While `WEBHOOK_PROVIDER` is left at its default, that detection is silent and `--verbose` reports it. A warning appears only when your configuration file sets a provider the URL disagrees with. Set `WEBHOOK_PROVIDER` in `github_monitor.conf` or use `--webhook-provider {discord,ntfy}` for self-hosted ntfy or compatible endpoints.
 
