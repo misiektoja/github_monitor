@@ -37,6 +37,7 @@ and again before anything is published to PyPI.
 
 | File | Area under test |
 | --- | --- |
+| `test_codeql_workflow.py` | Source suppression filtering, retained security findings, invalid reports and CodeQL upload ordering |
 | `test_repository_closure.py` | Verified issue, PR and discussion closures, retained snapshots, shared request limits, fair rotation and transport settings |
 | `test_notification_receipts.py` | SMTP acceptance despite cleanup failures, receipt controls and unchanged notification content |
 | `test_configuration_notification_boundaries.py` | Invalid output settings, CLI precedence and strict webhook fields with legacy JSON support |
