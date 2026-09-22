@@ -37,10 +37,21 @@ jobs:
           build-mode: none
           # The extended suite adds security queries that the default suite leaves out
           queries: security-extended
-          # The suppression query turns the in-code codeql[...] comments into suppressed alerts
+          # Mark results covered by source suppression comments for the upload filter
           packs: codeql/python-queries:AlertSuppression.ql
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
+          category: "/language:python"
+          output: sarif-results
+          upload: failure-only
+
+      - name: Apply source suppressions
+        run: python .github/scripts/filter_codeql_sarif.py sarif-results/python.sarif sarif-results/python-filtered.sarif
+
+      - name: Upload CodeQL results
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: sarif-results/python-filtered.sarif
           category: "/language:python"
