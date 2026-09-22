@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.7
+v2.8
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -18,7 +18,7 @@ colorama (optional, improves classic Windows Command Prompt colour support)
 wcwidth (optional, measures wide characters correctly when TRUNCATE_CHARS is set)
 """
 
-VERSION = "2.7"
+VERSION = "2.8"
 
 # ---------------------------
 # CONFIGURATION SECTION START
@@ -95,7 +95,7 @@ REPO_UPDATE_DATE_NOTIFICATION = False
 # Can also be enabled via the -y flag
 CONTRIB_NOTIFICATION = False
 
-# Whether to send an email on errors
+# Whether to send an email on errors and the recovery alert that follows once the failure clears
 # Can also be disabled via the -e flag
 ERROR_NOTIFICATION = True
 
@@ -151,7 +151,7 @@ WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION = False
 # Can also be enabled via the --webhook-daily-contribs flag
 WEBHOOK_CONTRIB_NOTIFICATION = False
 
-# Whether to send a webhook notification on monitoring errors
+# Whether to send a webhook notification on monitoring errors and the recovery alert that follows once the failure clears
 # Can also be enabled via --webhook-errors or disabled via --no-webhook-error-notify
 WEBHOOK_ERROR_NOTIFICATION = True
 
@@ -237,6 +237,27 @@ EVENTS_TO_MONITOR = [
 # Note: if more than EVENTS_NUMBER events occur between two checks,
 # any events older than the most recent EVENTS_NUMBER will be missed
 EVENTS_NUMBER = 30  # 1 page
+
+# Maximum number of commits from a single push event reported in full, with date, author URL, stats and
+# changed files. Every detailed commit costs one extra API request, so a large push would otherwise spend
+# hundreds of requests and produce a notification nobody reads
+# Set to 0 to report every commit in full
+# Can also be set using the --push-commits-limit flag
+PUSH_COMMITS_LIMIT = 10
+
+# Which end of an oversized push keeps the detailed commits
+# 'newest' keeps the head of the push, 'oldest' keeps the start of the pushed range
+PUSH_COMMITS_ORDER = 'newest'
+
+# How the commits beyond PUSH_COMMITS_LIMIT are reported
+# 'count' replaces them with one line stating how many were left out
+# 'summary' lists each one on a single line with its SHA, author and first message line, at no request cost
+PUSH_COMMITS_OVERFLOW = 'count'
+
+# Maximum number of changed files listed per commit, with the remainder replaced by a count
+# Set to 0 to list every changed file
+# Can also be set using the --push-files-limit flag
+PUSH_FILES_LIMIT = 20
 
 # If True, track user's repository changes (changed stargazers, watchers, forks, issues, PRs, discussions, description, update date etc.)
 # Can also be enabled using the -j flag
@@ -457,6 +478,10 @@ LOCAL_TIMEZONE = ""
 LOCAL_TIMEZONE_STATE = "config"
 EVENTS_TO_MONITOR = []
 EVENTS_NUMBER = 0
+PUSH_COMMITS_LIMIT = 0
+PUSH_COMMITS_ORDER = ""
+PUSH_COMMITS_OVERFLOW = ""
+PUSH_FILES_LIMIT = 0
 TRACK_REPOS_CHANGES = False
 VERIFY_REPOSITORY_CLOSURES = True
 REPOS_TO_MONITOR = []
@@ -497,6 +522,10 @@ DEGRADED_FEATURES_SEEN: set = set()
 # Failures from the current check, retained until all enabled monitoring paths have finished
 MONITOR_CHECK_FAILURES: dict = {}
 
+# True once a call has proved the network unreachable, so the calls behind it fail fast rather than each paying
+# the full retry schedule for a connection that is already known to be down
+NET_OUTAGE_CONFIRMED = False
+
 VERBOSE_MODE = False
 DEBUG_MODE = False
 DELIVERY_CONFIRMATIONS = True
@@ -532,6 +561,8 @@ SECRETS_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#storing-secrets"
 SMTP_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#smtp-settings"
 WEBHOOK_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#webhook-settings"
 DIAGNOSTICS_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#verbose-and-debug-output"
+CONNECTION_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#connection-problems"
+DESCRIPTOR_LIMIT_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#too-many-open-files"
 TLS_GUIDE_URL = f"{DOCS_BASE_URL}/configuration/#tls-verification"
 SUPPORT_GUIDE_URL = f"{DOCS_BASE_URL}/about/#support"
 DOCTOR_GUIDE_URL = f"{DOCS_BASE_URL}/troubleshooting/#doctor-preflight"
@@ -553,6 +584,10 @@ ERROR_ALERT_AFTER_SECONDS = 300  # 5 minutes
 # How long a channel that could not deliver an error alert waits before the next attempt, doubled on every further failure up to the cap
 ERROR_ALERT_RETRY_SECONDS = 300  # 5 minutes
 ERROR_ALERT_RETRY_MAX_SECONDS = 3600  # 1 hour
+
+# When the run last read the data a change is compared against, which a failing check leaves further back than
+# the configured interval
+LAST_CHECK_TS = 0
 
 
 stdout_bck = None
@@ -769,9 +804,10 @@ DAILY_CONTRIBUTION_LOOKBACK_DAYS = 30
 MIN_REDACTABLE_SECRET_LENGTH = 12
 
 
-# Tracks the error alert per channel: what was delivered, and how long a channel that failed waits before the next attempt
+# Tracks the error alert per channel: what was delivered, how long a channel that failed waits before the next
+# attempt, and the failure and outage start the recovery alert names once the outage clears
 class ErrorAlertState:
-    # Starts with nothing delivered and no channel on hold
+    # Starts with nothing delivered, no channel on hold and no failure remembered
     def __init__(self) -> None:
         self.email_sent = False
         self.webhook_sent = False
@@ -779,14 +815,29 @@ class ErrorAlertState:
         self.webhook_failures = 0
         self.email_retry_at = 0
         self.webhook_retry_at = 0
+        self.advice = None
+        self.since = 0
 
-    # Forgets the delivered alert and any hold, so the next failure earns each channel a new one
+    # Forgets the delivered alert, any hold and the remembered failure, so the next outage earns each channel a new alert
     def reset(self) -> None:
         self.__init__()
+
+    # Remembers the latest failure and when the outage began, so the recovery alert can say what cleared and how long it took
+    def remember(self, advice, since: int) -> None:
+        self.advice = advice
+        self.since = since
+
+    # Tells whether a channel delivered the failure alert of this outage and is still switched on, so it is owed the recovery alert
+    def delivered(self, channel: str, enabled) -> bool:
+        return bool(enabled) and getattr(self, f"{channel}_sent")
 
     # Tells whether a channel still owes the alert and its wait after a failed attempt, if any, has passed
     def pending(self, channel: str, enabled, now: int) -> bool:
         return bool(enabled) and not getattr(self, f"{channel}_sent") and now >= getattr(self, f"{channel}_retry_at")
+
+    # Tells whether a channel was owed the failure alert but never received it, so the recovery can tell it the whole story
+    def missed(self, channel: str, enabled) -> bool:
+        return bool(enabled) and not getattr(self, f"{channel}_sent") and getattr(self, f"{channel}_failures") > 0
 
     # Records one attempt, holding a channel that failed for a growing wait so a broken server is not dialled on every check
     def record(self, channel: str, attempted: bool, delivered: bool, now: int) -> None:
@@ -991,10 +1042,14 @@ _DIFF_COUNT_DOWN_RE = re.compile(r"(\(-\d+\))")
 _USER_TAG_RE = re.compile(r"((?:GitHub|for|by|of|fetch)[\t ]+user:?|\buser[:=])([\t ]+|(?<==))([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?![A-Za-z0-9:-])")
 _QUOTED_CONTEXT_RE = re.compile(r"\b(repo|user)\s+$", re.IGNORECASE)
 _DURATION_RE = re.compile(r"~?\b[0-9]{1,20}[ \t]{1,20}(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b", re.IGNORECASE)
-_LONG_DATE_RE = re.compile(r"\b(?:\w{3}\s+)?\d{1,2}\s+\w{3}(?:\s+\d{2,4})?[\s,]*\d{2}:\d{2}(:\d{2})?(\s*[AP]M)?\b", re.IGNORECASE)
+# The weekday in front of a date, taken from the abbreviations the running locale prints. A date is separated
+# from its weekday by one space, so the wide gap of a padded listing column cannot pull the word before it,
+# such as the last word of a line, into the date
+_WEEKDAY_ABBR_PATTERN = "|".join(re.escape(day_abbr) for day_abbr in calendar.day_abbr)
+_LONG_DATE_RE = re.compile(r"\b(?:(?:" + _WEEKDAY_ABBR_PATTERN + r")[\t ])?\d{1,2}\s+\w{3}(?:\s+\d{2,4})?[\s,]*\d{2}:\d{2}(:\d{2})?(\s*[AP]M)?\b", re.IGNORECASE)
 _TIME_ONLY_RE = re.compile(r"(?<![\w:])(~?(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:\s*[AP]M)?)(?![\w:])", re.IGNORECASE)
-_SHORT_RANGE_DATE_RE = re.compile(r"\(\w{3}\s+\d{1,2}\s+\w{3}\s+\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\)", re.IGNORECASE)
-_DATE_RANGE_RE = re.compile(r"\b\w{3}\s+\d{1,2}\s+\w{3}\s+\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\b", re.IGNORECASE)
+_SHORT_RANGE_DATE_RE = re.compile(r"\((?:" + _WEEKDAY_ABBR_PATTERN + r")[\t ]\d{1,2}\s+\w{3}\s+\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\)", re.IGNORECASE)
+_DATE_RANGE_RE = re.compile(r"\b(?:" + _WEEKDAY_ABBR_PATTERN + r")[\t ]\d{1,2}\s+\w{3}\s+\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\b", re.IGNORECASE)
 _HOUR_RANGE_RE = re.compile(r"\b\d{2}:\d{2}(\s*[AP]M)?\s*-\s*\d{2}:\d{2}(\s*[AP]M)?\b", re.IGNORECASE)
 _URL_RE = re.compile(r"(https?://[^\s\]]+)")
 _BOOLEAN_TRUE_RE = re.compile(r"\bTrue\b|\bEnabled\b")
@@ -1163,6 +1218,8 @@ def _colorize_count_change(match):
 # Applies the configured colour rules to one output line
 def _colorize_line(line):
     lowered = line.lower()
+    # Read before any highlight is inserted, since the label column has to be measured on the plain text
+    is_settings_row = is_startup_summary_row(line)
     notification_match = _NOTIFICATION_SUMMARY_STATE_RE.match(line)
     if notification_match:
         prefix, state, suffix = notification_match.groups()
@@ -1231,6 +1288,10 @@ def _colorize_line(line):
         line = _sub_outside_color(_QUOTED_CONTENT_RE, lambda match: _colorize_quoted_name(match), line)
     line = _sub_outside_color(_BOOLEAN_TRUE_RE, lambda match: colorize("boolean_true", match.group(0)), line)
     line = _sub_outside_color(_BOOLEAN_FALSE_RE, lambda match: colorize("boolean_false", match.group(0)), line)
+    # A summary row reports a setting, so a value that happens to read like a log keyword must not paint the whole row
+    if is_settings_row:
+        return line
+
     is_debug_line = bool(_DEBUG_LINE_RE.match(lowered))
     if lowered.startswith("to fix:"):
         line = _apply_style_nested(line, "info")
@@ -3005,7 +3066,7 @@ def verbose_degraded_feature(feature, alert, error=None, enrichment=False):
         if DEGRADED_FEATURES.get(feature) == alert:
             return
         DEGRADED_FEATURES[feature] = alert
-    verbose_print(f"{feature} is unavailable, so {alert} cannot fire")
+    verbose_print(f"{feature}: unavailable, so {alert} cannot fire")
     # A degraded feature can be reported from inside a report, so the check closes the block instead of this line
     if VERBOSE_MODE and MONITORING_ACTIVE:
         PENDING_NOTICE_BLOCK = True
@@ -3013,9 +3074,11 @@ def verbose_degraded_feature(feature, alert, error=None, enrichment=False):
 
 # Forgets every tracked outage, so the checks that follow report the state they find rather than an older one
 def reset_degraded_features():
+    global NET_OUTAGE_CONFIRMED
     DEGRADED_FEATURES.clear()
     DEGRADED_FEATURES_SEEN.clear()
     MONITOR_CHECK_FAILURES.clear()
+    NET_OUTAGE_CONFIRMED = False
 
 
 # Reports every feature that was unavailable before this check and worked during it
@@ -3024,7 +3087,7 @@ def report_recovered_features():
     recovered = [(feature, alert) for feature, alert in DEGRADED_FEATURES.items() if feature not in DEGRADED_FEATURES_SEEN]
     for feature, alert in recovered:
         del DEGRADED_FEATURES[feature]
-        verbose_print(f"{feature} is available again, so {alert} can fire again")
+        verbose_print(f"{feature}: available again, so {alert} can fire again")
     DEGRADED_FEATURES_SEEN.clear()
     if recovered and VERBOSE_MODE and MONITORING_ACTIVE:
         PENDING_NOTICE_BLOCK = True
@@ -3157,6 +3220,9 @@ def render_command(arguments=None, include_paths=True, *, install_context=None):
 # One sentence for every surface that reports the startup connectivity check
 CONNECTIVITY_ENDPOINT_FIX = "Check network, DNS, proxy and CHECK_INTERNET_URL settings"
 
+# What to do about a network failure the monitor retries on its own, shared by the timeout and unreachable advices
+TRANSIENT_NETWORK_FIX = "Usually nothing to do, the tool retries on its own. If it continues, check network access, DNS, firewall and proxy settings"
+
 
 RECOVERY_CODES = frozenset({
     "auth.github_token_invalid",
@@ -3174,6 +3240,7 @@ RECOVERY_CODES = frozenset({
     "github.forbidden",
     "github.not_found",
     "github.rate_limited",
+    "github.unavailable",
     "network.timeout",
     "resource.exhausted",
     "network.unavailable",
@@ -3225,6 +3292,11 @@ def recovery_fix_with_guide(fix, guide_url):
 # Escapes text for an HTML email body and keeps its line breaks, which HTML would otherwise collapse into spaces
 def html_text(text):
     return html.escape(text).replace("\n", "<br>")
+
+
+# Turns a bare URL inside already escaped HTML text into a link, so an alert that prints an address is clickable
+def html_autolink_urls(content):
+    return re.sub(r"(?<![\"'=])(https?://[^\s<>\"']+[^\s<>\"'.,;:!?)\]])", r'<a href="\1">\1</a>', str(content))
 
 
 # Returns the advice a cancelled secret entry reports, worded the same way by every one-shot secret command
@@ -3349,10 +3421,12 @@ def print_liveness_banner(message):
 
 
 # Reminds about a lasting failure once an hour, so a broken run still says it is alive without repeating itself
-def print_outage_liveness(target, advice, since, failures=0):
+def print_outage_liveness(target, advice, since, failures=0, close=True):
     count = f", {failures} failed {'check' if failures == 1 else 'checks'}" if failures else ""
     print(f"* Monitoring degraded for {target}. {advice.summary} since {get_date_from_ts(since)}{count}")
-    print_cur_ts("Liveness check, timestamp:\t")
+    # A caller with an alert still to deliver closes the report itself, so the delivery lines stay inside it
+    if close:
+        print_cur_ts("Liveness check, timestamp:\t")
 
 
 # Notes that a reported outage now fails differently, in one line rather than a second full report
@@ -3361,9 +3435,82 @@ def print_outage_change(target, advice):
 
 
 # Reports that a failure cleared, since a throttled failure no longer stops printing when it is over
-def print_outage_recovery(target, lasted):
+def print_outage_recovery(target, lasted, close=True):
     print(f"* Monitoring recovered for {target} after {display_time(max(1, lasted))}")
-    print_cur_ts("Timestamp:\t\t\t")
+    # A caller with a recovery alert to deliver closes the report itself, so the delivery lines stay inside it
+    if close:
+        print_cur_ts("Timestamp:\t\t\t")
+
+
+# Builds the subject every failure alert shares, so an inbox fed by several monitors sorts them by tool
+def recovery_alert_subject(advice, target):
+    return f"GitHub Monitor error: {advice.summary} (user: {target})"
+
+
+# Returns the text groups a failure alert lists under its summary, shared by the plain and HTML bodies
+def recovery_alert_sections(advice, retry_seconds, failed_checks=0, failing_since=0):
+    retry_lines = []
+    # A first failure has no run to count, so the count and its start appear once a second check has failed
+    if failed_checks > 1:
+        retry_lines.append(f"Failed checks in a row: {failed_checks}")
+        retry_lines.append(f"Failing since: {get_date_from_ts(failing_since)}")
+    retry_lines.append(f"Next retry in: {display_time(retry_seconds)}")
+    sections = [f"To fix: {advice.fix}", "\n".join(retry_lines)]
+    # A detail that only repeats the summary spends a line saying nothing
+    if DEBUG_MODE and advice.detail and advice.detail != advice.summary:
+        sections.append(f"Technical detail: {advice.detail}")
+    return sections
+
+
+# Builds the plain text of a failure alert, without the timestamp when a webhook service shows its own
+def recovery_alert_body(advice, retry_seconds, failed_checks=0, failing_since=0, timestamp=True):
+    body = "\n\n".join([advice.summary, *recovery_alert_sections(advice, retry_seconds, failed_checks, failing_since)])
+    return body + get_cur_ts("\n\nTimestamp: ") if timestamp else body
+
+
+# Bolds the values a reader scans a failure alert for: how often it has failed and since when
+def html_bold_outage_fields(content):
+    for label in ("Failed checks in a row: ", "Failing since: "):
+        content = re.sub(f"({re.escape(label)})([^<]+)", r"\1<b>\2</b>", content, count=1)
+    return content
+
+
+# Builds the HTML email body of a failure alert with the same parts as the plain text and the summary in bold
+def recovery_alert_body_html(advice, retry_seconds, failed_checks=0, failing_since=0, timestamp=True):
+    parts = [f"<b>{html_text(advice.summary)}</b>", *(html_autolink_urls(html_text(section)) for section in recovery_alert_sections(advice, retry_seconds, failed_checks, failing_since))]
+    if timestamp:
+        parts.append(get_cur_ts("Timestamp: "))
+    return html_bold_outage_fields(f"<html><head></head><body>{'<br><br>'.join(parts)}</body></html>")
+
+
+# Builds the subject of the alert that answers a delivered failure alert once the outage clears
+def outage_recovered_alert_subject(target, lasted):
+    return f"GitHub Monitor recovered: monitoring {target} resumed after {display_time(lasted)}"
+
+
+# Builds the plain text of the recovery alert, naming the failure it closes
+def outage_recovered_alert_body(advice, target, lasted, timestamp=True):
+    body = f"Monitoring recovered for {target} after {display_time(lasted)}.\n\nThe failure was: {advice.summary}"
+    return body + get_cur_ts("\n\nTimestamp: ") if timestamp else body
+
+
+# Builds the HTML email body of the recovery alert
+def outage_recovered_alert_body_html(advice, target, lasted, timestamp=True):
+    body = f"Monitoring recovered for <b>{html.escape(target)}</b> after <b>{html.escape(display_time(lasted))}</b>.<br><br>The failure was: {html_text(advice.summary)}"
+    return f"<html><head></head><body>{body}{get_cur_ts('<br><br>Timestamp: ') if timestamp else ''}</body></html>"
+
+
+# Tells a channel that never received the failure alert about the whole outage, since a bare recovery would close
+# a failure it was never told about
+def outage_missed_alert_body(advice, target, lasted, timestamp=True):
+    body = f"Monitoring failed for {target} at {get_date_from_ts(int(time.time()) - lasted)} and recovered after {display_time(lasted)}.\n\nThe failure was: {advice.summary}\n\nThe failure alert could not be delivered here while the failure lasted."
+    return body + get_cur_ts("\n\nTimestamp: ") if timestamp else body
+
+
+# Builds the HTML email body of the combined failure and recovery alert
+def outage_missed_alert_body_html(advice, target, lasted, timestamp=True):
+    body = f"Monitoring failed for <b>{html.escape(target)}</b> at <b>{html.escape(get_date_from_ts(int(time.time()) - lasted))}</b> and recovered after <b>{html.escape(display_time(lasted))}</b>.<br><br>The failure was: {html_text(advice.summary)}<br><br>The failure alert could not be delivered here while the failure lasted."
+    return f"<html><head></head><body>{body}{get_cur_ts('<br><br>Timestamp: ') if timestamp else ''}</body></html>"
 
 
 # Yields the exception and each cause or context up to max_depth, to walk an exception chain
@@ -3374,6 +3521,24 @@ def iter_exc_chain(error, max_depth=8):
             return
         yield current
         current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+
+
+# Names the transport failure behind an exception chain, since a timeout raised with no message leaves the text rules nothing to read
+def network_failure_code(error):
+    timed_out = False
+    unreachable = False
+    for current in iter_exc_chain(error):
+        name = type(current).__name__
+        # A TLS failure has its own advice, so a chain that names one is left to the rules that recognize it
+        if "SSL" in name or "Certificate" in name:
+            return ""
+        if isinstance(current, TimeoutError) or "Timeout" in name:
+            timed_out = True
+        elif isinstance(current, ConnectionError) or name in ("gaierror", "herror") or any(term in name for term in ("Connect", "ProxyError", "NameResolution", "Unreachable")):
+            unreachable = True
+    if timed_out:
+        return "network.timeout"
+    return "network.unavailable" if unreachable else ""
 
 
 # Reports whether this process hit the local file descriptor limit rather than a remote failure
@@ -3408,32 +3573,33 @@ def classify_recovery_error(error, context="runtime", detail="", install_context
     debug_command = render_command(["--debug"], install_context=install_context)
     # Checked ahead of every context, since a local descriptor limit is not a failure of whatever call hit it
     if error is not None and is_too_many_open_files(error):
-        return make_recovery_advice("resource.exhausted", "This process ran out of file descriptors, which is a local limit and not a GitHub problem", recovery_fix_with_guide("Raise the file descriptor limit, for example with 'ulimit -n 4096', or set LimitNOFILE= if you run under systemd, then restart the tool", DIAGNOSTICS_GUIDE_URL), False, detail)
+        return make_recovery_advice("resource.exhausted", "This process ran out of file descriptors, which is a local limit and not a GitHub problem", recovery_fix_with_guide("Raise the file descriptor limit, for example with 'ulimit -n 4096', or set LimitNOFILE= if you run under systemd, then restart the tool", DESCRIPTOR_LIMIT_GUIDE_URL), False, detail)
     if selected_context == "connectivity":
         # Classified from the error, because a failed endpoint check has one answer whatever the exception was
         timed_out = isinstance(error, (req.Timeout, TimeoutError, socket.timeout))
         summary = "The connectivity endpoint did not answer in time" if timed_out else "The connectivity endpoint could not be reached"
         # No guide, because no page covers this check and the doctor report already ends with the troubleshooting link
         return make_recovery_advice("network.timeout" if timed_out else "network.unavailable", summary, CONNECTIVITY_ENDPOINT_FIX, True, detail)
-    if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)):
-        return make_recovery_advice("network.timeout", "The network request timed out", recovery_fix_with_guide("Check connectivity and increase the configured timeout before trying again", DIAGNOSTICS_GUIDE_URL), True, detail)
-    if isinstance(error, (req.ConnectionError, socket.gaierror)):
-        return make_recovery_advice("network.unavailable", "The configured service could not be reached", recovery_fix_with_guide("Check the network and configured service URL then try again", DIAGNOSTICS_GUIDE_URL), True, detail)
-    if isinstance(error, req.RequestException):
-        return make_recovery_advice("network.unavailable", "The configured service request failed", recovery_fix_with_guide("Check the network and configured service URL then try again", DIAGNOSTICS_GUIDE_URL), True, detail)
+    # The chain is read alongside the type, since a transport error can arrive wrapped and with an empty message
+    transport_code = network_failure_code(error)
+    if isinstance(error, (req.Timeout, TimeoutError, socket.timeout)) or transport_code == "network.timeout":
+        return make_recovery_advice("network.timeout", "GitHub did not answer in time", recovery_fix_with_guide(TRANSIENT_NETWORK_FIX, CONNECTION_GUIDE_URL), True, detail)
+    if isinstance(error, (req.ConnectionError, socket.gaierror, req.RequestException)) or transport_code == "network.unavailable":
+        return make_recovery_advice("network.unavailable", "GitHub could not be reached", recovery_fix_with_guide(TRANSIENT_NETWORK_FIX, CONNECTION_GUIDE_URL), True, detail)
     if isinstance(error, BadCredentialsException):
         return make_recovery_advice("auth.github_token_invalid", "GitHub rejected the configured token", recovery_fix_with_guide(f"Create or review the token then run: {token_command}", AUTH_GUIDE_URL), False, detail)
     if isinstance(error, RateLimitExceededException):
-        return make_recovery_advice("github.rate_limited", "GitHub API rate limiting paused the request", recovery_fix_with_guide("Wait for the reported reset time before trying again", DIAGNOSTICS_GUIDE_URL), True, detail)
+        return make_recovery_advice("github.rate_limited", "GitHub API rate limiting paused the request", recovery_fix_with_guide("Wait for the reported reset time before trying again", INTERVALS_GUIDE_URL), True, detail)
     if isinstance(error, UnknownObjectException):
         code = "target.not_found" if selected_context == "target" else "github.not_found"
-        return make_recovery_advice(code, "GitHub could not find the requested resource", recovery_fix_with_guide("Check the target name and token access then try again", DIAGNOSTICS_GUIDE_URL), False, detail)
+        return make_recovery_advice(code, "GitHub could not find the requested resource", recovery_fix_with_guide("Check the target name and token access then try again", QUICK_START_GUIDE_URL), False, detail)
     if isinstance(error, GithubException):
         status = getattr(error, "status", None)
         if status == 403:
             return make_recovery_advice("github.forbidden", "GitHub refused access to the requested resource", recovery_fix_with_guide("Check token permissions and resource visibility", AUTH_GUIDE_URL), False, detail)
-        retryable = status is None or (isinstance(status, int) and status >= 500)
-        return make_recovery_advice("github.api_error", "GitHub returned an API error", recovery_fix_with_guide(f"Try again or run {debug_command} for sanitized technical detail", DIAGNOSTICS_GUIDE_URL), retryable, detail)
+        if isinstance(status, int) and status >= 500:
+            return make_recovery_advice("github.unavailable", "GitHub is temporarily unavailable", recovery_fix_with_guide("Usually nothing to do, the tool retries on its own. If it continues, wait for GitHub to recover", CONNECTION_GUIDE_URL), True, detail)
+        return make_recovery_advice("github.api_error", "GitHub returned an API error", recovery_fix_with_guide(f"Try again or run {debug_command} for sanitized technical detail", DIAGNOSTICS_GUIDE_URL), status is None, detail)
     if isinstance(error, smtplib.SMTPAuthenticationError):
         return make_recovery_advice("smtp.authentication", "The SMTP server rejected the configured credentials", recovery_fix_with_guide("Check SMTP_USER and replace SMTP_PASSWORD before sending another test", SMTP_GUIDE_URL), False, detail)
     if isinstance(error, PermissionError):
@@ -3614,18 +3780,56 @@ def mask_email_address(address):
     return f"{masked}@{domain}"
 
 
+# Returns whether a mail server is set rather than left empty or still holding the placeholder the sample configuration ships
+def smtp_server_configured():
+    return secret_is_set(SMTP_HOST) and bool(SMTP_PORT)
+
+
+# Returns whether an email alert has both a server to send through and an address to reach
+def email_channel_configured():
+    return smtp_server_configured() and secret_is_set(RECEIVER_EMAIL)
+
+
+# Returns whether a webhook alert has a destination to post to
+def webhook_channel_configured():
+    return bool(normalized_webhook_provider()) and secret_is_set(WEBHOOK_URL)
+
+
+# Rolls one channel's enabled alerts into the state its summary row reports, which is off while the channel has no destination
+def _startup_notification_state(categories, configured):
+    if not categories:
+        return "Off"
+    return "On (" + ", ".join(categories) + ")" if configured else "Off (not configured)"
+
+
 # Names the mail server this run would use, leaving out the account that signs in to it
 def startup_email_transport():
-    if not SMTP_HOST or not SMTP_PORT:
+    if not smtp_server_configured():
         return "Not configured"
     return f"{SMTP_HOST}:{SMTP_PORT} ({'STARTTLS' if SMTP_SSL else 'TLS off'})"
 
 
 # Names the configured webhook service and whether the channel is switched on, which are two separate settings
 def startup_webhook_provider():
-    if not normalized_webhook_provider() or not str(WEBHOOK_URL or "").strip():
+    if not webhook_channel_configured():
         return "Not configured"
     return f"{webhook_provider_display_name()} ({'enabled' if WEBHOOK_ENABLED else 'disabled'})"
+
+
+# Describes how much of a push the run reports in full
+def startup_push_commit_details():
+    if DO_NOT_MONITOR_GITHUB_EVENTS:
+        return "Inactive"
+    if not PUSH_COMMITS_LIMIT:
+        return "Every commit in full"
+    return f"{PUSH_COMMITS_LIMIT} {PUSH_COMMITS_ORDER} per push, rest by {PUSH_COMMITS_OVERFLOW}"
+
+
+# Describes how many changed files each detailed commit lists
+def startup_push_changed_files():
+    if DO_NOT_MONITOR_GITHUB_EVENTS:
+        return "Inactive"
+    return f"{PUSH_FILES_LIMIT} per commit" if PUSH_FILES_LIMIT else "Every changed file"
 
 
 # Builds concise and complete startup rows without exposing private values
@@ -3633,15 +3837,15 @@ def build_startup_summary(target, config_path, env_path, output_path):
     install_context = detect_install_context()
     email_categories = _startup_email_notification_categories()
     webhook_categories = _startup_webhook_notification_categories()
-    email_state = "On (" + ", ".join(email_categories) + ")" if email_categories else "Off"
-    webhook_state = "On (" + ", ".join(webhook_categories) + ")" if webhook_categories else "Off"
+    email_state = _startup_notification_state(email_categories, email_channel_configured())
+    webhook_state = _startup_notification_state(webhook_categories, webhook_channel_configured())
     from_dotenv, from_environment, from_config, from_command_line = startup_secret_buckets()
     return [
         StartupSummaryRow("Target", str(target), concise=True),
         StartupSummaryRow("Polling interval", display_time(GITHUB_CHECK_INTERVAL), concise=True),
         StartupSummaryRow("Notifications (email)", email_state, concise=True),
         StartupSummaryRow("Email transport", startup_email_transport()),
-        StartupSummaryRow("Email recipient", mask_email_address(RECEIVER_EMAIL) if RECEIVER_EMAIL else "Not configured"),
+        StartupSummaryRow("Email recipient", mask_email_address(RECEIVER_EMAIL) if secret_is_set(RECEIVER_EMAIL) else "Not configured"),
         StartupSummaryRow("Notifications (webhook)", webhook_state, concise=True),
         StartupSummaryRow("Webhook provider", startup_webhook_provider()),
         StartupSummaryRow("Delivery confirmations", str(DELIVERY_CONFIRMATIONS)),
@@ -3655,6 +3859,8 @@ def build_startup_summary(target, config_path, env_path, output_path):
         StartupSummaryRow("Closure verification budget", f"{REPOSITORY_CLOSURE_REQUEST_BUDGET} requests/check (shared)" if TRACK_REPOS_CHANGES and VERIFY_REPOSITORY_CLOSURES else "Inactive"),
         StartupSummaryRow("Track contribution changes", str(TRACK_CONTRIB_CHANGES)),
         StartupSummaryRow("Monitor GitHub events", str(not DO_NOT_MONITOR_GITHUB_EVENTS)),
+        StartupSummaryRow("Push commit details", startup_push_commit_details()),
+        StartupSummaryRow("Push changed files", startup_push_changed_files()),
         StartupSummaryRow("Owned repositories only", str(not GET_ALL_REPOS)),
         StartupSummaryRow("Liveness output", display_time(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_INTERVAL else "Disabled", concise=bool(LIVENESS_CHECK_INTERVAL)),
         StartupSummaryRow("CSV output", str(CSV_FILE) if CSV_FILE else "Disabled", concise=bool(CSV_FILE)),
@@ -3680,11 +3886,23 @@ def build_startup_summary(target, config_path, env_path, output_path):
 # Rows that detail the channel named right above them, indented so the block reads as one setting with its details
 STARTUP_SUMMARY_NESTED_LABELS = ("Email transport", "Email recipient", "Email images", "Webhook provider", "ntfy images")
 
+# The column every summary value starts in, which also lets the colouriser recognize a summary row
+STARTUP_SUMMARY_VALUE_COLUMN = 32
+
+# Matches a summary row by that padded label column, since no log line puts a value there
+_STARTUP_SUMMARY_ROW_RE = re.compile(r"^\*(?: {1,3})[^:\s][^:]*: {2,}(?=\S)")
+
+
+# Returns whether a line is a startup summary row rather than ordinary output
+def is_startup_summary_row(line):
+    match = _STARTUP_SUMMARY_ROW_RE.match(line)
+    return bool(match) and match.end() == STARTUP_SUMMARY_VALUE_COLUMN
+
 
 # Formats one startup summary row with aligned plain ASCII columns
 def format_startup_summary_row(row):
     indent = "  " if row.label in STARTUP_SUMMARY_NESTED_LABELS else ""
-    prefix = f"* {indent}{(row.label + ':'):<{30 - len(indent)}}"
+    prefix = f"* {indent}{(row.label + ':'):<{STARTUP_SUMMARY_VALUE_COLUMN - 2 - len(indent)}}"
     if row.label in ("Notifications (email)", "Notifications (webhook)"):
         return textwrap.fill(row.value, width=100, initial_indent=prefix, subsequent_indent=" " * len(prefix), break_long_words=False, break_on_hyphens=False) + "\n"
     return f"{prefix}{row.value}\n"
@@ -4135,8 +4353,9 @@ def send_webhook(title: str, description: str, notification_type: str = "event",
     return 1
 
 
-# Sends one alert through the independently enabled email and webhook channels
-def send_notification_channels(notification_type: str, subject: str, body: str, body_html: str = "", email_enabled: bool = False, webhook_enabled: Optional[bool] = None) -> tuple[bool, bool]:
+# Sends one alert through the independently enabled email and webhook channels, with its own webhook text when the
+# email body carries a part such as the timestamp that the webhook service already shows
+def send_notification_channels(notification_type: str, subject: str, body: str, body_html: str = "", email_enabled: bool = False, webhook_enabled: Optional[bool] = None, webhook_body: Optional[str] = None, webhook_body_html: Optional[str] = None) -> tuple[bool, bool]:
     email_attempted = bool(email_enabled)
     webhook_attempted = webhook_event_enabled(notification_type) if webhook_enabled is None else bool(webhook_enabled)
     email_delivered = False
@@ -4146,7 +4365,9 @@ def send_notification_channels(notification_type: str, subject: str, body: str, 
         email_delivered = send_email(subject, body, body_html, SMTP_SSL) == 0
     if webhook_attempted:
         print(f"Sending webhook notification via {webhook_provider_display_name()}")
-        webhook_delivered = send_webhook(subject, body, notification_type, force=True, discord_description=html_body_to_discord_markdown(body_html)) == 0
+        webhook_description = body if webhook_body is None else webhook_body
+        webhook_markdown = html_body_to_discord_markdown(body_html if webhook_body_html is None else webhook_body_html)
+        webhook_delivered = send_webhook(subject, webhook_description, notification_type, force=True, discord_description=webhook_markdown) == 0
     # Delivery, not the attempt, so a channel that failed is retried while one that succeeded is not resent
     return email_delivered, webhook_delivered
 
@@ -4383,6 +4604,25 @@ def get_range_of_dates_from_tss(ts1, ts2, between_sep=" - ", short=False):
             out_str = f"{get_date_from_ts(ts1_new)}{between_sep}{get_date_from_ts(ts2_new)}"
 
     return str(out_str)
+
+
+# Returns how long the window a change was observed in lasted and when it ended, falling back to the configured
+# interval until the run has a previous check to measure from
+def observed_window():
+    ended = int(time.time())
+    return max(1, ended - LAST_CHECK_TS if LAST_CHECK_TS else GITHUB_CHECK_INTERVAL), ended
+
+
+# Returns the window a change was observed in, as a duration followed by the dates it spans
+def check_window_text():
+    lasted, ended = observed_window()
+    return f"{display_time(lasted)} ({get_range_of_dates_from_tss(ended - lasted, ended, short=True)})"
+
+
+# Returns the same window with the duration emphasized, for an HTML notification body
+def check_window_html():
+    lasted, ended = observed_window()
+    return f"<b>{html.escape(display_time(lasted))}</b> ({html.escape(get_range_of_dates_from_tss(ended - lasted, ended, short=True))})"
 
 
 # Checks if the timezone name is correct
@@ -4672,18 +4912,26 @@ def github_object_name(value):
 # Callers wrap a lambda and invoke the result immediately, so a lambda that reads a loop variable is
 # evaluated inside the same iteration. Those call sites carry a noqa marker for the loop-binding rule
 # Retries a GitHub operation with current settings and either returns its fallback or raises the final failure
-def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = None, *, raise_on_failure=False) -> Callable[..., Any]:
+def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = None, *, operation: str = "", raise_on_failure=False) -> Callable[..., Any]:
     retries = NET_MAX_RETRIES if retries is None else retries
     backoff = NET_BASE_BACKOFF_SEC if backoff is None else backoff
+    # Callers wrap a lambda, whose __name__ says nothing, so the label they pass is what a reader sees
+    label = operation or fn.__name__
 
     # Keeps the original exception available to callers that must distinguish an unavailable feed from an empty one
     def wrapped(*args: Any, **kwargs: Any) -> Any:
+        global NET_OUTAGE_CONFIRMED
         last_error = None
-        for i in range(1, retries + 1):
+        outage_proved = False
+        # Retrying every later call of a check learns nothing once one has proved the network unreachable, so the
+        # schedule collapses to a single attempt until a call gets through again
+        attempts = 1 if NET_OUTAGE_CONFIRMED else retries
+        for i in range(1, attempts + 1):
             try:
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=label, attempt=f"{i}/{attempts}")
                 result = fn(*args, **kwargs)
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="OK", attempt=f"{i}/{retries}")
+                NET_OUTAGE_CONFIRMED = False
+                debug_print("PyGithub retry wrapper", operation=label, outcome="OK", attempt=f"{i}/{attempts}")
                 return result
             except RateLimitExceededException as e:
                 last_error = e
@@ -4710,27 +4958,38 @@ def gh_call(fn: Callable[..., Any], retries=None, backoff=None, default: Any = N
                     else:
                         sleep_for = int(backoff * i)
 
-                retryable = i < retries
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                retryable = i < attempts
+                debug_print("PyGithub retry wrapper", operation=label, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{attempts}")
                 if retryable:
-                    print(f"* {fn.__name__} rate limited, sleeping {sleep_for}s (retry {i}/{retries})")
-                    debug_monitor_wait_timing(f"GitHub rate limit before attempt {i + 1}/{retries}", sleep_for)
+                    print(f"* {label} rate limited by GitHub, sleeping {sleep_for}s (retry {i}/{attempts})")
+                    debug_monitor_wait_timing(f"GitHub rate limit before attempt {i + 1}/{attempts}", sleep_for)
                     time.sleep(sleep_for)
                 continue
 
             except NET_ERRORS as e:
                 last_error = e
-                retryable = i < retries
+                advice = classify_recovery_error(e)
+                # A missing resource, a refused token or a local descriptor limit answers the same way every
+                # time, so the schedule ends rather than spending attempts proving it
+                permanent = not advice.retryable
+                retryable = i < attempts and not permanent
                 delay = backoff * i
-                debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, attempt=f"{i}/{retries}")
+                debug_print("PyGithub retry wrapper", operation=label, outcome="failed", error=f"{type(e).__name__}: {e}", retryable=retryable, permanent=permanent, attempt=f"{i}/{attempts}")
+                if permanent:
+                    break
+                # Only a transport failure says the network itself is down, which is what the breaker reads
+                outage_proved = bool(network_failure_code(e))
                 if retryable:
-                    print(f"* {fn.__name__} error: {sanitize_error_text(e)} (retry {i}/{retries})")
-                    debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{retries}", delay)
+                    print(f"* {label} failed: {advice.summary} (retry {i}/{attempts})")
+                    debug_monitor_wait_timing(f"GitHub request retry attempt {i + 1}/{attempts}", delay)
                     time.sleep(delay)
+        # Set before the raise, so a caller that handles its own failure still shortens the rest of the check
+        if outage_proved:
+            NET_OUTAGE_CONFIRMED = True
         if raise_on_failure and last_error is not None:
             raise last_error
-        verbose_degraded_feature(f"GitHub operation {fn.__name__}", "its dependent alerts", last_error)
-        debug_print("PyGithub retry wrapper", operation=fn.__name__, outcome="default", after=f"{retries} attempts")
+        verbose_degraded_feature(label, "its dependent alerts", last_error)
+        debug_print("PyGithub retry wrapper", operation=label, outcome="default", after=f"{attempts} attempts")
         return default
     return wrapped
 
@@ -5447,6 +5706,141 @@ def safe_truncate_text(text, max_length=MAX_EVENT_BODY_LENGTH):
     return result
 
 
+@dataclass(frozen=True)
+class PushCommit:
+    sha: str | None
+    message: str
+    author: str | None
+    # The listing entry a push comparison already returned, used only when the detail request fails
+    known: object | None = None
+
+
+# Builds a push commit from an event payload entry, which carries no date, stats or file list
+def push_commit_from_payload(entry): return PushCommit(entry.get("sha"), entry.get("message") or "", (entry.get("author") or {}).get("name"))
+
+
+# Builds a push commit from a comparison entry, whose message and author cost no extra request
+def push_commit_from_compare(entry):
+    git_commit = getattr(entry, "commit", None)
+    author = getattr(git_commit, "author", None)
+    return PushCommit(getattr(entry, "sha", None) or getattr(entry, "id", None), getattr(git_commit, "message", "") or "", getattr(author, "name", None), entry)
+
+
+# The index range of the commits a push reports in full, given the configured limit and the end it keeps
+def push_detail_range(total, limit=None, order=None):
+    limit = PUSH_COMMITS_LIMIT if limit is None else limit
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0 or limit >= total:
+        return 0, total
+    if str(PUSH_COMMITS_ORDER if order is None else order).strip().casefold() == "oldest":
+        return 0, limit
+    return total - limit, total
+
+
+# Prints the changed files of one commit, capped so a single large commit cannot fill the notification
+def print_push_changed_files(files, limit=None):
+    limit = PUSH_FILES_LIMIT if limit is None else limit
+    shown = files[:limit] if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else files
+    st = ""
+    for changed in shown:
+        st += print_v(f"     • '{changed.filename}' - {changed.status} (+{changed.additions} / -{changed.deletions})")
+    remaining = len(files) - len(shown)
+    if remaining > 0:
+        st += print_v(f"     • ... and {remaining} more {'file' if remaining == 1 else 'files'}")
+    return st
+
+
+# Prints the commits a push left undetailed, either as one line each or as a single count
+def print_push_skipped_commits(commits, first_number, overflow=None):
+    if not commits:
+        return ""
+    last_number = first_number + len(commits) - 1
+    span = f"Commit {first_number}" if first_number == last_number else f"Commits {first_number}-{last_number}"
+    if str(PUSH_COMMITS_OVERFLOW if overflow is None else overflow).strip().casefold() == "count":
+        return print_v(f"\n{span} not reported in full ({len(commits)} {'commit' if len(commits) == 1 else 'commits'}, PUSH_COMMITS_LIMIT is {PUSH_COMMITS_LIMIT})")
+    st = print_v(f"\n{span} (summary only):")
+    for commit in commits:
+        first_line = (commit.message or "").split("\n", 1)[0].strip() or "(no commit message)"
+        author = f" - {commit.author}" if commit.author else ""
+        st += print_v(f"     • {(commit.sha or 'unknown')[:12]}{author} - '{first_line}'")
+    return st
+
+
+# Prints the full report for one commit of a push, including the request its stats and file list need
+def print_push_commit(repo, number, total, commit):
+    st = print_v(f"\n=== Commit {number}/{total} ===")
+    st += print_v("." * HORIZONTAL_LINE1)
+
+    message = commit.message or ""
+    is_multiline = "\n" in message
+    if message:
+        first_line = message.split("\n", 1)[0]
+        st += print_v(f" - Commit message:\t\t'{first_line}...'" if is_multiline else f" - Commit message:\t\t'{message}'")
+
+    commit_details = None
+    if repo and commit.sha:
+        debug_github_operation("event commit lookup", commit.sha)
+        commit_details = gh_call(lambda: repo.get_commit(commit.sha), operation="Commit details")()
+
+    # The comparison entry already holds the date and links, so a failed detail request still reports them
+    described = commit_details or commit.known
+    commit_date = getattr(getattr(getattr(described, "commit", None), "author", None), "date", None)
+    if commit_date:
+        st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date)}")
+
+    if commit.sha:
+        st += print_v(f" - Commit SHA:\t\t\t{commit.sha}")
+    st += print_v(f" - Commit author:\t\t{commit.author or 'N/A'}")
+
+    author_url = getattr(getattr(described, "author", None), "html_url", None)
+    if author_url:
+        st += print_v(f" - Commit author URL:\t\t{author_url}")
+
+    html_url = getattr(described, "html_url", None)
+    if html_url:
+        st += print_v(f" - Commit URL:\t\t\t{html_url}")
+        st += print_v(f" - Commit raw patch URL:\t{html_url}.patch")
+
+    if commit_details:
+        stats = getattr(commit_details, "stats", None)
+        additions = stats.additions if stats else 0
+        deletions = stats.deletions if stats else 0
+        stats_total = stats.total if stats else 0
+        st += print_v(f"\n - Additions/Deletions:\t\t+{additions} / -{deletions} ({stats_total})")
+
+        try:
+            files = list(commit_details.files)
+        except Exception as exc:
+            verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
+            files = None
+        st += print_v(f" - Files changed:\t\t{len(files) if files is not None else 'N/A'}")
+        if files:
+            st += print_v(" - Changed files list:")
+            st += print_push_changed_files(files)
+
+    if is_multiline:
+        st += print_v("\n - Commit full message:")
+        st += print_v(f"\n'{message}'")
+
+    st += print_v("." * HORIZONTAL_LINE1)
+    return st
+
+
+# Prints the commits of a push, detailing at most PUSH_COMMITS_LIMIT of them and reporting the rest cheaply
+def print_push_commits(repo, commits):
+    total = len(commits)
+    if not total:
+        return ""
+    start, end = push_detail_range(total)
+    st = ""
+    if end - start < total:
+        st = print_v(f"Detailed commits:\t\t{end - start} of {total} ({'oldest' if start == 0 else 'newest'})")
+    st += print_push_skipped_commits(commits[:start], 1)
+    for number, commit in enumerate(commits[start:end], start=start + 1):
+        st += print_push_commit(repo, number, total, commit)
+    st += print_push_skipped_commits(commits[end:], end + 1)
+    return st
+
+
 # Prints details about passed GitHub event
 def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
@@ -5479,7 +5873,7 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
             # For ForkEvent, prefer the source repo if available
             if event.type == "ForkEvent" and repo is not None:
                 try:
-                    parent = gh_call(lambda: getattr(repo, "parent", None))()
+                    parent = gh_call(lambda: getattr(repo, "parent", None), operation="Fork source repository metadata")()
                     if parent:
                         repo = parent
                 except Exception as exc:
@@ -5530,152 +5924,30 @@ def github_print_event(event, g, time_passed=False, ts: datetime | None = None):
 
     # Prefer commits from payload when present (older API behavior)
     if event.payload.get("commits"):
-        commits = event.payload["commits"]
-        commits_total = len(commits)
-        st += print_v(f"\nNumber of commits:\t\t{commits_total}")
-        for commit_count, commit in enumerate(commits, start=1):
-            st += print_v(f"\n=== Commit {commit_count}/{commits_total} ===")
-            st += print_v("." * HORIZONTAL_LINE1)
-
-            commit_message = commit['message']
-            is_multiline = '\n' in commit_message
-            if is_multiline:
-                first_line = commit_message.split('\n', 1)[0]
-                st += print_v(f" - Commit message:\t\t'{first_line}...'")
-            else:
-                st += print_v(f" - Commit message:\t\t'{commit_message}'")
-
-            commit_details = None
-            if repo:
-                debug_github_operation("event commit lookup", commit["sha"])
-                commit_details = gh_call(lambda: repo.get_commit(commit["sha"]))()  # noqa: B023
-
-            if commit_details:
-                commit_date = commit_details.commit.author.date
-                st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date)}")
-
-            st += print_v(f" - Commit SHA:\t\t\t{commit['sha']}")
-            st += print_v(f" - Commit author:\t\t{commit['author']['name']}")
-
-            if commit_details and commit_details.author:
-                st += print_v(f" - Commit author URL:\t\t{commit_details.author.html_url}")
-
-            if commit_details:
-                st += print_v(f" - Commit URL:\t\t\t{commit_details.html_url}")
-                st += print_v(f" - Commit raw patch URL:\t{commit_details.html_url}.patch")
-
-            stats = getattr(commit_details, "stats", None)
-            additions = stats.additions if stats else 0
-            deletions = stats.deletions if stats else 0
-            stats_total = stats.total if stats else 0
-            st += print_v(f"\n - Additions/Deletions:\t\t+{additions} / -{deletions} ({stats_total})")
-
-            if commit_details:
-                try:
-                    file_count = sum(1 for _ in commit_details.files)
-                except Exception as exc:
-                    verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
-                    file_count = "N/A"
-                st += print_v(f" - Files changed:\t\t{file_count}")
-                if file_count:
-                    st += print_v(f" - Changed files list:")
-                    for f in commit_details.files:
-                        st += print_v(f"     • '{f.filename}' - {f.status} (+{f.additions} / -{f.deletions})")
-
-            if is_multiline:
-                st += print_v(f"\n - Commit full message:")
-                st += print_v(f"\n'{commit_message}'")
-            else:
-                pass
-            st += print_v("." * HORIZONTAL_LINE1)
+        commits = [push_commit_from_payload(entry) for entry in event.payload["commits"]]
+        st += print_v(f"\nNumber of commits:\t\t{len(commits)}")
+        st += print_push_commits(repo, commits)
 
     # Fallback for new Events API where PushEvent no longer includes commit summaries
     elif event.type == "PushEvent" and repo:
         before_sha = event.payload.get("before")
         head_sha = event.payload.get("head") or event.payload.get("after")
 
-        # Debug when payload has no commits
-        # st += print_v("\n[debug] PushEvent payload has no 'commits' array; using compare API")
-        # st += print_v(f"[debug] before:\t\t\t{before_sha}")
-        # st += print_v(f"[debug] head/after:\t\t{head_sha}")
-        # if size_hint is not None:
-        #     st += print_v(f"[debug] size (hint):\t\t{size_hint}")
-
         if before_sha and head_sha and before_sha != head_sha:
             try:
-                compare = gh_call(lambda: repo.compare(before_sha, head_sha))()
+                compare = gh_call(lambda: repo.compare(before_sha, head_sha), operation="Push comparison")()
             except Exception as e:
                 verbose_degraded_feature("Push comparison", "complete push event details", e, enrichment=True)
                 compare = None
                 st += print_v(f"* Error using compare({before_sha[:12]}...{head_sha[:12]}): {sanitize_error_text(e)}")
 
             if compare:
-                commits = list(compare.commits)
-                commits_total = len(commits)
+                commits = [push_commit_from_compare(entry) for entry in compare.commits]
                 short_repo = getattr(repo, "full_name", repo_name)
                 compare_url = f"{github_web_base()}/{short_repo}/compare/{before_sha[:12]}...{head_sha[:12]}"
-                st += print_v(f"\nNumber of commits:\t\t{commits_total}")
+                st += print_v(f"\nNumber of commits:\t\t{len(commits)}")
                 st += print_v(f"Compare URL:\t\t\t{compare_url}")
-
-                for commit_count, c in enumerate(commits, start=1):
-                    st += print_v(f"\n=== Commit {commit_count}/{commits_total} ===")
-                    st += print_v("." * HORIZONTAL_LINE1)
-
-                    commit_sha = getattr(c, "sha", None) or getattr(c, "id", None)
-                    if repo and commit_sha:
-                        debug_github_operation("event commit lookup", commit_sha)
-                    commit_details = gh_call(lambda: repo.get_commit(commit_sha))() if (repo and commit_sha) else None  # noqa: B023
-
-                    commit_message = commit_details.commit.message if commit_details and commit_details.commit else ""
-                    is_multiline = '\n' in commit_message if commit_message else False
-                    if commit_message:
-                        if is_multiline:
-                            first_line = commit_message.split('\n', 1)[0]
-                            st += print_v(f" - Commit message:\t\t'{first_line}...'")
-                        else:
-                            st += print_v(f" - Commit message:\t\t'{commit_message}'")
-
-                    if commit_details:
-                        commit_date = commit_details.commit.author.date
-                        st += print_v(f" - Commit date:\t\t\t{get_date_from_ts(commit_date)}")
-
-                    if commit_sha:
-                        st += print_v(f" - Commit SHA:\t\t\t{commit_sha}")
-
-                    author_name = None
-                    if commit_details and commit_details.commit and commit_details.commit.author:
-                        author_name = commit_details.commit.author.name
-                    st += print_v(f" - Commit author:\t\t{author_name or 'N/A'}")
-
-                    if commit_details and commit_details.author:
-                        st += print_v(f" - Commit author URL:\t\t{commit_details.author.html_url}")
-
-                    if commit_details:
-                        st += print_v(f" - Commit URL:\t\t\t{commit_details.html_url}")
-                        st += print_v(f" - Commit raw patch URL:\t{commit_details.html_url}.patch")
-
-                        stats = getattr(commit_details, "stats", None)
-                        additions = stats.additions if stats else 0
-                        deletions = stats.deletions if stats else 0
-                        stats_total = stats.total if stats else 0
-                        st += print_v(f"\n - Additions/Deletions:\t\t+{additions} / -{deletions} ({stats_total})")
-
-                        try:
-                            file_count = sum(1 for _ in commit_details.files)
-                        except Exception as exc:
-                            verbose_degraded_feature("Commit file list", "complete push event details", exc, enrichment=True)
-                            file_count = "N/A"
-                        st += print_v(f" - Files changed:\t\t{file_count}")
-                        if file_count and file_count != "N/A":
-                            st += print_v(" - Changed files list:")
-                            for f in commit_details.files:
-                                st += print_v(f"     • '{f.filename}' - {f.status} (+{f.additions} / -{f.deletions})")
-
-                        if is_multiline and commit_message:
-                            st += print_v(f"\n - Commit full message:")
-                            st += print_v(f"\n'{commit_message}'")
-
-                        st += print_v("." * HORIZONTAL_LINE1)
+                st += print_push_commits(repo, commits)
         else:
             st += print_v("\nNo compare range available (forced push, tag push, or identical before/after)")
 
@@ -6197,32 +6469,32 @@ def handle_profile_change(label, count_old, count_new, list_old, raw_list, user,
         m_subject = f"GitHub user {user} {label.lower()} list changed"
         m_body = (f"{label} list changed {label_context} user {user}\n"
                   f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
-                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+                  f"Check interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}")
         m_body_html = (
             f"<html><head></head><body>"
             f"{label} list changed {label_context} user <b>{html.escape(user)}</b><br>"
             f"{removed_mbody_html if removed_items else ''}{removed_list_str_html if removed_items else ''}"
             f"{added_mbody_html if added_items else ''}{added_list_str_html if added_items else ''}<br>"
-            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
             f"</body></html>"
         )
     else:
         m_subject = f"GitHub user {user} {label.lower()} number has changed! ({diff_str}, {old_count} -> {new_count})"
         m_body = (f"{label} number changed {label_context} user {user} from {old_count} to {new_count} ({diff_str})\n"
                   f"{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
-                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+                  f"Check interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}")
         m_body_html = (
             f"<html><head></head><body>"
             f"{label} number changed {label_context} user <b>{html.escape(user)}</b> from <b>{old_count}</b> to <b>{new_count}</b> (<b>{html.escape(diff_str)}</b>)<br>"
             f"{removed_mbody_html if removed_items else ''}{removed_list_str_html if removed_items else ''}"
             f"{added_mbody_html if added_items else ''}{added_list_str_html if added_items else ''}<br>"
-            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
             f"</body></html>"
         )
 
     send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
-    print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+    print(f"Check interval:\t\t\t{check_window_text()}")
     print_cur_ts("Timestamp:\t\t\t")
     return list_new, new_count
 
@@ -6246,17 +6518,17 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
         m_subject = f"GitHub user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {count_old} -> {count_new})"
         m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {count_old} to {count_new} ({diff_str})\n"
                   f"* Repo URL: {repo_url}\n\n"
-                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+                  f"Check interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}")
         m_body_html = (
             f"<html><head></head><body>"
             f"* Repo '<b>{html.escape(repo_name)}</b>': number of {html.escape(label.lower())} changed from <b>{count_old}</b> to <b>{count_new}</b> (<b>{html.escape(diff_str)}</b>)<br>"
             f"* Repo URL: <a href=\"{html.escape(repo_url)}\">{html.escape(repo_url)}</a><br><br>"
-            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
             f"</body></html>"
         )
 
         send_notification_channels("repo", m_subject, m_body, m_body_html, REPO_NOTIFICATION)
-        print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+        print(f"Check interval:\t\t\t{check_window_text()}")
         print_cur_ts("Timestamp:\t\t\t")
         return
 
@@ -6379,33 +6651,33 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
         m_subject = f"GitHub user {user} {label.lower()} list changed for repo '{repo_name}'!"
         m_body = (f"* Repo '{repo_name}': {label.lower()} list changed\n"
                   f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
-                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+                  f"Check interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}")
         m_body_html = (
             f"<html><head></head><body>"
             f"* Repo '<b>{html.escape(repo_name)}</b>': {html.escape(label.lower())} list changed<br>"
             f"* Repo URL: <a href=\"{html.escape(repo_url)}\">{html.escape(repo_url)}</a><br>"
             f"{removed_mbody_html}{removed_list_str_html}"
             f"{added_mbody_html}{added_list_str_html}<br>"
-            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
             f"</body></html>"
         )
     else:
         m_subject = f"GitHub user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {old_count} -> {new_count})"
         m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {old_count} to {new_count} ({diff_str})\n"
                   f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
-                  f"Check interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+                  f"Check interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}")
         m_body_html = (
             f"<html><head></head><body>"
             f"* Repo '<b>{html.escape(repo_name)}</b>': number of {html.escape(label.lower())} changed from <b>{old_count}</b> to <b>{new_count}</b> (<b>{html.escape(diff_str)}</b>)<br>"
             f"* Repo URL: <a href=\"{html.escape(repo_url)}\">{html.escape(repo_url)}</a><br>"
             f"{removed_mbody_html}{removed_list_str_html}"
             f"{added_mbody_html}{added_list_str_html}<br>"
-            f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+            f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
             f"</body></html>"
         )
 
     send_notification_channels("repo", m_subject, m_body, m_body_html, REPO_NOTIFICATION)
-    print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+    print(f"Check interval:\t\t\t{check_window_text()}")
     print_cur_ts("Timestamp:\t\t\t")
 
 
@@ -6667,7 +6939,7 @@ def load_startup_secrets(env_file=None, configured_settings=None, report_errors=
         except Exception as exc:
             env_path = DOTENV_FILE if DOTENV_FILE else None
             verbose_degraded_feature("Dotenv loading", "dotenv-based private settings", exc)
-            advice = make_recovery_advice("file.unreadable", "The dotenv file could not be read", recovery_fix_with_guide("Check DOTENV_FILE and its permissions or disable it with --env-file none", CONFIG_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
+            advice = make_recovery_advice("file.unreadable", "The dotenv file could not be read", recovery_fix_with_guide("Check DOTENV_FILE and its permissions or disable it with --env-file none", SECRETS_GUIDE_URL), False, f"{type(exc).__name__}: {exc}")
             if errors_out is not None:
                 errors_out.append(advice.summary + f": {advice.detail}")
             if report_errors:
@@ -7100,7 +7372,7 @@ def is_blocked_by(user):
 
         user_endpoint = f"{GITHUB_API_URL}/user"
         debug_http_request("GET", user_endpoint, "authenticated viewer lookup for block detection", 15, headers=headers, token=GITHUB_TOKEN)
-        response = req.get(user_endpoint, headers=headers, timeout=15, verify=VERIFY_SSL)
+        response = gh_call(lambda: req.get(user_endpoint, headers=headers, timeout=15, verify=VERIFY_SSL), operation="Block status", raise_on_failure=True)()
         debug_http_response("GET", user_endpoint, "authenticated viewer lookup for block detection", response.status_code)
         if response.status_code != 200:
             verbose_degraded_feature("Block status", "block and unblock alerts")
@@ -7119,7 +7391,7 @@ def is_blocked_by(user):
         """
         payload = {"query": query, "variables": {"login": user}}
         debug_http_request("POST", graphql_endpoint, "target block relationship lookup", 15, headers=headers, token=GITHUB_TOKEN)
-        response_graphql = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL)
+        response_graphql = gh_call(lambda: req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL), operation="Block status", raise_on_failure=True)()
         debug_http_response("POST", graphql_endpoint, "target block relationship lookup", response_graphql.status_code)
 
         if response_graphql.status_code == 404:
@@ -7160,7 +7432,7 @@ def get_starred_count(user):
         """
         payload = {"query": query, "variables": {"login": user}}
         debug_http_request("POST", graphql_endpoint, "starred repository count", 15, headers=headers, token=GITHUB_TOKEN)
-        response = req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL)
+        response = gh_call(lambda: req.post(graphql_endpoint, json=payload, headers=headers, timeout=15, verify=VERIFY_SSL), operation="Starred repository count", raise_on_failure=True)()
         debug_http_response("POST", graphql_endpoint, "starred repository count", response.status_code)
 
         if not response.ok:
@@ -7181,7 +7453,7 @@ def has_private_banner(user):
     try:
         url = f"{GITHUB_HTML_URL.rstrip('/')}/{user}"
         debug_http_request("GET", url, "public profile visibility page", 15)
-        r = req.get(url, timeout=15, verify=VERIFY_SSL)
+        r = gh_call(lambda: req.get(url, timeout=15, verify=VERIFY_SSL), operation="Profile visibility", raise_on_failure=True)()
         debug_http_response("GET", url, "public profile visibility page", r.status_code)
         return r.ok and "activity is private" in r.text.lower()
     except Exception as exc:
@@ -7189,8 +7461,8 @@ def has_private_banner(user):
         return False
 
 
-# Returns True if the user's GitHub profile is public
-def is_profile_public(g: Github, user, new_account_days=30):
+# Returns whether the user's GitHub profile is public, or None when the lookup could not answer
+def is_profile_public(g: Github, user, new_account_days=30) -> Optional[bool]:
 
     if has_private_banner(user):
         return False
@@ -7208,16 +7480,19 @@ def is_profile_public(g: Github, user, new_account_days=30):
 
         try:
             debug_print("PyGithub", operation="recent public event probe", endpoint=diagnostic_endpoint(GITHUB_API_URL), timeout=f"{PYGITHUB_TIMEOUT_SECONDS}s", token=mask_secret(GITHUB_TOKEN), target=user)
-            events_iter = iter(u.get_events())
-            next(events_iter)
+            gh_call(lambda: next(iter(u.get_events())), operation="Public profile detection", raise_on_failure=True)()
             return True
         except StopIteration as exc:
             debug_swallowed_exception("Recent public event probe returned no events", exc)
-        except GithubException as exc:
+        except NET_ERRORS as exc:
+            # A probe that never reached GitHub cannot say the profile is private, so the caller is told nothing
             verbose_degraded_feature("Public profile detection", "profile visibility alerts", exc)
+            return None
 
-    except GithubException as exc:
+    # Broad on purpose, since a best-effort visibility probe must never end the monitoring run
+    except Exception as exc:
         verbose_degraded_feature("Public profile detection", "profile visibility alerts", exc)
+        return None
 
     return False
 
@@ -7279,7 +7554,7 @@ def get_daily_contributions(username: str, start: Optional[dt.date] = None, end:
 
         variables = {"login": username, "from": start_iso, "to": end_iso}
         debug_http_request("POST", url, "daily contribution calendar", 30, headers=headers, token=token)
-        r = requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30, verify=VERIFY_SSL)
+        r = gh_call(lambda: requests.post(url, json={"query": query, "variables": variables}, headers=headers, timeout=30, verify=VERIFY_SSL), operation="Daily contribution count", raise_on_failure=True)()  # noqa: B023
         debug_http_response("POST", url, "daily contribution calendar", r.status_code)
         r.raise_for_status()
         data = r.json()
@@ -7394,11 +7669,9 @@ def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, 
     elif outage_outcome == "changed":
         print_outage_change(user, advice)
     elif outage_outcome == "reminder":
-        print_outage_liveness(user, advice, outage.since, outage.failures)
+        print_outage_liveness(user, advice, outage.since, outage.failures, close=False)
 
-    m_subject = f"{advice.summary} (GitHub user: {user})"
-    m_body = f"{advice.summary}\n\nTo fix: {advice.fix}\n\nGitHub Monitor will retry in {display_time(GITHUB_CHECK_INTERVAL)}.{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
-    m_body_html = f"<html><head></head><body><b>{html_text(advice.summary)}</b><br><br>To fix: {html_text(advice.fix)}<br><br>GitHub Monitor will retry in {html.escape(display_time(GITHUB_CHECK_INTERVAL))}.{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
+    error_alert.remember(advice, outage.since)
     # Attempted on every failing check rather than only on the report, so a channel that failed is tried again
     # A failure the tool can retry away is alerted once the outage has lasted ERROR_ALERT_AFTER_SECONDS, one it cannot at once
     alert_due = not advice.retryable or int(time.time()) - outage.since >= ERROR_ALERT_AFTER_SECONDS
@@ -7406,19 +7679,56 @@ def report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, 
     error_email_pending = alert_due and error_alert.pending("email", ERROR_NOTIFICATION, now)
     error_webhook_pending = alert_due and error_alert.pending("webhook", webhook_event_enabled("error"), now)
     if error_email_pending or error_webhook_pending:
-        email_delivered, webhook_delivered = send_notification_channels("error", m_subject, m_body, m_body_html, error_email_pending, error_webhook_pending)
+        m_subject = recovery_alert_subject(advice, user)
+        # Built once without the timestamp, which the webhook service shows itself and only the email carries
+        webhook_body = recovery_alert_body(advice, GITHUB_CHECK_INTERVAL, outage.failures, outage.since, timestamp=False)
+        webhook_body_html = recovery_alert_body_html(advice, GITHUB_CHECK_INTERVAL, outage.failures, outage.since, timestamp=False)
+        m_body = webhook_body + get_cur_ts(nl_ch + nl_ch + "Timestamp: ")
+        m_body_html = recovery_alert_body_html(advice, GITHUB_CHECK_INTERVAL, outage.failures, outage.since)
+        email_delivered, webhook_delivered = send_notification_channels("error", m_subject, m_body, m_body_html, error_email_pending, error_webhook_pending, webhook_body=webhook_body, webhook_body_html=webhook_body_html)
         error_alert.record("email", error_email_pending, email_delivered, now)
         error_alert.record("webhook", error_webhook_pending, webhook_delivered, now)
         delivery_reported = True
 
     # A retry can reach the screen on a check the outage reporter keeps quiet, and a delivery line
-    # with nothing under it reads as a run that stopped there
-    if outage_outcome in ("full", "changed") or delivery_reported:
+    # with nothing under it reads as a run that stopped there. The reminder closes last so the lines it
+    # carries stay inside the report rather than landing under the separator that ended it
+    if outage_outcome == "reminder":
+        print_cur_ts("Liveness check, timestamp:\t")
+    elif outage_outcome in ("full", "changed") or delivery_reported:
         print_cur_ts("Timestamp:\t\t\t")
+
+
+# Reports a successful check after an outage and answers each delivered failure alert with a recovery alert on the same channel
+def report_monitor_recovery(user, error_alert, outage):
+    lasted = outage.recovered()
+    if lasted is not None:
+        lasted = max(1, lasted)
+        advice = error_alert.advice
+        # Gated on the channels the failure alert reached and on their switches, so a channel that never heard of the outage stays quiet
+        email_owed = advice is not None and error_alert.delivered("email", ERROR_NOTIFICATION)
+        webhook_owed = advice is not None and error_alert.delivered("webhook", webhook_event_enabled("error"))
+        # A channel whose failure alert never got through hears about the outage and its end together, rather than
+        # nothing at all, which is what a channel blocked for the length of the outage would otherwise receive
+        email_missed = advice is not None and error_alert.missed("email", ERROR_NOTIFICATION)
+        webhook_missed = advice is not None and error_alert.missed("webhook", webhook_event_enabled("error"))
+        print_outage_recovery(user, lasted, close=False)
+        if email_owed or webhook_owed or email_missed or webhook_missed:
+            m_subject = outage_recovered_alert_subject(user, lasted)
+            email_text, email_html = (outage_missed_alert_body, outage_missed_alert_body_html) if email_missed else (outage_recovered_alert_body, outage_recovered_alert_body_html)
+            webhook_text, webhook_html = (outage_missed_alert_body, outage_missed_alert_body_html) if webhook_missed else (outage_recovered_alert_body, outage_recovered_alert_body_html)
+            webhook_body = webhook_text(advice, user, lasted, timestamp=False)
+            webhook_body_html = webhook_html(advice, user, lasted, timestamp=False)
+            m_body = email_text(advice, user, lasted, timestamp=False) + get_cur_ts(nl_ch + nl_ch + "Timestamp: ")
+            m_body_html = email_html(advice, user, lasted)
+            send_notification_channels("error", m_subject, m_body, m_body_html, email_owed or email_missed, webhook_owed or webhook_missed, webhook_body=webhook_body, webhook_body_html=webhook_body_html)
+        print_cur_ts("Timestamp:\t\t\t")
+    error_alert.reset()
 
 
 # Monitors activity of the specified GitHub user
 def github_monitor_user(user, csv_file_name):
+    global LAST_CHECK_TS, NET_OUTAGE_CONFIRMED
 
     mark_monitoring_started()
 
@@ -7658,6 +7968,9 @@ def github_monitor_user(user, csv_file_name):
     verbose_notice(f"Initial snapshot completed for {user}")
     # The snapshot names its features differently from the checks, so its outages are not carried into the loop
     reset_degraded_features()
+    # The initial snapshot is what the first check compares against, so the window a change is reported in starts here
+    LAST_CHECK_TS = int(time.time())
+
     debug_monitor_wait_timing("initial monitoring interval", GITHUB_CHECK_INTERVAL)
     time.sleep(GITHUB_CHECK_INTERVAL)
     alive_since = int(time.time())
@@ -7673,6 +7986,8 @@ def github_monitor_user(user, csv_file_name):
         check_number += 1
         MONITOR_CHECK_FAILURES.clear()
         DEGRADED_FEATURES_SEEN.clear()
+        # Each check decides for itself whether the network is reachable, so the breaker never outlives one
+        NET_OUTAGE_CONFIRMED = False
         reports_before_check = REPORTS_PRINTED
         check_started_at = debug_monitor_check_start(check_number, user)
 
@@ -7686,11 +8001,11 @@ def github_monitor_user(user, csv_file_name):
                 user_myself_url = g_user_myself.html_url
                 auth_refresh_version = GITHUB_AUTH_REFRESH_VERSION
                 print("* GitHub API client recreated after token reload")
-            debug_github_operation("monitored user profile refresh", user)
+            debug_github_operation("monitored account lookup", user)
             g_user = g.get_user(user)
 
         except (GithubException, Exception) as e:
-            verbose_degraded_feature("Monitored user refresh", "all profile, repository and event alerts", e)
+            verbose_degraded_feature("Monitored account lookup", "all profile, repository and event alerts", e)
             advice = classify_recovery_error(e, "target")
 
             report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage)
@@ -7702,8 +8017,8 @@ def github_monitor_user(user, csv_file_name):
         # Changed followings
         try:
             debug_github_operation("followings refresh", user)
-            followings_raw = gh_call(lambda: list(g_user.get_following()), raise_on_failure=True)()  # noqa: B023
-            followings_count = gh_call(lambda: g_user.following)()  # noqa: B023
+            followings_raw = gh_call(lambda: list(g_user.get_following()), operation="Followings", raise_on_failure=True)()  # noqa: B023
+            followings_count = gh_call(lambda: g_user.following, operation="Following count")()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followings", "following change alerts", e)
             print_degraded_error("Followings could not be refreshed", e)
@@ -7717,8 +8032,8 @@ def github_monitor_user(user, csv_file_name):
         # Changed followers
         try:
             debug_github_operation("followers refresh", user)
-            followers_raw = gh_call(lambda: list(g_user.get_followers()), raise_on_failure=True)()  # noqa: B023
-            followers_count = gh_call(lambda: g_user.followers)()  # noqa: B023
+            followers_raw = gh_call(lambda: list(g_user.get_followers()), operation="Followers", raise_on_failure=True)()  # noqa: B023
+            followers_count = gh_call(lambda: g_user.followers, operation="Follower count")()  # noqa: B023
         except NET_ERRORS as e:
             verbose_degraded_feature("Followers", "follower change alerts", e)
             print_degraded_error("Followers could not be refreshed", e)
@@ -7733,15 +8048,15 @@ def github_monitor_user(user, csv_file_name):
         try:
             if GET_ALL_REPOS:
                 debug_github_operation("all repository refresh", user)
-                repos_raw = gh_call(lambda: list(g_user.get_repos()), raise_on_failure=True)()  # noqa: B023
-                repos_count = gh_call(lambda: g_user.public_repos)()  # noqa: B023
+                repos_raw = gh_call(lambda: list(g_user.get_repos()), operation="Public repository list", raise_on_failure=True)()  # noqa: B023
+                repos_count = gh_call(lambda: g_user.public_repos, operation="Public repository count")()  # noqa: B023
             else:
                 debug_github_operation("owned repository refresh", user)
-                repos_raw = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], raise_on_failure=True)()  # noqa: B023
+                repos_raw = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], operation="Public repository list", raise_on_failure=True)()  # noqa: B023
                 repos_count = len(repos_raw)
         except NET_ERRORS as e:
-            verbose_degraded_feature("Repositories", "repository change alerts", e)
-            print_degraded_error("Repositories could not be refreshed", e)
+            verbose_degraded_feature("Public repository list", "repository list change alerts", e)
+            print_degraded_error("The public repository list could not be refreshed", e)
             print_cur_ts("Timestamp:\t\t\t")
             repos_raw = None
             repos_count = None
@@ -7752,7 +8067,7 @@ def github_monitor_user(user, csv_file_name):
         # Changed starred repositories
         try:
             debug_github_operation("starred repository refresh", user)
-            starred_list = gh_call(lambda: list(g_user.get_starred()), raise_on_failure=True)()  # noqa: B023
+            starred_list = gh_call(lambda: list(g_user.get_starred()), operation="Starred repositories", raise_on_failure=True)()  # noqa: B023
             starred_count = len(starred_list)
         except NET_ERRORS as e:
             verbose_degraded_feature("Starred repositories", "starred repository change alerts", e)
@@ -7778,21 +8093,21 @@ def github_monitor_user(user, csv_file_name):
                     print_csv_write_error(e)
 
                 m_subject = f"GitHub user {user} daily contributions changed from {contrib_old} to {contrib_curr}!"
-                m_body = (f"GitHub user {user} daily contributions changed on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}")
+                m_body = (f"GitHub user {user} daily contributions changed on {get_short_date_from_ts(contrib_state['day'], show_hour=False)} from {contrib_old} to {contrib_curr}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}")
                 m_body_html = (
                     f"<html><head></head><body>"
                     f"GitHub user <b>{html.escape(user)}</b> daily contributions changed on <b>{html.escape(get_short_date_from_ts(contrib_state['day'], show_hour=False))}</b> from <b>{contrib_old}</b> to <b>{contrib_curr}</b><br><br>"
-                    f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                    f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                     f"</body></html>"
                 )
 
                 send_notification_channels("contrib", m_subject, m_body, m_body_html, CONTRIB_NOTIFICATION)
 
-                print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+                print(f"Check interval:\t\t\t{check_window_text()}")
                 print_cur_ts("Timestamp:\t\t\t")
 
         # Changed bio
-        bio = gh_call(lambda: g_user.bio, default=profile_field_unavailable)()  # noqa: B023
+        bio = gh_call(lambda: g_user.bio, default=profile_field_unavailable, operation="Profile bio")()  # noqa: B023
         report_unavailable_profile_field("bio", bio, profile_field_unavailable)
         if has_nullable_profile_field_changed(bio, bio_old, profile_field_unavailable):
             print(f"* Bio has changed for user {user} !\n")
@@ -7806,26 +8121,26 @@ def github_monitor_user(user, csv_file_name):
                 print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} bio has changed!"
-            m_body = f"GitHub user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
-            bio_old_html = markdown_to_html(bio_old, convert_line_breaks=True) if bio_old else ""
-            bio_html = markdown_to_html(bio, convert_line_breaks=True) if bio else ""
+            m_body = f"GitHub user {user} bio has changed\n\nOld bio:\n\n{bio_old}\n\nNew bio:\n\n{bio}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            bio_old_html = markdown_to_html(bio_old, convert_line_breaks=True) if bio_old else html.escape(str(bio_old))
+            bio_html = markdown_to_html(bio, convert_line_breaks=True) if bio else html.escape(str(bio))
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> bio has changed<br><br>"
                 f"Old bio:<br><br>{bio_old_html}<br><br>"
                 f"New bio:<br><br>{bio_html}<br><br>"
-                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
             )
 
             send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             bio_old = bio
-            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print(f"Check interval:\t\t\t{check_window_text()}")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed location
-        location = gh_call(lambda: g_user.location, default=profile_field_unavailable)()  # noqa: B023
+        location = gh_call(lambda: g_user.location, default=profile_field_unavailable, operation="Profile location")()  # noqa: B023
         report_unavailable_profile_field("location", location, profile_field_unavailable)
         if has_nullable_profile_field_changed(location, location_old, profile_field_unavailable):
             print(f"* Location has changed for user {user} !\n")
@@ -7839,24 +8154,24 @@ def github_monitor_user(user, csv_file_name):
                 print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} location has changed!"
-            m_body = f"GitHub user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"GitHub user {user} location has changed\n\nOld location: {location_old}\n\nNew location: {location}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> location has changed<br><br>"
-                f"Old location: <b>{html.escape(location_old or '')}</b><br><br>"
-                f"New location: <b>{html.escape(location or '')}</b><br><br>"
-                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"Old location: <b>{html.escape(str(location_old))}</b><br><br>"
+                f"New location: <b>{html.escape(str(location))}</b><br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
             )
 
             send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             location_old = location
-            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print(f"Check interval:\t\t\t{check_window_text()}")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed user name
-        user_name = gh_call(lambda: g_user.name, default=profile_field_unavailable)()  # noqa: B023
+        user_name = gh_call(lambda: g_user.name, default=profile_field_unavailable, operation="Profile name")()  # noqa: B023
         report_unavailable_profile_field("name", user_name, profile_field_unavailable)
         if has_nullable_profile_field_changed(user_name, user_name_old, profile_field_unavailable):
             print(f"* User name has changed for user {user} !\n")
@@ -7870,24 +8185,24 @@ def github_monitor_user(user, csv_file_name):
                 print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} name has changed!"
-            m_body = f"GitHub user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"GitHub user {user} name has changed\n\nOld user name: {user_name_old}\n\nNew user name: {user_name}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> name has changed<br><br>"
-                f"Old user name: <b>{html.escape(user_name_old or '')}</b><br><br>"
-                f"New user name: <b>{html.escape(user_name or '')}</b><br><br>"
-                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"Old user name: <b>{html.escape(str(user_name_old))}</b><br><br>"
+                f"New user name: <b>{html.escape(str(user_name))}</b><br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
             )
 
             send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             user_name_old = user_name
-            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print(f"Check interval:\t\t\t{check_window_text()}")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed company
-        company = gh_call(lambda: g_user.company, default=profile_field_unavailable)()  # noqa: B023
+        company = gh_call(lambda: g_user.company, default=profile_field_unavailable, operation="Profile company")()  # noqa: B023
         report_unavailable_profile_field("company", company, profile_field_unavailable)
         if has_nullable_profile_field_changed(company, company_old, profile_field_unavailable):
             print(f"* User company has changed for user {user} !\n")
@@ -7901,24 +8216,24 @@ def github_monitor_user(user, csv_file_name):
                 print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} company has changed!"
-            m_body = f"GitHub user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"GitHub user {user} company has changed\n\nOld company: {company_old}\n\nNew company: {company}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> company has changed<br><br>"
-                f"Old company: <b>{html.escape(company_old or '')}</b><br><br>"
-                f"New company: <b>{html.escape(company or '')}</b><br><br>"
-                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"Old company: <b>{html.escape(str(company_old))}</b><br><br>"
+                f"New company: <b>{html.escape(str(company))}</b><br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
             )
 
             send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             company_old = company
-            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print(f"Check interval:\t\t\t{check_window_text()}")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed email
-        email = gh_call(lambda: g_user.email, default=profile_field_unavailable)()  # noqa: B023
+        email = gh_call(lambda: g_user.email, default=profile_field_unavailable, operation="Profile email")()  # noqa: B023
         report_unavailable_profile_field("email", email, profile_field_unavailable)
         if has_nullable_profile_field_changed(email, email_old, profile_field_unavailable):
             print(f"* User email has changed for user {user} !\n")
@@ -7932,24 +8247,24 @@ def github_monitor_user(user, csv_file_name):
                 print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} email has changed!"
-            m_body = f"GitHub user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"GitHub user {user} email has changed\n\nOld email: {email_old}\n\nNew email: {email}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
             m_body_html = (
                 f"<html><head></head><body>"
                 f"GitHub user <b>{html.escape(user)}</b> email has changed<br><br>"
-                f"Old email: <b>{html.escape(email_old or '')}</b><br><br>"
-                f"New email: <b>{html.escape(email or '')}</b><br><br>"
-                f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                f"Old email: <b>{html.escape(str(email_old))}</b><br><br>"
+                f"New email: <b>{html.escape(str(email))}</b><br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                 f"</body></html>"
             )
 
             send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             email_old = email
-            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print(f"Check interval:\t\t\t{check_window_text()}")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed blog URL
-        blog = gh_call(lambda: g_user.blog, default=profile_field_unavailable)()  # noqa: B023
+        blog = gh_call(lambda: g_user.blog, default=profile_field_unavailable, operation="Profile blog")()  # noqa: B023
         report_unavailable_profile_field("blog URL", blog, profile_field_unavailable)
         if has_nullable_profile_field_changed(blog, blog_old, profile_field_unavailable):
             print(f"* User blog URL has changed for user {user} !\n")
@@ -7963,16 +8278,24 @@ def github_monitor_user(user, csv_file_name):
                 print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} blog URL has changed!"
-            m_body = f"GitHub user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"GitHub user {user} blog URL has changed\n\nOld blog URL: {blog_old}\n\nNew blog URL: {blog}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> blog URL has changed<br><br>"
+                f"Old blog URL: <b>{html_autolink_urls(html.escape(str(blog_old)))}</b><br><br>"
+                f"New blog URL: <b>{html_autolink_urls(html.escape(str(blog)))}</b><br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
-            send_notification_channels("profile", m_subject, m_body, "", PROFILE_NOTIFICATION)
+            send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             blog_old = blog
-            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print(f"Check interval:\t\t\t{check_window_text()}")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Changed account update date
-        account_updated_date = gh_call(lambda: g_user.updated_at)()  # noqa: B023
+        account_updated_date = gh_call(lambda: g_user.updated_at, operation="Profile update date")()  # noqa: B023
         if account_updated_date is not None and account_updated_date != account_updated_date_old:
             print(f"* User account has been updated for user {user} ! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n")
             print(f"Old account update date:\t{get_date_from_ts(account_updated_date_old)}\n")
@@ -7985,17 +8308,29 @@ def github_monitor_user(user, csv_file_name):
                 print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} account has been updated! (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})"
-            m_body = f"GitHub user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"GitHub user {user} account has been updated (after {calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)})\n\nOld account update date: {get_date_from_ts(account_updated_date_old)}\n\nNew account update date: {get_date_from_ts(account_updated_date)}\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            updated_timespan = calculate_timespan(account_updated_date, account_updated_date_old, show_seconds=False, granularity=2)
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> account has been updated (after <b>{html.escape(updated_timespan)}</b>)<br><br>"
+                f"Old account update date: <b>{html.escape(get_date_from_ts(account_updated_date_old))}</b><br><br>"
+                f"New account update date: <b>{html.escape(get_date_from_ts(account_updated_date))}</b><br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
-            send_notification_channels("profile", m_subject, m_body, "", PROFILE_NOTIFICATION)
+            send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             account_updated_date_old = account_updated_date
-            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print(f"Check interval:\t\t\t{check_window_text()}")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Profile visibility changed
         public = is_profile_public(g, user)
-        if public != public_old:
+        # A lookup that could not answer neither alerts nor becomes the baseline the next check compares against
+        if public is not None and public_old is None:
+            public_old = public
+        if public is not None and public != public_old:
 
             def _get_profile_status(public):
                 return "public" if public else "private"
@@ -8009,12 +8344,18 @@ def github_monitor_user(user, csv_file_name):
                 print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !"
-            m_body = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"GitHub user {user} has changed profile visibility to '{_get_profile_status(public)}' !\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> has changed profile visibility to '<b>{html.escape(_get_profile_status(public))}</b>' !<br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
-            send_notification_channels("profile", m_subject, m_body, "", PROFILE_NOTIFICATION)
+            send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             public_old = public
-            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print(f"Check interval:\t\t\t{check_window_text()}")
             print_cur_ts("Timestamp:\t\t\t")
 
         # Blocked status changed
@@ -8037,12 +8378,18 @@ def github_monitor_user(user, csv_file_name):
                 print_csv_write_error(e)
 
             m_subject = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!"
-            m_body = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!\n\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body = f"GitHub user {user} has {'blocked' if blocked else 'unblocked'} you!\n\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
+            m_body_html = (
+                f"<html><head></head><body>"
+                f"GitHub user <b>{html.escape(user)}</b> has <b>{'blocked' if blocked else 'unblocked'}</b> you!<br><br>"
+                f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
+                f"</body></html>"
+            )
 
-            send_notification_channels("profile", m_subject, m_body, "", PROFILE_NOTIFICATION)
+            send_notification_channels("profile", m_subject, m_body, m_body_html, PROFILE_NOTIFICATION)
 
             blocked_old = blocked
-            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+            print(f"Check interval:\t\t\t{check_window_text()}")
             print_cur_ts("Timestamp:\t\t\t")
 
         list_of_repos = []
@@ -8052,10 +8399,10 @@ def github_monitor_user(user, csv_file_name):
 
             try:
                 if GET_ALL_REPOS:
-                    repos_list = gh_call(lambda: list(g_user.get_repos()), raise_on_failure=True)()  # noqa: B023
+                    repos_list = gh_call(lambda: list(g_user.get_repos()), operation="Public repository list", raise_on_failure=True)()  # noqa: B023
                 else:
                     debug_github_operation("owned repository detail refresh", user)
-                    repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], raise_on_failure=True)()  # noqa: B023
+                    repos_list = gh_call(lambda: [repo for repo in g_user.get_repos(type='owner') if not repo.fork and repo.owner.login == user_login], operation="Public repository list", raise_on_failure=True)()  # noqa: B023
             except NET_ERRORS as e:
                 repos_list = None
                 verbose_degraded_feature("Repository detail feed", "repository detail alerts", e)
@@ -8142,7 +8489,7 @@ def github_monitor_user(user, csv_file_name):
                                     except Exception as e:
                                         print_csv_write_error(e)
                                     m_subject = f"GitHub user {user} repo '{r_name}' update date has changed ! (after {calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)})"
-                                    m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                    m_body = f"{r_message}\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     timespan_str = calculate_timespan(r_update, r_update_old, show_seconds=False, granularity=2)
                                     m_body_html = (
                                         f"<html><head></head><body>"
@@ -8150,11 +8497,11 @@ def github_monitor_user(user, csv_file_name):
                                         f"* Repo URL: <a href=\"{html.escape(r_url)}\">{html.escape(r_url)}</a><br><br>"
                                         f"Old repo update date: <b>{html.escape(get_date_from_ts(r_update_old))}</b><br><br>"
                                         f"New repo update date: <b>{html.escape(get_date_from_ts(r_update))}</b><br><br>"
-                                        f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                                        f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                                         f"</body></html>"
                                     )
                                     send_notification_channels("repo_update", m_subject, m_body, m_body_html, REPO_UPDATE_DATE_NOTIFICATION)
-                                    print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+                                    print(f"Check interval:\t\t\t{check_window_text()}")
                                     print_cur_ts("Timestamp:\t\t\t")
 
                                 # Number of stars for repo changed
@@ -8190,7 +8537,7 @@ def github_monitor_user(user, csv_file_name):
                                     except Exception as e:
                                         print_csv_write_error(e)
                                     m_subject = f"GitHub user {user} repo '{r_name}' description has changed !"
-                                    m_body = f"{r_message}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                    m_body = f"{r_message}\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     r_descr_old_html = markdown_to_html(r_descr_old, convert_line_breaks=True) if r_descr_old else ""
                                     r_descr_html = markdown_to_html(r_descr, convert_line_breaks=True) if r_descr else ""
                                     m_body_html = (
@@ -8200,11 +8547,11 @@ def github_monitor_user(user, csv_file_name):
                                         f"to:<br><br>"
                                         f"'{r_descr_html}'<br><br>"
                                         f"* Repo URL: <a href=\"{html.escape(r_url)}\">{html.escape(r_url)}</a><br><br>"
-                                        f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                                        f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                                         f"</body></html>"
                                     )
                                     send_notification_channels("repo", m_subject, m_body, m_body_html, REPO_NOTIFICATION)
-                                    print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+                                    print(f"Check interval:\t\t\t{check_window_text()}")
                                     print_cur_ts("Timestamp:\t\t\t")
 
                     list_of_repos_old = list_of_repos
@@ -8213,7 +8560,7 @@ def github_monitor_user(user, csv_file_name):
         if not DO_NOT_MONITOR_GITHUB_EVENTS:
             debug_github_operation("recent event refresh", user)
             try:
-                events = gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)), raise_on_failure=True)()  # noqa: B023
+                events = gh_call(lambda: list(islice(g_user.get_events(), EVENTS_NUMBER)), operation="Recent events", raise_on_failure=True)()  # noqa: B023
             except NET_ERRORS as e:
                 events = None
                 verbose_degraded_feature("Recent events", "new event alerts", e)
@@ -8275,7 +8622,7 @@ def github_monitor_user(user, csv_file_name):
                                     print_csv_write_error(e)
 
                                 m_subject = f"GitHub user {user} has new {event.type} (repo: {repo_name})"
-                                m_body = f"GitHub user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
+                                m_body = f"GitHub user {user} has new {event.type} event\n\n{event_text}\nCheck interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}"
                                 event_payload = None
                                 try:
                                     if hasattr(event, 'payload'):
@@ -8287,13 +8634,13 @@ def github_monitor_user(user, csv_file_name):
                                     f"<html><head></head><body>"
                                     f"GitHub user <b>{html.escape(user)}</b> has new <b>{html.escape(event.type)}</b> event<br><br>"
                                     f"{event_text_html}<br>"
-                                    f"Check interval: <b>{html.escape(display_time(GITHUB_CHECK_INTERVAL))}</b> ({html.escape(get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}"
+                                    f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
                                     f"</body></html>"
                                 )
 
                                 send_notification_channels("event", m_subject, m_body, m_body_html, EVENT_NOTIFICATION)
 
-                            print(f"Check interval:\t\t\t{display_time(GITHUB_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - GITHUB_CHECK_INTERVAL, int(time.time()), short=True)})")
+                            print(f"Check interval:\t\t\t{check_window_text()}")
                             print_cur_ts("Timestamp:\t\t\t")
 
                     last_event_id_old = last_event_id
@@ -8303,7 +8650,7 @@ def github_monitor_user(user, csv_file_name):
                 verbose_degraded_feature("Recent events", "new event alerts")
 
         if MONITOR_CHECK_FAILURES:
-            failures = [(feature, classify_recovery_error(error) if error is not None else make_recovery_advice("github.api_error", "The monitoring check did not return usable data", recovery_fix_with_guide("Check connectivity and resource access, then let the next check retry", DIAGNOSTICS_GUIDE_URL), True)) for feature, error in MONITOR_CHECK_FAILURES.items()]
+            failures = [(feature, classify_recovery_error(error) if error is not None else make_recovery_advice("github.api_error", "The monitoring check did not return usable data", recovery_fix_with_guide("Check connectivity and resource access, then let the next check retry", CONNECTION_GUIDE_URL), True)) for feature, error in MONITOR_CHECK_FAILURES.items()]
             feature, advice = next(((feature, advice) for feature, advice in failures if not advice.retryable), failures[0])
             # One failure carries the fix, but an alert that hides the rest understates the outage. The
             # count rather than the names keeps the text stable while a per-repository failure set changes
@@ -8312,11 +8659,8 @@ def github_monitor_user(user, csv_file_name):
             advice = make_recovery_advice(advice.code, summary, advice.fix, advice.retryable, advice.detail)
             report_monitor_failure(user, advice, error_alert, monitor_recovery_tracker, outage)
         else:
-            error_alert.reset()
+            report_monitor_recovery(user, error_alert, outage)
             monitor_recovery_tracker.reset()
-            outage_lasted = outage.recovered()
-            if outage_lasted is not None:
-                print_outage_recovery(user, outage_lasted)
 
         report_recovered_features()
         close_pending_notice_block()
@@ -8327,6 +8671,9 @@ def github_monitor_user(user, csv_file_name):
         elif not MONITOR_CHECK_FAILURES and LIVENESS_REMINDER_SECONDS and int(time.time()) - alive_since >= LIVENESS_REMINDER_SECONDS:
             print_liveness_banner(f"Monitoring healthy for {user}. No tracked change since the last check")
             alive_since = int(time.time())
+
+        # Only a check that got this far advanced the baselines, so a failing check leaves the window where it was
+        LAST_CHECK_TS = int(time.time())
 
         debug_monitor_check_timing(check_number, user, check_started_at, GITHUB_CHECK_INTERVAL, outcome="degraded" if MONITOR_CHECK_FAILURES else "OK")
         debug_monitor_wait_timing("normal monitoring interval", GITHUB_CHECK_INTERVAL)
@@ -8379,9 +8726,13 @@ def apply_webhook_cli_overrides(args: argparse.Namespace, parser: argparse.Argum
 
 # Applies monitoring, output and email command-line overrides to effective settings
 def apply_monitoring_cli_overrides(args: argparse.Namespace, parser: argparse.ArgumentParser, strict=True) -> None:
-    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_REMINDER_SECONDS, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION
+    global CSV_FILE, DISABLE_LOGGING, PROFILE_NOTIFICATION, EVENT_NOTIFICATION, REPO_NOTIFICATION, REPO_UPDATE_DATE_NOTIFICATION, ERROR_NOTIFICATION, GITHUB_CHECK_INTERVAL, LIVENESS_REMINDER_SECONDS, DO_NOT_MONITOR_GITHUB_EVENTS, TRACK_REPOS_CHANGES, REPOS_TO_MONITOR, GET_ALL_REPOS, CONTRIB_NOTIFICATION, TRACK_CONTRIB_CHANGES, WEBHOOK_REPO_NOTIFICATION, WEBHOOK_REPO_UPDATE_DATE_NOTIFICATION, WEBHOOK_CONTRIB_NOTIFICATION, WEBHOOK_EVENT_NOTIFICATION, PUSH_COMMITS_LIMIT, PUSH_FILES_LIMIT
     if args.check_interval is not None:
         GITHUB_CHECK_INTERVAL = args.check_interval
+    if getattr(args, "push_commits_limit", None) is not None:
+        PUSH_COMMITS_LIMIT = args.push_commits_limit
+    if getattr(args, "push_files_limit", None) is not None:
+        PUSH_FILES_LIMIT = args.push_files_limit
     if args.csv_file is not None:
         CSV_FILE = os.path.expanduser(args.csv_file)
     elif CSV_FILE:
@@ -8612,6 +8963,8 @@ def runtime_configuration_errors():
     positive_numbers = (("CHECK_INTERNET_TIMEOUT", CHECK_INTERNET_TIMEOUT),)
     nonnegative_numbers = (("NET_BASE_BACKOFF_SEC", NET_BASE_BACKOFF_SEC),)
     positive_integers = (("GITHUB_CHECK_INTERVAL", GITHUB_CHECK_INTERVAL), ("EVENTS_NUMBER", EVENTS_NUMBER), ("NET_MAX_RETRIES", NET_MAX_RETRIES))
+    nonnegative_integers = (("PUSH_COMMITS_LIMIT", PUSH_COMMITS_LIMIT), ("PUSH_FILES_LIMIT", PUSH_FILES_LIMIT))
+    choices = (("PUSH_COMMITS_ORDER", PUSH_COMMITS_ORDER, ("newest", "oldest")), ("PUSH_COMMITS_OVERFLOW", PUSH_COMMITS_OVERFLOW, ("summary", "count")))
     for name, value in positive_numbers:
         if not finite_number(value) or value <= 0:
             errors.append(f"{name} must be a number greater than zero, not {value!r}")
@@ -8621,6 +8974,12 @@ def runtime_configuration_errors():
     for name, value in positive_integers:
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             errors.append(f"{name} must be an integer greater than zero, not {value!r}")
+    for name, value in nonnegative_integers:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            errors.append(f"{name} must be an integer zero or greater, not {value!r}")
+    for name, value, allowed in choices:
+        if not isinstance(value, str) or value.strip().casefold() not in allowed:
+            errors.append(f"{name} must be {' or '.join(repr(choice) for choice in allowed)}, not {value!r}")
     if not isinstance(SMTP_PORT, int) or isinstance(SMTP_PORT, bool) or not 1 <= SMTP_PORT <= 65535:
         errors.append(f"SMTP_PORT must be an integer from 1 through 65535, not {SMTP_PORT!r}")
     return errors
@@ -8882,7 +9241,7 @@ def doctor_check_monitoring(report, contribution_checker=None):
                 doctor_probe_feed(operation, factory)
                 report.add("Monitoring", "PASS", label)
             except Exception as exc:
-                advice = make_recovery_advice("github.api_error", label.replace(" is accessible", " is unavailable"), recovery_fix_with_guide("Check target visibility, token access and GitHub API availability", DIAGNOSTICS_GUIDE_URL), False)
+                advice = make_recovery_advice("github.api_error", label.replace(" is accessible", " is unavailable"), recovery_fix_with_guide("Check target visibility, token access and GitHub API availability", QUICK_START_GUIDE_URL), False)
                 report.add("Monitoring", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
         if DO_NOT_MONITOR_GITHUB_EVENTS:
             report.add("Monitoring", "PASS", "GitHub event monitoring is disabled", "No event feed check was needed")
@@ -8900,7 +9259,7 @@ def doctor_check_monitoring(report, contribution_checker=None):
             checker(report.target_name, today_local(), report.github_token)
             report.add("Monitoring", "PASS", "Daily contribution feed is accessible")
         except Exception as exc:
-            advice = make_recovery_advice("github.api_error", "Daily contribution feed is unavailable", recovery_fix_with_guide("Check token access, timezone and GitHub GraphQL availability", DIAGNOSTICS_GUIDE_URL), False)
+            advice = make_recovery_advice("github.api_error", "Daily contribution feed is unavailable", recovery_fix_with_guide("Check token access, timezone and GitHub GraphQL availability", QUICK_START_GUIDE_URL), False)
             report.add("Monitoring", "FAIL", advice.summary, f"{type(exc).__name__}: {sanitize_error_text(exc)}", advice)
     elif TRACK_CONTRIB_CHANGES:
         report.add("Monitoring", "SKIP", "Daily contribution feed was not checked", "The target profile was not fetched, so no lookup was attempted")
@@ -10787,7 +11146,7 @@ def main():
         dest="notify_errors",
         action="store_false",
         default=None,
-        help="Disable email on errors"
+        help="Disable email on errors and the recovery alert that follows"
     )
     notify.add_argument(
         "--send-test-email",
@@ -10866,14 +11225,14 @@ def main():
         dest="webhook_errors",
         action="store_true",
         default=None,
-        help="Send webhook alerts when monitoring has a problem"
+        help="Send webhook alerts when monitoring has a problem and the recovery alert that follows"
     )
     webhook_error_toggle.add_argument(
         "--no-webhook-error-notify",
         dest="webhook_errors",
         action="store_false",
         default=None,
-        help="Disable webhook alerts when monitoring has a problem"
+        help="Disable webhook alerts when monitoring has a problem and the recovery alert that follows"
     )
     webhook_notify.add_argument(
         "--send-test-webhook",
@@ -10980,6 +11339,20 @@ def main():
         metavar="N",
         type=int,
         help="Max characters per screen line (not log), use 999 to auto-detect terminal width, ignored if -d is set"
+    )
+    opts.add_argument(
+        "--push-commits-limit",
+        dest="push_commits_limit",
+        metavar="N",
+        type=int,
+        help="Max commits of one push event reported in full, use 0 for no limit, the rest are summarized"
+    )
+    opts.add_argument(
+        "--push-files-limit",
+        dest="push_files_limit",
+        metavar="N",
+        type=int,
+        help="Max changed files listed per commit, use 0 for no limit"
     )
     opts.add_argument(
         "-m", "--track-contribs-changes",

@@ -59,6 +59,31 @@ By default all events are monitored, but if you want to limit it, then remove th
 EVENTS_TO_MONITOR=['PushEvent', 'PullRequestEvent', 'IssuesEvent', 'ForkEvent', 'ReleaseEvent', 'DiscussionEvent']
 ```
 
+<a id="push-event-commits"></a>
+## Push Event Commits
+
+A push can carry hundreds of commits. Reporting every one in full costs an extra GitHub API request each and produces a notification nobody reads, so only `PUSH_COMMITS_LIMIT` commits of a push are reported with their date, author URL, statistics and changed files. The rest are replaced by one line naming how many were left out.
+
+```ini
+PUSH_COMMITS_LIMIT = 10
+PUSH_COMMITS_ORDER = 'newest'
+PUSH_COMMITS_OVERFLOW = 'count'
+PUSH_FILES_LIMIT = 20
+```
+
+| Option | Values | Effect |
+| --- | --- | --- |
+| `PUSH_COMMITS_LIMIT` | integer, `0` for no limit | Commits of one push reported in full, also `--push-commits-limit` |
+| `PUSH_COMMITS_ORDER` | `'newest'`, `'oldest'` | Which end of the push keeps the detailed commits |
+| `PUSH_COMMITS_OVERFLOW` | `'count'`, `'summary'` | Whether the remaining commits become a single count or get one line each |
+| `PUSH_FILES_LIMIT` | integer, `0` for no limit | Changed files listed per commit, also `--push-files-limit` |
+
+With the built-in values a 300-commit push spends about 12 requests instead of about 300. It reports the 10 newest commits in full and replaces the other 290 with `Commits 1-290 not reported in full`. The compare URL in the same report links the complete diff.
+
+The limits in effect appear as `Push commit details` and `Push changed files` in the startup summary, which `--verbose` and `--debug` print on screen and every run writes to the log file.
+
+Set `PUSH_COMMITS_OVERFLOW = 'summary'` to list those commits one line each instead, with their SHA, author and first message line. Those lines are built from data the tool already fetched, so they cost no extra requests, but a large push then produces a long notification. Set `PUSH_COMMITS_LIMIT = 0` to report every commit of every push in full.
+
 <a id="repositories-to-monitor"></a>
 ## Repositories to Monitor
 
@@ -121,6 +146,8 @@ python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
 ## SMTP Settings
 
 Email notifications need SMTP server details for the sending account. Add them to `github_monitor.conf` or use the setup wizard. Setup checks the login without sending an email. To replace only the password, run `github_monitor --set-smtp-password`. Password entry is hidden and preserves spaces.
+
+Every alert is sent as both HTML and plain text in one message. Mail clients that render HTML show the account, the changed value and the check interval in bold, with repositories, commits, issues and profile addresses linked. Clients that do not fall back to the plain text, which is unchanged.
 
 Send one test message to verify the settings:
 

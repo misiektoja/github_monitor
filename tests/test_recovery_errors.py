@@ -397,8 +397,8 @@ def test_a_failed_refresh_names_the_list_and_carries_a_fix(gm_module, capsys):
     gm_module.print_degraded_error("Followers could not be refreshed", req.ConnectionError("no route to host"))
 
     printed = capsys.readouterr().out
-    assert "* Error: Followers could not be refreshed: The configured service could not be reached" in printed
-    assert "To fix: Check the network and configured service URL then try again" in printed
+    assert "* Error: Followers could not be refreshed: GitHub could not be reached" in printed
+    assert "To fix: Usually nothing to do, the tool retries on its own." in printed
     assert "Guide: " in printed
 
 
@@ -720,3 +720,40 @@ def test_the_loop_tracks_the_error_alert_through_the_state(gm_module):
     assert source.count('error_alert.pending("email"') == source.count('error_alert.record("email"') >= 1
     assert source.count('error_alert.pending("webhook"') == source.count('error_alert.record("webhook"') >= 1
     assert not re.search(r"^\s*error_(email|webhook)_sent = ", source, re.MULTILINE)
+
+
+# The verbose and debug section explains the output flags, so a network failure sent there finds nothing about its cause
+@pytest.mark.parametrize("error", [req.Timeout("timed out"), req.ConnectionError("connection refused")])
+def test_network_failures_link_to_the_connection_guide(gm_module, error):
+    advice = gm_module.classify_recovery_error(error)
+
+    assert advice.retryable is True
+    assert f"\nGuide: {gm_module.CONNECTION_GUIDE_URL}" in advice.fix
+    assert advice.fix.startswith("Usually nothing to do, the tool retries on its own.")
+    assert "--doctor" not in advice.fix
+    assert "--debug" not in advice.fix
+
+
+# Verifies the failure and recovery alert subjects name the tool, so an inbox fed by several monitors sorts them apart
+def test_the_alert_subjects_name_the_tool(gm_module):
+    advice = gm_module.make_recovery_advice("network.timeout", "GitHub did not answer in time", "do the thing", True)
+
+    assert gm_module.recovery_alert_subject(advice, "watched") == "GitHub Monitor error: GitHub did not answer in time (user: watched)"
+    assert gm_module.outage_recovered_alert_subject("watched", 514) == "GitHub Monitor recovered: monitoring watched resumed after 8 minutes, 34 seconds"
+
+
+# Verifies the failure alert body counts the run only once a check has failed again and carries the cause only in debug
+def test_the_failure_alert_body_lists_the_retry_and_hides_the_cause(gm_module, monkeypatch):
+    monkeypatch.setattr(gm_module, "DEBUG_MODE", False)
+    advice = gm_module.make_recovery_advice("network.timeout", "GitHub did not answer in time", "Usually nothing to do", True, "the socket gave up")
+
+    first = gm_module.recovery_alert_body(advice, 300)
+    later = gm_module.recovery_alert_body(advice, 300, 4, 1800000000)
+
+    assert first.startswith("GitHub did not answer in time\n\nTo fix: Usually nothing to do\n\nNext retry in: 5 minutes")
+    assert "Failed checks in a row" not in first
+    assert "Failed checks in a row: 4" in later and "Failing since: " in later
+    assert "Technical detail" not in later
+    assert "Timestamp: " not in gm_module.recovery_alert_body(advice, 300, timestamp=False)
+    monkeypatch.setattr(gm_module, "DEBUG_MODE", True)
+    assert "Technical detail: the socket gave up" in gm_module.recovery_alert_body(advice, 300)

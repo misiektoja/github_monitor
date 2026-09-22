@@ -18,10 +18,11 @@ cd github_monitor
 pip install -e '.[test]'
 ```
 
-Optional local hooks catch what CI would reject before a commit is written:
+Optional local hooks catch what CI would reject before a commit is written. The lint hook calls the Ruff installed by the `lint` extra rather than a copy of its own, so it always matches the version CI runs:
 
 ```sh
 pip install pre-commit
+pip install -e '.[lint]'
 pre-commit install
 ```
 
@@ -40,6 +41,8 @@ mkdocs build --strict
 ```
 
 The default suite is offline. It never contacts GitHub and network calls are replaced with local test doubles. See [tests/README.md](tests/README.md) for what each test file covers.
+
+CodeQL runs the extended security queries. For a verified false positive, put a `codeql[rule-id]` comment immediately above the reported line and explain why it is safe. The workflow filters results with accepted source suppressions before upload. Other findings remain reportable.
 
 CI runs the same three checks on every push and pull request, across Python 3.10 through 3.14. The linter is pinned in the `lint` extra so a new ruff release cannot fail a build on a rule that did not exist when the change was written; the pre-commit hook pins the same version.
 

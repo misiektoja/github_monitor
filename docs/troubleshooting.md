@@ -40,8 +40,28 @@ Every failure is reported in the same three-part shape: what went wrong, a `To f
 | Webhook alerts never arrive | Provider mismatch or a stale destination | [Webhook Settings](configuration.md#webhook-settings) then run `github_monitor --send-test-webhook` |
 | `github_monitor` is not found after installation | The shell has not picked up the new command | [Installation and Command Problems](#installation-and-command-problems) |
 | Escape sequences such as `[36m` printed as text or no colour at all | The terminal cannot display ANSI colour or colour was switched off | [Terminal Colours Look Wrong](#terminal-colours-look-wrong) |
+| `GitHub did not answer in time`, `GitHub could not be reached` or `GitHub is temporarily unavailable` | A network problem between this machine and GitHub or a GitHub outage | [Connection Problems](#connection-problems) |
+| `This process ran out of file descriptors` | The operating system limit on open files was reached | [Too Many Open Files](#too-many-open-files) |
 
 A continuing outage produces a `* Monitoring degraded` reminder once an hour, even when the [liveness reminder](usage.md#liveness-reminder) is switched off. `* Monitoring recovered` marks recovery. Use `--verbose` to see the first failed check.
+
+<a id="connection-problems"></a>
+## Connection Problems
+
+`GitHub did not answer in time` and `GitHub could not be reached` mean a check got no answer from GitHub. `GitHub is temporarily unavailable` means GitHub answered with a server error. The report names the interval after which the check is retried, so a short outage needs no action. While the network is down only the first request prints its retry attempts, because the requests behind it stop retrying once it has shown that GitHub cannot be reached. A failure that lasts produces the hourly `Monitoring degraded` reminder and `Monitoring recovered` when it clears.
+
+If the failure continues, check the internet connection, DNS and any firewall or proxy between this machine and GitHub. A certificate error points at TLS interception on the network, see [TLS Verification](configuration.md#tls-verification). A server error that lasts is a GitHub outage, so wait for it to end.
+
+To confirm that GitHub is reachable from this machine, run:
+
+```sh
+github_monitor --doctor
+```
+
+<a id="too-many-open-files"></a>
+## Too Many Open Files
+
+`This process ran out of file descriptors` means the operating system limit on open files was reached. It is a local limit and not a GitHub problem. Raise it with `ulimit -n 4096` in the shell that starts the tool or set `LimitNOFILE=` in the systemd unit, then restart the tool.
 
 <a id="terminal-colours-look-wrong"></a>
 ## Terminal Colours Look Wrong

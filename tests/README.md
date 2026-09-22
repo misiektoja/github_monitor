@@ -37,6 +37,7 @@ and again before anything is published to PyPI.
 
 | File | Area under test |
 | --- | --- |
+| `test_codeql_workflow.py` | Source suppression filtering, retained security findings, invalid reports and CodeQL upload ordering |
 | `test_repository_closure.py` | Verified issue, PR and discussion closures, retained snapshots, shared request limits, fair rotation and transport settings |
 | `test_notification_receipts.py` | SMTP acceptance despite cleanup failures, receipt controls and unchanged notification content |
 | `test_configuration_notification_boundaries.py` | Invalid output settings, CLI precedence and strict webhook fields with legacy JSON support |
@@ -62,8 +63,11 @@ and again before anything is published to PyPI.
 | `test_github_token_setup.py` | Hidden token entry, targeted dotenv updates and refusal to save an invalid token |
 | `test_help_screen.py` | The `--help` screen: the shared argument group names, the task-grouped examples and the startup banner |
 | `test_install_method_commands.py` | PyPI and downloaded-script detection with portable plus exact POSIX and Windows commands |
+| `test_email_html.py` | HTML notification bodies: escaping, the Discord markdown form and the plain-text match |
 | `test_monitoring_loop.py` | The primary monitoring loop driven through outages: the error alert on both channels, once per failure category, retried per channel and re-armed after a recovery |
+| `test_missed_alert_recovery.py` | The recovery alert sent to a channel that never received the failure alert |
 | `test_profile_fields.py` | Addition, removal and failure handling for nullable profile fields |
+| `test_push_commit_limits.py` | Push commit detail limits: the kept range, summarized and counted overflow, the changed-file cap, rejected settings and the startup summary rows |
 | `test_recovery_errors.py` | Closed recovery codes, classification, retryability and layered secret redaction that leaves ordinary output intact |
 | `test_repository_contracts.py` | Governance documents, issue templates, action pinning, release gating, the CI contract and the documentation site: its pinned page set, one title per page, no section on two pages, resolving links and the runtime guide URLs |
 | `test_repository_metadata.py` | Governance files, citation, funding, line endings, the declared editor style, the pinned linter and release integrity |

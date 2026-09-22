@@ -242,3 +242,53 @@ def test_interpolated_secret_follows_startup_and_reload_precedence(monitor, monk
     assert monitor.NTFY_ACCESS_TOKEN == "synthetic-export-value"
     monitor.reload_secrets_signal_handler(signal.SIGHUP, None)
     assert monitor.NTFY_ACCESS_TOKEN == "synthetic-export-value"
+
+
+# Verifies the outage reminder can hold its trailer, so an alert delivered by the same check is printed inside
+# the report rather than under the separator that ended it
+def test_the_outage_reminder_can_hold_its_trailer(monitor, monkeypatch, capsys):
+    monkeypatch.setattr(monitor, "LOCAL_TIMEZONE", "UTC")
+    advice = monitor.make_recovery_advice("network.unavailable", "The network is unreachable", "Check connectivity then retry", True)
+
+    monitor.print_outage_liveness("watched-target", advice, 1_000_000, 2, close=False)
+    held = capsys.readouterr().out
+    monitor.print_outage_liveness("watched-target", advice, 1_000_000, 2)
+    closed = capsys.readouterr().out
+
+    assert "* Monitoring degraded for watched-target. The network is unreachable since " in held
+    assert "Liveness check, timestamp:" not in held, "a reminder that closes itself leaves the alert outside the report"
+    assert "Liveness check, timestamp:" in closed
+
+
+# Verifies every failing path defers the reminder trailer, since the alert it may deliver prints after the reminder
+def test_every_failing_path_defers_the_reminder_trailer(monitor):
+    source = Path(monitor.__file__).read_text(encoding="utf-8")
+    calls = [line.strip() for line in source.splitlines() if "print_outage_liveness(" in line and not line.lstrip().startswith("def ")]
+
+    assert calls, "the outage reminder is never reported"
+    assert all("close=False" in call for call in calls), calls
+    # One trailer inside the helper and at least one in every path that defers it
+    assert source.count('print_cur_ts("Liveness check, timestamp:\\t")') >= len(calls) + 1
+
+
+# Verifies a reported change names the window the run observed, which a failing check leaves further back than
+# the configured interval
+def test_a_reported_change_names_the_window_the_run_observed(monitor, monkeypatch):
+    monkeypatch.setattr(monitor, "LOCAL_TIMEZONE", "UTC")
+    monkeypatch.setattr(monitor, "GITHUB_CHECK_INTERVAL", 3600)
+    monkeypatch.setattr(monitor, "LAST_CHECK_TS", int(monitor.time.time()) - 60)
+
+    assert monitor.observed_window()[0] == 60
+    assert monitor.check_window_text().startswith("1 minute (")
+    assert monitor.check_window_html().startswith("<b>1 minute</b> (")
+
+    monkeypatch.setattr(monitor, "LAST_CHECK_TS", 0)
+    assert monitor.observed_window()[0] == 3600, "the configured interval is all a run knows before its first check"
+
+
+# Verifies no report still builds its window from the configured interval, which a failing check makes wrong
+def test_no_report_builds_its_window_from_the_configured_interval(monitor):
+    source = Path(monitor.__file__).read_text(encoding="utf-8")
+
+    assert "int(time.time()) - GITHUB_CHECK_INTERVAL" not in source
+    assert source.count("check_window_text()") + source.count("check_window_html()") >= 48

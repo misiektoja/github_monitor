@@ -2,6 +2,25 @@
 
 This is a high-level summary of the most important changes.
 
+# Changes in 2.8 (22 Sep 2026)
+
+Version **2.8** caps how much of a large push a single notification reports and gives every monitoring failure unified subject and body across email and webhook, followed by a **recovery alert** when monitoring resumes. Network failures now link to a new **Connection Problems** page section. Alert delivery messages stay within the correct check report and alert channels that still use placeholder configuration values are shown as not configured.
+
+**Features and improvements**:
+
+- **NEW:** **Push event commit limits** - A push with hundreds of commits no longer spends one API request per commit and no longer fills the notification. **`PUSH_COMMITS_LIMIT`** (default **10**, also **`--push-commits-limit`**) sets how many commits of one push are reported with their date, author URL, statistics and changed files. **`PUSH_COMMITS_ORDER`** picks which end of the push keeps them, **`newest`** by default. The remaining commits are replaced by one line naming how many were left out, or listed one line each with their SHA, author and first message line by setting **`PUSH_COMMITS_OVERFLOW = 'summary'`**. **`PUSH_FILES_LIMIT`** (default **20**, also **`--push-files-limit`**) caps the changed files listed per commit. Set either limit to **0** to report everything in full.
+- **IMPROVE:** **Every profile change is sent as HTML** - The alerts about a changed **blog URL**, an **updated account**, a **profile visibility** switch and a **block** now carry an HTML part like the other alerts
+- **IMPROVE:** **Failure alerts share one shape** - Every monitoring failure email and webhook uses the subject **`GitHub Monitor error: <what went wrong> (user: <username>)`** and lists the fix, the guide link, how many checks failed in a row, since when and when the next retry happens. A **recovery alert** follows on the channels that received the failure alert once monitoring resumes. `-e` / `--no-error-notify` and `--no-webhook-error-notify` switch both off
+
+**Bug fixes**:
+
+- **BUGFIX:** **An unset profile value reads the same in both email parts** - A bio, location, name, company, email or blog URL that was not set printed **`None`** in the plain text part while the HTML part left the line empty. Both parts now say the same thing
+- **BUGFIX:** **Network failures point at the right page** - A timed-out or unreachable GitHub request ended with a **`Guide:`** now link to the new **Connection Problems** section, which explains the automatic retries and what to check if the failure continues.
+- **BUGFIX:** **A failed visibility check no longer ends the run** - The profile visibility lookup only handled GitHub API errors, so a timed-out or blocked connection ended the monitoring run with a traceback. The lookup now survives any failure and reports that it could not answer
+- **BUGFIX:** **Reported changes name the window they were observed in** - The **`Check interval:`** line under a change always showed the configured polling interval and a date range built from it, so a change found after a failed check was reported over a window the tool had not been watching. It now measures from the previous successful check, which is the configured interval while checks run on schedule
+- **BUGFIX:** **Alert deliveries stay inside their report** - The hourly **`Monitoring degraded`** reminder closed its report before the error alert was sent, so **`Sending email notification to ...`** and its webhook equivalent landed under the separator and started a second, headless block. The reminder now closes below its delivery lines, keeping one check's report in one block
+- **BUGFIX:** **Unset alert channels are reported as unset** - The verbose startup summary read the values the sample configuration ships as a real destination, so a run that had never been given a mail server printed **`Email transport: your_smtp_server_ssl:587`**, a recipient of **`your_receiver_email`** and a webhook provider of **`Discord`**. Those rows now read **`Not configured`** and the channel rollup above them reads **`Off (not configured)`** rather than naming alert types nothing could deliver
+
 # Changes in 2.7 (18 Sep 2026)
 
 Version **2.7** adds **guided setup**, a read-only **Doctor preflight check** and **private SMTP password entry**. **Coloured output**, startup summaries and verbose/debug modes make monitoring easier to follow. It improves **contribution and repository-closure alerts**, preserves history during failed checks and protects configuration and credentials. Documentation is searchable and release downloads can be verified.

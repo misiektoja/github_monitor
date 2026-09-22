@@ -1,5 +1,7 @@
 """Exercise retry exhaustion through real PyGithub clients and paginated responses."""
 
+import ast
+import inspect
 import json
 from urllib.parse import urlsplit
 
@@ -200,6 +202,155 @@ def test_failed_feed_alerts_until_whole_check_recovers(gm_module, monkeypatch, c
     monkeypatch.setattr(requests.Session, "send", send)
     with pytest.raises(MonitorComplete):
         gm.github_monitor_user("watched", "")
-    assert deliveries == [2, 5]
+    # The failed feed alerts on check 2, the complete check on 4 answers it with a recovery alert and check 5 fails again
+    assert deliveries == [2, 4, 5]
     output = capsys.readouterr().out
     assert "GitHub rejected the configured token" in output
+
+
+# Every monitoring request the tool makes, whichever transport it uses
+RETRYING_FEEDS = {
+    "starred count": lambda gm: gm.get_starred_count("watched"),
+    "profile visibility": lambda gm: gm.has_private_banner("watched"),
+    "block status": lambda gm: gm.is_blocked_by("watched"),
+    "daily contributions": lambda gm: gm.get_daily_contributions("watched", token="synthetic-token"),
+}
+
+
+# Installs a transport that refuses every request and counts the attempts it was given
+def refusing_transport(monkeypatch, calls, error=None):
+    def send(session, request, **kwargs):
+        calls.append(request.url)
+        raise error or requests.ConnectionError("Connection refused")
+
+    monkeypatch.setattr(requests.sessions.Session, "send", send)
+
+
+@pytest.mark.parametrize("feed", sorted(RETRYING_FEEDS))
+# One blip must not kill one feed while another rides it out, so every feed shares the same retry schedule
+def test_every_monitoring_feed_retries_a_transport_failure(gm_module, monkeypatch, restored_globals, feed):
+    gm = gm_module
+    monkeypatch.setattr(gm, "GITHUB_TOKEN", "synthetic-token")
+    monkeypatch.setattr(gm, "NET_MAX_RETRIES", 3)
+    monkeypatch.setattr(gm, "NET_BASE_BACKOFF_SEC", 0)
+    calls = []
+    refusing_transport(monkeypatch, calls)
+
+    try:
+        RETRYING_FEEDS[feed](gm)
+    except Exception:
+        # Some feeds report the failure to their caller and some swallow it, but both retried first
+        pass
+
+    assert len(calls) == 3
+
+
+# A check that already proved the network unreachable learns nothing from making every later feed wait for it
+def test_a_confirmed_outage_stops_the_later_calls_from_retrying(gm_module, monkeypatch, restored_globals):
+    gm = gm_module
+    monkeypatch.setattr(gm, "GITHUB_TOKEN", "synthetic-token")
+    monkeypatch.setattr(gm, "NET_MAX_RETRIES", 4)
+    monkeypatch.setattr(gm, "NET_BASE_BACKOFF_SEC", 0)
+    calls = []
+    refusing_transport(monkeypatch, calls)
+
+    gm.get_starred_count("watched")
+    first = len(calls)
+    gm.has_private_banner("watched")
+
+    assert first == 4
+    assert len(calls) - first == 1
+    assert gm.NET_OUTAGE_CONFIRMED is True
+
+
+# The breaker must not outlast the outage, so a call that gets through arms the full schedule again
+def test_a_call_that_gets_through_rearms_the_retry_schedule(gm_module, monkeypatch, restored_globals):
+    gm = gm_module
+    monkeypatch.setattr(gm, "GITHUB_TOKEN", "synthetic-token")
+    monkeypatch.setattr(gm, "NET_MAX_RETRIES", 3)
+    monkeypatch.setattr(gm, "NET_BASE_BACKOFF_SEC", 0)
+    monkeypatch.setattr(gm, "NET_OUTAGE_CONFIRMED", True)
+    calls = []
+
+    def send(session, request, **kwargs):
+        calls.append(request.url)
+        if len(calls) == 1:
+            return github_response(request, {"data": {"user": {"starredRepositories": {"totalCount": 7}}}})
+        raise requests.ConnectionError("Connection refused")
+
+    monkeypatch.setattr(requests.sessions.Session, "send", send)
+
+    assert gm.get_starred_count("watched") == 7
+    assert gm.NET_OUTAGE_CONFIRMED is False
+    gm.has_private_banner("watched")
+    assert len(calls) - 1 == 3
+
+
+# A failure that answers the same way every time is not worth a schedule, and a local limit gets worse for one
+@pytest.mark.parametrize("error", [None, "descriptors"])
+def test_a_permanent_failure_is_not_retried(gm_module, monkeypatch, restored_globals, error):
+    gm = gm_module
+    monkeypatch.setattr(gm, "GITHUB_TOKEN", "synthetic-token")
+    monkeypatch.setattr(gm, "NET_MAX_RETRIES", 5)
+    monkeypatch.setattr(gm, "NET_BASE_BACKOFF_SEC", 0)
+    calls = []
+
+    if error == "descriptors":
+        refusing_transport(monkeypatch, calls, requests.ConnectionError("Connection failed"))
+        monkeypatch.setattr(gm, "is_too_many_open_files", lambda failure: True)
+    else:
+        def send(session, request, **kwargs):
+            calls.append(request.url)
+            return github_response(request, {"message": "Not Found"}, 404)
+
+        monkeypatch.setattr(requests.sessions.Session, "send", send)
+
+    client = gm.Github(auth=gm.Auth.Token("synthetic-token"))
+    with pytest.raises(gm.NET_ERRORS):
+        gm.gh_call(lambda: client.get_user("watched").name, operation="Profile name", raise_on_failure=True)()
+
+    assert len(calls) == 1
+
+
+# A retry line and the degraded notice that follows it report one fetch, so a reader must not see two names
+@pytest.mark.parametrize("feed,name", [("starred count", "Starred repository count"), ("profile visibility", "Profile visibility"), ("block status", "Block status")])
+def test_a_retry_line_and_its_degraded_notice_name_one_feed(gm_module, monkeypatch, capsys, restored_globals, feed, name):
+    gm = gm_module
+    monkeypatch.setattr(gm, "GITHUB_TOKEN", "synthetic-token")
+    monkeypatch.setattr(gm, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm, "NET_MAX_RETRIES", 2)
+    monkeypatch.setattr(gm, "NET_BASE_BACKOFF_SEC", 0)
+    refusing_transport(monkeypatch, [])
+
+    RETRYING_FEEDS[feed](gm)
+
+    output = capsys.readouterr().out
+    assert f"* {name} failed:" in output
+    assert f"{name}: unavailable" in output
+
+
+# Collects the labels a retry line prints beside the feature names a degraded notice reports
+def retry_labels_and_feature_names(gm):
+    tree = ast.parse(inspect.getsource(gm))
+    raising, features = set(), set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        if name == "gh_call":
+            operation = keywords.get("operation")
+            raises = keywords.get("raise_on_failure")
+            if isinstance(operation, ast.Constant) and isinstance(raises, ast.Constant) and raises.value:
+                raising.add(operation.value)
+        if name == "verbose_degraded_feature" and node.args and isinstance(node.args[0], ast.Constant):
+            features.add(node.args[0].value)
+    return raising, features
+
+
+# A fetch whose caller reports it under another name reads as two separate failures a few lines apart
+def test_every_retry_label_matches_the_feature_its_caller_reports(gm_module):
+    raising, features = retry_labels_and_feature_names(gm_module)
+
+    assert raising, "the sweep stopped finding raising calls, update its matching"
+    assert not raising - features, "a retry line names a fetch its degraded notice calls something else: " + ", ".join(sorted(raising - features))
