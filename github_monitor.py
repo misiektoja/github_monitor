@@ -1522,7 +1522,7 @@ class Logger(object):
 
     # Writes sanitized output to both the terminal and log
     def write(self, message):
-        safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        safe_message = sanitize_console_text(message)
         # The scanner does not treat the sanitizer as a barrier, so it reports the masked line as a leak
         # codeql[py/clear-text-storage-sensitive-data]
         self.logfile.write(normalize_log_separators(ANSI_ESCAPE_RE.sub("", safe_message).expandtabs(8)))
@@ -1538,14 +1538,14 @@ class Logger(object):
 
     # Writes sanitized output only to the terminal
     def terminal_only(self, message):
-        safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        safe_message = sanitize_console_text(message)
         terminal_message = self._truncate_terminal(safe_message)
         self.terminal.write(apply_color_to_text(terminal_message))
         self.terminal.flush()
 
     # Writes sanitized normalized output only to the log
     def log_only(self, message):
-        safe_message = sanitize_terminal_text(sanitize_error_text(message))
+        safe_message = sanitize_console_text(message)
         self.logfile.write(normalize_log_separators(ANSI_ESCAPE_RE.sub("", safe_message).expandtabs(8)))
         self.logfile.flush()
 
@@ -2907,6 +2907,19 @@ def mask_secret(value, visible=3):
     return "<redacted>"
 
 
+# Marks generated instructions combined only with already-redacted diagnostic fields
+class CommandOutput(str):
+    # Preserves the output marker when print converts its argument to text
+    def __str__(self) -> str:
+        return self
+
+
+# Keeps generated instructions intact while filtering ordinary output and terminal controls
+def sanitize_console_text(message):
+    filtered = message if isinstance(message, CommandOutput) else sanitize_error_text(message)
+    return sanitize_terminal_text(filtered)
+
+
 # Redacts known values and common credential shapes from arbitrary error text
 def sanitize_error_text(value, extra_secrets=()):
     text = str(value or "")
@@ -3278,11 +3291,12 @@ class RecoveryError(Exception):
         super().__init__(advice.summary)
 
 
-# Constructs validated recovery advice with every user-facing field sanitized
+# Builds validated recovery advice with private diagnostics and unchanged generated instructions
 def make_recovery_advice(code, summary, fix, retryable=False, detail=""):
     if code not in RECOVERY_CODES:
         raise ValueError(f"Unsupported recovery code: {code}")
-    return RecoveryAdvice(code, sanitize_error_text(summary), sanitize_error_text(fix), bool(retryable), sanitize_error_text(detail))
+    # Fixes contain generated instructions and non-secret arguments, so redaction must not rewrite them
+    return RecoveryAdvice(code, sanitize_error_text(summary), fix, bool(retryable), sanitize_error_text(detail))
 
 
 # Adds a directly relevant documentation link on its own line
@@ -3314,14 +3328,14 @@ def secret_replacement_declined_advice(subject, flag, guide_url, plural=False):
 # Renders recovery advice according to the effective diagnostic modes
 def render_recovery_advice(advice, debug=None, retry_note="", with_fix=True, label="Error"):
     debug_enabled = DEBUG_MODE if debug is None else bool(debug)
-    lines = [f"* {label}: {sanitize_error_text(advice.summary)}" + (f" ({retry_note})" if retry_note else "")]
+    lines = [f"* {sanitize_error_text(label)}: {sanitize_error_text(advice.summary)}" + (f" ({sanitize_error_text(retry_note)})" if retry_note else "")]
     if not with_fix:
         return lines[0]
-    lines.append(f"To fix: {sanitize_error_text(advice.fix)}")
+    lines.append(f"To fix: {advice.fix}")
     # A detail that only repeats the summary spends a line saying nothing
     if debug_enabled and advice.detail and advice.detail != advice.summary:
         lines.append(f"Technical detail: {sanitize_error_text(advice.detail)}")
-    return "\n".join(lines)
+    return CommandOutput("\n".join(lines))
 
 
 # Prints one built advice through the shared recovery block and returns it
@@ -9429,7 +9443,7 @@ def sanitize_doctor_text(value):
     return " ".join(sanitize_error_text(value).splitlines()).strip()
 
 
-# Renders one doctor result while sanitizing every user-visible field
+# Renders one Doctor result with redacted diagnostics and unchanged generated instructions
 def print_doctor_check(check, *, stream=None):
     destination = sys.stdout if stream is None else stream
     marker = colorize(_DOCTOR_MARK_STYLES[check.status], f"[{check.status}]")
@@ -9440,7 +9454,7 @@ def print_doctor_check(check, *, stream=None):
     if check.status != "PASS" and check.advice is not None:
         # The fix carries its own guide line, so each line is indented and styled on its own
         for advice_line in f"To fix: {check.advice.fix}".splitlines():
-            destination.write(f"  {colorize_fix_line(sanitize_doctor_text(advice_line))}\n")
+            destination.write(CommandOutput(f"  {colorize_fix_line(advice_line)}\n"))
 
 
 # The fixed section order the report renders in, chosen so each section depends only on the ones above it
@@ -9625,7 +9639,7 @@ def _wizard_heading(destination, text, part="section"):
 # Writes one labelled command with sibling-style indentation and spacing
 def _wizard_print_command(destination, label, command, suffix=""):
     destination.write(f"{label}\n")
-    destination.write(f"    {colorize('section', command)}{colorize('info', suffix) if suffix else ''}\n\n")
+    destination.write(CommandOutput(f"    {colorize('section', command)}{colorize('info', suffix) if suffix else ''}\n\n"))
 
 
 # Writes the command that starts monitoring with the files this run checked, so a report read on its own
@@ -10857,7 +10871,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
         selected_config = wizard_validate_destination(selected_config, "Configuration destination")
         selected_dotenv = wizard_validate_destination(selected_dotenv, "Dotenv destination")
     except ValueError as exc:
-        destination.write(apply_color_to_text(render_recovery_advice(classify_recovery_error(exc, "config"))) + "\n")
+        destination.write(CommandOutput(apply_color_to_text(render_recovery_advice(classify_recovery_error(exc, "config"))) + "\n"))
         return 1
     try:
         state = build_wizard_state(selected_config, selected_dotenv, context, env_file_explicit=env_file is not None)
@@ -10889,7 +10903,7 @@ def run_setup_wizard(parser, config_path=None, env_file=None, input_func=input, 
     except Exception as exc:
         advice = classify_recovery_error(exc, "config")
         destination.write("\n")
-        destination.write(apply_color_to_text(render_recovery_advice(advice)) + "\n")
+        destination.write(CommandOutput(apply_color_to_text(render_recovery_advice(advice)) + "\n"))
         return 1
     saved_rows = [("Configuration:", state.config_path)]
     if config_backup is not None:
