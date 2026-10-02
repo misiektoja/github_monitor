@@ -3782,7 +3782,8 @@ def help_examples():
             ("Trace what the tool is doing", f"{prefix} <github_target> --debug"),
         )),
     )
-    return render_help_examples(groups, QUICK_START_GUIDE_URL)
+    notice = "Setting options apply to the current run and do not update the configuration file.\nInclude them on each run or save the settings through --setup or in a configuration file.\n\n"
+    return notice + render_help_examples(groups, QUICK_START_GUIDE_URL)
 
 
 # Hides the middle of an address's local part, so a log can be shared while the reader can still spot a typo
@@ -9296,7 +9297,7 @@ def doctor_check_monitoring(report, contribution_checker=None):
         if REPOS_TO_MONITOR:
             report.add("Monitoring", "PASS", "Repository detail tracking is enabled", f"Selection: {', '.join(str(value) for value in REPOS_TO_MONITOR)}")
         else:
-            advice = make_recovery_advice("config.value_invalid", "Repository detail tracking has no selected repositories", recovery_fix_with_guide("Set REPOS_TO_MONITOR or pass --repos", CONFIG_GUIDE_URL), False)
+            advice = make_recovery_advice("config.value_invalid", "Repository detail tracking has no selected repositories", recovery_fix_with_guide("Save REPOS_TO_MONITOR in the configuration file or include --repos on each run", CONFIG_GUIDE_URL), False)
             report.add("Monitoring", "WARN", advice.summary, "No repository detail alerts can fire", advice)
     else:
         report.add("Monitoring", "PASS", "Repository detail tracking is disabled")
@@ -9642,13 +9643,40 @@ def _wizard_print_command(destination, label, command, suffix=""):
     destination.write(CommandOutput(f"    {colorize('section', command)}{colorize('info', suffix) if suffix else ''}\n\n"))
 
 
-# Writes the command that starts monitoring with the files this run checked, so a report read on its own
-# ends with the next action rather than leaving the reader to assemble the command
-def print_doctor_next_steps(destination, target=None, saved_target=None, doctor_exit=0):
+# Rebuilds explicit monitoring options while replacing private values with named placeholders
+def doctor_monitoring_overrides(args):
+    parts = []
+    value_options = (("github_url", "--github-url"), ("webhook_provider", "--webhook-provider"), ("check_interval", "--check-interval"), ("csv_file", "--csv-file"), ("truncate", "--truncate"), ("push_commits_limit", "--push-commits-limit"), ("push_files_limit", "--push-files-limit"), ("repos", "--repos"))
+    for name, option in value_options:
+        value = getattr(args, name, None)
+        if value is not None:
+            # An equals sign keeps a value beginning with a dash from being parsed as another option
+            if str(value).startswith("-"):
+                parts.append(f"{option}={value}")
+            else:
+                parts.extend((option, str(value)))
+    switches = (("notify_profile", "--notify-profile", True), ("notify_events", "--notify-events", True), ("notify_repo_changes", "--notify-repo-changes", True), ("notify_repo_update_date", "--notify-repo-update-date", True), ("notify_daily_contribs", "--notify-daily-contribs", True), ("notify_errors", "--no-error-notify", False), ("webhook_enabled", "--webhook", True), ("webhook_enabled", "--no-webhook", False), ("webhook_profile", "--webhook-profile", True), ("webhook_events", "--webhook-events", True), ("webhook_repo_changes", "--webhook-repo-changes", True), ("webhook_repo_update_date", "--webhook-repo-update-date", True), ("webhook_daily_contribs", "--webhook-daily-contribs", True), ("webhook_errors", "--webhook-errors", True), ("webhook_errors", "--no-webhook-error-notify", False), ("track_repos_changes", "--track-repos-changes", True), ("no_monitor_events", "--no-monitor-events", True), ("get_all_repos", "--get-all-repos", True), ("disable_logging", "--disable-logging", True), ("no_color", "--no-color", True), ("track_contribs_changes", "--track-contribs-changes", True), ("verbose", "--verbose", True), ("debug", "--debug", True))
+    for name, option, selected in switches:
+        if getattr(args, name, None) is selected:
+            parts.append(option)
+    private_options = (("github_token", "--github-token", "GITHUB_TOKEN"), ("webhook_url", "--webhook-url", "WEBHOOK_URL"))
+    has_private_values = False
+    for name, option, placeholder in private_options:
+        if getattr(args, name, None) is not None:
+            parts.extend((option, placeholder))
+            has_private_values = True
+    return parts, has_private_values
+
+
+# Prints the monitoring command with the settings selected for Doctor
+def print_doctor_next_steps(destination, target=None, saved_target=None, doctor_exit=0, cli_args=None):
     _wizard_heading(destination, "Next steps", "header")
     label = "After Doctor passes, start monitoring:" if doctor_exit else "Start monitoring:"
     monitor_target = command_targets(target, saved_target)[1]
-    _wizard_print_command(destination, label, render_command([monitor_target] if monitor_target else []))
+    overrides, private_values = doctor_monitoring_overrides(cli_args)
+    _wizard_print_command(destination, label, render_command(([monitor_target] if monitor_target else []) + overrides))
+    if private_values:
+        destination.write("Replace the uppercase credential placeholders before running. Doctor does not repeat private command-line values.\n\n")
     destination.write(f"Guide: {colorize('link', QUICK_START_GUIDE_URL)}\n")
 
 
@@ -10047,7 +10075,7 @@ def wizard_collect_target(state, input_func=input, stream=None):
             break
     # A declined target ends the section, so nothing asks about persisting a target that does not exist
     if not state.target:
-        destination.write("  No target selected. Nothing can be monitored until one is set. Run --setup again or pass the target on the command line.\n")
+        destination.write("  No target selected. Nothing can be monitored until one is set. Run --setup again to save a target or include the target on each monitoring run.\n")
         state.values["TARGET_GITHUB_USERNAME"] = ""
         return
     state.persist_target = wizard_ask_yes_no("Persist this target in the generated config?", state.persist_target, input_func, destination)
@@ -11469,7 +11497,7 @@ def main():
         if any(incompatible):
             parser.error("--doctor cannot be combined with setup, listing or one-shot delivery commands")
         doctor_exit = run_doctor(args, parser, show_banner=False)
-        print_doctor_next_steps(terminal_surface_stream(sys.stdout), args.username, TARGET_GITHUB_USERNAME, doctor_exit)
+        print_doctor_next_steps(terminal_surface_stream(sys.stdout), args.username, TARGET_GITHUB_USERNAME, doctor_exit, cli_args=args)
         sys.exit(doctor_exit)
 
     CONFIG_DISCOVERY_DISABLED = isinstance(args.config_file, str) and args.config_file.casefold() == "none"
@@ -11557,7 +11585,7 @@ def main():
         sys.exit(1)
 
     if type(GITHUB_CHECK_INTERVAL) is not int or GITHUB_CHECK_INTERVAL <= 0:
-        advice = make_recovery_advice("config.value_invalid", "The GitHub polling interval is invalid", recovery_fix_with_guide("Set GITHUB_CHECK_INTERVAL or --check-interval to a positive number of seconds", CONFIG_GUIDE_URL), False, f"GITHUB_CHECK_INTERVAL={GITHUB_CHECK_INTERVAL}")
+        advice = make_recovery_advice("config.value_invalid", "The GitHub polling interval is invalid", recovery_fix_with_guide("Save a positive GITHUB_CHECK_INTERVAL in the configuration file or include --check-interval SECONDS on each run", CONFIG_GUIDE_URL), False, f"GITHUB_CHECK_INTERVAL={GITHUB_CHECK_INTERVAL}")
         print_recovery_advice(advice)
         sys.exit(1)
 
@@ -11568,7 +11596,7 @@ def main():
 
     # Missing input is reported before credentials or connectivity
     if not args.username and not (args.send_test_email or args.send_test_webhook):
-        advice = make_recovery_advice("target.missing", "No GitHub username was provided", recovery_fix_with_guide("Add the GitHub username to the monitoring command", QUICK_START_GUIDE_URL), False, "The positional GITHUB_USERNAME argument was empty")
+        advice = make_recovery_advice("target.missing", "No GitHub username was provided", recovery_fix_with_guide("Save TARGET_GITHUB_USERNAME in the configuration file or include the GitHub username in each monitoring command", QUICK_START_GUIDE_URL), False, "The positional GITHUB_USERNAME argument was empty")
         print_recovery_advice(advice)
         sys.exit(1)
 
@@ -11606,7 +11634,7 @@ def main():
         sys.exit(1)
 
     if not GITHUB_API_URL:
-        advice = make_recovery_advice("config.value_invalid", "GITHUB_API_URL is empty", recovery_fix_with_guide("Set GITHUB_API_URL in config or pass --github-url with a complete HTTPS API URL", CONFIG_GUIDE_URL), False, "The effective GITHUB_API_URL was empty")
+        advice = make_recovery_advice("config.value_invalid", "GITHUB_API_URL is empty", recovery_fix_with_guide("Save a complete HTTPS API URL in GITHUB_API_URL in the configuration file or include --github-url URL on each run", CONFIG_GUIDE_URL), False, "The effective GITHUB_API_URL was empty")
         print_recovery_advice(advice)
         sys.exit(1)
 
@@ -11676,7 +11704,7 @@ def main():
             FINAL_LOG_PATH = str(log_path)
             sys.stdout = Logger(FINAL_LOG_PATH)
         except Exception as e:
-            advice = make_recovery_advice("file.unwritable", "The output log could not be opened", recovery_fix_with_guide("Check GITHUB_LOGFILE and its parent directory permissions or use --disable-logging", CONFIG_GUIDE_URL), False, f"{type(e).__name__}: {e}")
+            advice = make_recovery_advice("file.unwritable", "The output log could not be opened", recovery_fix_with_guide("Check GITHUB_LOGFILE and its parent directory permissions. To disable logging, save DISABLE_LOGGING = True in the configuration file or include --disable-logging on each run", CONFIG_GUIDE_URL), False, f"{type(e).__name__}: {e}")
             print_recovery_advice(advice)
             sys.exit(1)
     else:
