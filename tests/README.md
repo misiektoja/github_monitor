@@ -37,6 +37,7 @@ and again before anything is published to PyPI.
 
 | File | Area under test |
 | --- | --- |
+| `test_setting_persistence.py` | Setting lifetime in help, Doctor CLI options, disabled switches and private-value placeholders |
 | `test_recovery_command_privacy.py` | Generated commands, credential redaction and output stream handling |
 | `test_codeql_workflow.py` | Source suppression filtering, retained security findings, invalid reports and CodeQL upload ordering |
 | `test_repository_closure.py` | Verified issue, PR and discussion closures, retained snapshots, shared request limits, fair rotation and transport settings |
