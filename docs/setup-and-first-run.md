@@ -1,3 +1,7 @@
+---
+description: "Set up github_monitor with the setup wizard. Covers how to create a GitHub personal access token and the commands that start monitoring."
+---
+
 # Setup & First Run
 
 <a id="run-the-setup-wizard"></a>

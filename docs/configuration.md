@@ -1,3 +1,7 @@
+---
+description: "Reference for the github_monitor configuration file: API URL, events to monitor, repositories, time zone, SMTP, webhooks, colours, secrets and TLS."
+---
+
 # Configuration
 
 Examples on this page use the PyPI command `github_monitor`. Manual script users should keep the shown options and use the matching prefix under [Command Format by Installation Method](usage.md#command-format-by-installation-method).

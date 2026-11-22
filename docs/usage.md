@@ -1,3 +1,7 @@
+---
+description: "How to run github_monitor: monitoring and listing modes for repositories, followers and more, alerts, CSV export, check intervals and signals."
+---
+
 # Usage
 
 <a id="command-format-by-installation-method"></a>

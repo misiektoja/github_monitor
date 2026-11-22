@@ -1,3 +1,7 @@
+---
+description: "Run the offline github_monitor test suite with pytest and see what it covers. GitHub API calls are replaced with test doubles, so no token is needed."
+---
+
 # Testing
 
 The offline test suite covers everything in `github_monitor.py` that can run without network access. GitHub API objects are replaced with test doubles, so the suite needs no GitHub account, no network and no credentials.

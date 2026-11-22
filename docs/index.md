@@ -1,3 +1,8 @@
+---
+title: "GitHub user and repository activity tracker"
+description: "Track GitHub users in real time: events, profile changes, followers, contributions and repository stars or forks, with email, Discord and ntfy alerts."
+---
+
 # github_monitor
 
 [![GitHub Release](https://img.shields.io/github/v/release/misiektoja/github_monitor?style=flat-square&color=blue)](https://github.com/misiektoja/github_monitor/releases)
