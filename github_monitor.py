@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.8.1
+v2.9
 
 OSINT tool implementing real-time tracking of GitHub users activities including profile and repositories changes:
 https://github.com/misiektoja/github_monitor/
@@ -18,7 +18,7 @@ colorama (optional, improves classic Windows Command Prompt colour support)
 wcwidth (optional, measures wide characters correctly when TRUNCATE_CHARS is set)
 """
 
-VERSION = "2.8.1"
+VERSION = "2.9"
 
 # ---------------------------
 # CONFIGURATION SECTION START
