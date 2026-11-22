@@ -1,6 +1,7 @@
 """Verify missing repository items through bounded real HTTP request handling."""
 
 import copy
+import io
 import json
 from datetime import datetime
 from types import SimpleNamespace
@@ -39,6 +40,8 @@ def response_for(request, payload, status=200):
     response.status_code = status
     response.headers["Content-Type"] = "application/json"
     response._content = json.dumps(payload).encode()
+    # A real response carries a stream the caller may leave unread, which closing the response has to release
+    response.raw = io.BytesIO(response._content)
     return response
 
 
@@ -365,3 +368,124 @@ def test_monitoring_loop_applies_verification_setting(gm_module, monkeypatch, re
     assert verifications == ([2, 4] if enabled else [])
     assert len(repo_alerts) == (1 if enabled else 3)
     assert "Closed issues:" in repo_alerts[-1][2]
+
+
+@pytest.mark.parametrize("kind,label", KINDS)
+# A report never shows an API path segment in place of the item type
+def test_feature_label_reads_as_a_sentence(gm_module, monkeypatch, kind, label):
+    gm = gm_module
+    monkeypatch.setattr(gm, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm, "MONITORING_ACTIVE", True)
+    monkeypatch.setattr(requests.Session, "send", lambda session, request, **kwargs: response_for(request, {}, 503))
+    assert gm.github_verify_repository_closure("owner/monitor", kind, 60) is None
+    feature = next(iter(gm.DEGRADED_FEATURES))
+    assert feature[0].isupper()
+    assert feature.startswith(gm.REPOSITORY_ITEM_NAMES[kind])
+    assert kind not in feature
+
+
+@pytest.mark.parametrize("kind,label", KINDS)
+# An item GitHub stopped serving is confirmed over several cycles, then reported as gone rather than closed
+def test_deleted_item_is_confirmed_then_reported_as_missing(gm_module, monkeypatch, kind, label):
+    gm = gm_module
+    repo = repository()
+    getattr(repo, kind).append(item(repo, kind))
+    verifier = gm.RepositoryClosureVerifier()
+    calls = []
+    deliveries = []
+    monkeypatch.setattr(requests.Session, "send", lambda session, request, **kwargs: calls.append(request) or response_for(request, {"message": "Not Found"}, 404))
+    monkeypatch.setattr(gm, "send_notification_channels", lambda *args: deliveries.append(args))
+    snapshot = collect(gm, [repo], [], verifier)
+    getattr(repo, kind).clear()
+    for cycle in range(1, gm.REPOSITORY_MISSING_CONFIRMATIONS):
+        previous, snapshot = snapshot, collect(gm, [repo], snapshot, verifier)
+        report(gm, previous[0], snapshot[0], kind, label)
+        assert snapshot[0][kind] == 1, f"dropped during cycle {cycle}"
+        assert deliveries == []
+    previous, snapshot = snapshot, collect(gm, [repo], snapshot, verifier)
+    report(gm, previous[0], snapshot[0], kind, label)
+    assert len(calls) == gm.REPOSITORY_MISSING_CONFIRMATIONS
+    assert snapshot[0][kind] == 0
+    assert snapshot[0][f"{kind}_list"] == []
+    assert len(deliveries) == 1
+    assert "no longer exists" in deliveries[0][2]
+    assert "no longer exists" in deliveries[0][3]
+    assert f"Closed {label.lower()}:" not in deliveries[0][2]
+    assert not verifier.pending
+
+
+@pytest.mark.parametrize("kind,label", KINDS)
+# One missing item is a resolved fact rather than a monitoring outage, so it never raises an error alert
+def test_deleted_item_opens_no_outage(gm_module, monkeypatch, kind, label):
+    gm = gm_module
+    repo = repository()
+    getattr(repo, kind).append(item(repo, kind))
+    verifier = gm.RepositoryClosureVerifier()
+    monkeypatch.setattr(gm, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm, "MONITORING_ACTIVE", True)
+    monkeypatch.setattr(gm, "send_notification_channels", lambda *args: None)
+    monkeypatch.setattr(requests.Session, "send", lambda session, request, **kwargs: response_for(request, {"message": "Not Found"}, 404))
+    snapshot = collect(gm, [repo], [], verifier)
+    getattr(repo, kind).clear()
+    for _ in range(gm.REPOSITORY_MISSING_CONFIRMATIONS + 1):
+        snapshot = collect(gm, [repo], snapshot, verifier)
+        assert gm.MONITOR_CHECK_FAILURES == {}
+        assert gm.DEGRADED_FEATURES == {}
+
+
+# An item the request allowance skipped keeps its outage open instead of flapping between failure and recovery
+def test_deferred_item_is_not_reported_as_recovered(gm_module, monkeypatch, capsys):
+    gm = gm_module
+    repos = [repository("first"), repository("second")]
+    for repo in repos:
+        for kind, _ in KINDS:
+            getattr(repo, kind).append(item(repo, kind))
+    verifier = gm.RepositoryClosureVerifier()
+    monkeypatch.setattr(gm, "VERBOSE_MODE", True)
+    monkeypatch.setattr(gm, "MONITORING_ACTIVE", True)
+    monkeypatch.setattr(requests.Session, "send", lambda session, request, **kwargs: response_for(request, {}, 503))
+    previous = collect(gm, repos, [], verifier)
+    for repo in repos:
+        for kind, _ in KINDS:
+            getattr(repo, kind).clear()
+    current = collect(gm, repos, previous, verifier)
+    failures_after_first = dict(gm.MONITOR_CHECK_FAILURES)
+    assert len(failures_after_first) == gm.REPOSITORY_CLOSURE_REQUEST_BUDGET
+    gm.report_recovered_features()
+    gm.MONITOR_CHECK_FAILURES.clear()
+    capsys.readouterr()
+    collect(gm, repos, current, verifier)
+    assert set(gm.MONITOR_CHECK_FAILURES) >= set(failures_after_first)
+    gm.report_recovered_features()
+    assert "available again" not in capsys.readouterr().out
+
+
+# A cycle that confirms one closure and one deletion reports each under its own heading
+def test_closed_and_missing_items_are_reported_apart(gm_module, monkeypatch):
+    gm = gm_module
+    repo = repository()
+    repo.issues.extend([item(repo, "issues", number=11, title="Spam report"), item(repo, "issues", number=12, title="Real report")])
+    verifier = gm.RepositoryClosureVerifier()
+    deliveries = []
+
+    # Answers the deleted item with 404 and the closed one with its closed state
+    def send(session, request, **kwargs):
+        return response_for(request, {"message": "Not Found"}, 404) if request.url.endswith("/11") else response_for(request, state_payload("issues", number=12, closed=True))
+
+    monkeypatch.setattr(requests.Session, "send", send)
+    monkeypatch.setattr(gm, "send_notification_channels", lambda *args: deliveries.append(args))
+    snapshot = collect(gm, [repo], [], verifier)
+    # The deletion needs several cycles to confirm, so the closure is withheld until the cycle that settles it
+    repo.issues = [repo.issues[1]]
+    for cycle in range(1, gm.REPOSITORY_MISSING_CONFIRMATIONS + 1):
+        if cycle == gm.REPOSITORY_MISSING_CONFIRMATIONS:
+            repo.issues = []
+        previous, snapshot = snapshot, collect(gm, [repo], snapshot, verifier)
+        report(gm, previous[0], snapshot[0], "issues", "Issues")
+    assert snapshot[0]["issues"] == 0
+    assert len(deliveries) == 1
+    body = deliveries[0][2]
+    assert "Closed issues:\n\n- #12 Real report" in body
+    assert "Removed issues:\n\n- #11 Spam report (author) [ https://github.example/owner/monitor/issues/11 ] (no longer exists)" in body
+    assert body.index("Closed issues:") < body.index("Removed issues:")
+    assert "(no longer exists)" in deliveries[0][3]
