@@ -522,6 +522,13 @@ DEGRADED_FEATURES_SEEN: set = set()
 # Failures from the current check, retained until all enabled monitoring paths have finished
 MONITOR_CHECK_FAILURES: dict = {}
 
+# The error behind each reported outage, so a check that could not re-evaluate a feature repeats the same advice
+DEGRADED_FEATURE_ERRORS: dict = {}
+
+# Repository items confirmed gone from GitHub during the current cycle, keyed by repository URL because a
+# repository name is not unique once forks and collaborations are tracked
+REPOSITORY_MISSING_ITEMS: set = set()
+
 # True once a call has proved the network unreachable, so the calls behind it fail fast rather than each paying
 # the full retry schedule for a connection that is already known to be down
 NET_OUTAGE_CONFIRMED = False
@@ -794,6 +801,18 @@ PYGITHUB_TIMEOUT_SECONDS = 15
 
 # Extra closure checks share one request allowance across repositories in each monitoring cycle
 REPOSITORY_CLOSURE_REQUEST_BUDGET = 5
+
+# Consecutive missing answers required before an item is reported as gone, so one glitched lookup cannot drop it
+REPOSITORY_MISSING_CONFIRMATIONS = 3
+
+# Returned by a closure check for an item GitHub no longer serves, which is a settled answer rather than a failure
+REPOSITORY_ITEM_MISSING = "missing"
+
+# Item type names as a reader expects them, so a report never shows an API path segment such as 'pulls'
+REPOSITORY_ITEM_NAMES = {"issues": "Issue", "pulls": "Pull request", "discussions": "Discussion"}
+
+# API path segment per report label, which identifies the items a closure check confirmed as gone
+REPOSITORY_ITEM_KINDS = {"Issues": "issues", "Pull Requests": "pulls", "Discussions": "discussions"}
 
 # Calendar days requested to stabilize one-day contribution count lookups
 DAILY_CONTRIBUTION_LOOKBACK_DAYS = 30
@@ -3075,6 +3094,7 @@ def verbose_degraded_feature(feature, alert, error=None, enrichment=False):
         # outage. Only data a check needs to detect changes decides whether that check failed
         if not enrichment and (error is not None or feature not in MONITOR_CHECK_FAILURES):
             MONITOR_CHECK_FAILURES[feature] = error
+            DEGRADED_FEATURE_ERRORS[feature] = error
         DEGRADED_FEATURES_SEEN.add(feature)
         # An outage that lasts is news once, so the repeats are left to debug until the feature works again
         if DEGRADED_FEATURES.get(feature) == alert:
@@ -3086,11 +3106,22 @@ def verbose_degraded_feature(feature, alert, error=None, enrichment=False):
         PENDING_NOTICE_BLOCK = True
 
 
+# Keeps an outage open for a feature this check could not re-evaluate, so it is neither reported as recovered nor
+# repeated with different advice. A budget-deferred closure check is the case this exists for
+def retain_degraded_feature(feature):
+    if not MONITORING_ACTIVE or feature not in DEGRADED_FEATURES:
+        return
+    DEGRADED_FEATURES_SEEN.add(feature)
+    if feature not in MONITOR_CHECK_FAILURES:
+        MONITOR_CHECK_FAILURES[feature] = DEGRADED_FEATURE_ERRORS.get(feature)
+
+
 # Forgets every tracked outage, so the checks that follow report the state they find rather than an older one
 def reset_degraded_features():
     global NET_OUTAGE_CONFIRMED
     DEGRADED_FEATURES.clear()
     DEGRADED_FEATURES_SEEN.clear()
+    DEGRADED_FEATURE_ERRORS.clear()
     MONITOR_CHECK_FAILURES.clear()
     NET_OUTAGE_CONFIRMED = False
 
@@ -3101,6 +3132,7 @@ def report_recovered_features():
     recovered = [(feature, alert) for feature, alert in DEGRADED_FEATURES.items() if feature not in DEGRADED_FEATURES_SEEN]
     for feature, alert in recovered:
         del DEGRADED_FEATURES[feature]
+        DEGRADED_FEATURE_ERRORS.pop(feature, None)
         verbose_print(f"{feature}: available again, so {alert} can fire again")
     DEGRADED_FEATURES_SEEN.clear()
     if recovered and VERBOSE_MODE and MONITORING_ACTIVE:
@@ -5086,6 +5118,13 @@ def removed_item_note(label, item, user=None):
     return ""
 
 
+# Returns a note for a repository item a closure check confirmed as gone from GitHub
+def missing_repository_item_note(label, repo_url, item):
+    number = repository_item_key(item)
+    kind = REPOSITORY_ITEM_KINDS.get(label)
+    return " (no longer exists)" if kind is not None and (repo_url, kind, number) in REPOSITORY_MISSING_ITEMS else ""
+
+
 # Prints followers and followings for a GitHub user (-f)
 def github_print_followers_and_followings(user):
     user_name_str = user
@@ -5277,8 +5316,15 @@ def repository_item_key(item):
     return int(match.group(1)) if match else item
 
 
-# Reads one item's closure state without automatic retries or redirects consuming extra requests
+# Returns the report label for one repository item's closure check
+def repository_closure_feature(target, kind, number=None):
+    return f"{REPOSITORY_ITEM_NAMES.get(kind, kind.capitalize())} closure verification for {target}" + (f" #{number}" if number is not None else "")
+
+
+# Returns an item's closure state, REPOSITORY_ITEM_MISSING when GitHub no longer serves it, or None when the
+# lookup failed. One request without automatic retries or redirects consuming extra requests
 def github_verify_repository_closure(full_name, kind, number):
+    feature = repository_closure_feature(full_name, kind, number)
     operation = f"{kind} closure verification for {full_name} #{number}"
     try:
         owner, name = full_name.split("/")
@@ -5297,12 +5343,16 @@ def github_verify_repository_closure(full_name, kind, number):
         debug_http_request(method, endpoint, operation, PYGITHUB_TIMEOUT_SECONDS, headers=headers, token=GITHUB_TOKEN)
         with req.request(method, endpoint, json=payload, headers=headers, timeout=PYGITHUB_TIMEOUT_SECONDS, verify=VERIFY_SSL, allow_redirects=False) as response:
             debug_http_response(method, endpoint, operation, response.status_code)
-            if response.status_code != 200:
-                error_type = {401: BadCredentialsException, 404: UnknownObjectException, 429: RateLimitExceededException}.get(response.status_code, GithubException)
+            missing = response.status_code == 404
+            if not missing and response.status_code != 200:
+                error_type = {401: BadCredentialsException, 429: RateLimitExceededException}.get(response.status_code, GithubException)
                 if response.status_code == 403 and (response.headers.get("X-RateLimit-Remaining") == "0" or "Retry-After" in response.headers):
                     error_type = RateLimitExceededException
                 raise error_type(response.status_code, {"message": f"Closure verification returned HTTP {response.status_code}"}, dict(response.headers))
-            data = response.json()
+            data = None if missing else response.json()
+        if missing:
+            debug_print(feature, outcome="missing")
+            return REPOSITORY_ITEM_MISSING
         if kind == "discussions":
             if not isinstance(data, dict) or data.get("errors"):
                 raise ValueError("Discussion closure verification returned GraphQL errors")
@@ -5319,10 +5369,10 @@ def github_verify_repository_closure(full_name, kind, number):
             if item.get("state") not in ("open", "closed") or (kind == "issues" and item.get("pull_request") is not None):
                 raise ValueError("Closure verification returned an invalid item state or type")
             closed = item["state"] == "closed"
-        debug_print(operation, outcome="closed" if closed else "still open")
+        debug_print(feature, outcome="closed" if closed else "still open")
         return closed
     except Exception as error:
-        verbose_degraded_feature(operation, "verified closure alerts", error)
+        verbose_degraded_feature(feature, "verified closure alerts", error)
         return None
 
 
@@ -5330,8 +5380,11 @@ class RepositoryClosureVerifier:
     # Keeps pending checks in rotation so unavailable items cannot monopolize the request allowance
     def __init__(self):
         self.pending: deque[tuple[str, str, int]] = deque()
+        # Consecutive answers that GitHub no longer serves an item, counted per item across cycles
+        self.missing: dict[tuple[str, str, int], int] = {}
 
-    # Retains missing items until their closure is verified within the shared allowance
+    # Retains missing items until their closure is verified within the shared allowance, or until repeated
+    # lookups agree that GitHub no longer serves them
     def reconcile(self, repositories, previous_repos):
         previous_by_name = {repo["name"]: repo for repo in previous_repos}
         candidates = {}
@@ -5353,11 +5406,12 @@ class RepositoryClosureVerifier:
                         key = (repo["full_name"], kind, number)
                         candidates[key] = (repo, item)
                     else:
-                        verbose_degraded_feature(f"{kind} closure verification for {repo['name']}", "closure alerts for an item without a number")
+                        verbose_degraded_feature(repository_closure_feature(repo["name"], kind), "closure alerts for an item without a number")
                 repo[list_key] = list(retained.values())
                 repo[kind] = len(retained)
 
         self.pending = deque(key for key in self.pending if key in candidates)
+        self.missing = {key: count for key, count in self.missing.items() if key in candidates}
         queued = set(self.pending)
         self.pending.extend(key for key in candidates if key not in queued)
         attempts = min(REPOSITORY_CLOSURE_REQUEST_BUDGET, len(self.pending))
@@ -5365,13 +5419,27 @@ class RepositoryClosureVerifier:
             key = self.pending.popleft()
             full_name, kind, number = key
             repo, item = candidates[key]
-            if github_verify_repository_closure(full_name, kind, number) is True:
+            outcome = github_verify_repository_closure(full_name, kind, number)
+            if outcome is REPOSITORY_ITEM_MISSING:
+                self.missing[key] = self.missing.get(key, 0) + 1
+            else:
+                self.missing.pop(key, None)
+            confirmed_missing = self.missing.get(key, 0) >= REPOSITORY_MISSING_CONFIRMATIONS
+            if confirmed_missing:
+                del self.missing[key]
+                REPOSITORY_MISSING_ITEMS.add((repo["url"], kind, number))
+                debug_print(repository_closure_feature(full_name, kind, number), outcome="gone", confirmations=REPOSITORY_MISSING_CONFIRMATIONS)
+            if confirmed_missing or outcome is True:
                 repo[f"{kind}_list"].remove(item)
                 repo[kind] = len(repo[f"{kind}_list"])
             else:
                 self.pending.append(key)
+        # A check that spent its allowance elsewhere did not re-evaluate the rest, so their outages stay open
+        # rather than being answered with a recovery alert and reopened on the next cycle
+        for key in self.pending:
+            retain_degraded_feature(repository_closure_feature(key[0], key[1], key[2]))
         if candidates:
-            debug_print("Repository closure verification", attempts=attempts, pending=len(self.pending), budget=REPOSITORY_CLOSURE_REQUEST_BUDGET)
+            debug_print("Repository closure verification", attempts=attempts, pending=len(self.pending), missing=len(self.missing), budget=REPOSITORY_CLOSURE_REQUEST_BUDGET)
 
 
 # Processes items from all passed repositories and returns a list of dictionaries
@@ -5514,6 +5582,7 @@ def github_process_repos(repos_list, show_progress=True, fetch_identity_lists=Tr
                 print("- Stargazer/watcher user lists:\tSkipped (counts only)")
 
     verifier = closure_verifier if closure_verifier is not None else RepositoryClosureVerifier()
+    REPOSITORY_MISSING_ITEMS.clear()
     if VERIFY_REPOSITORY_CLOSURES:
         verifier.reconcile(list_of_repos, previous_repos or ())
     else:
@@ -6616,29 +6685,32 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     added_list_str = ""
     removed_list_str = ""
     added_mbody = ""
-    removed_mbody = ""
 
     added_list_str_html = ""
     removed_list_str_html = ""
     added_mbody_html = ""
-    removed_mbody_html = ""
 
     # If lists are different but sets are the same (just reordered or duplicates), no actual change
     if not removed_items and not added_items:
         return
 
-    removal_text = "Closed" if label in ["Issues", "Pull Requests", "Discussions"] else "Removed"
+    # An item GitHub no longer serves was not closed, so it is reported apart from the confirmed closures
+    missing_notes = {item: missing_repository_item_note(label, repo_url, item) for item in removed_items}
+    closed_text = "Closed" if label in ["Issues", "Pull Requests", "Discussions"] else "Removed"
+    removal_sections = [(closed_text, [item for item in removed_items if not missing_notes[item]]), ("Removed", [item for item in removed_items if missing_notes[item]])]
 
     if list_old != list_new:
         print()
 
-        if removed_items:
+        for removal_text, section_items in removal_sections:
+            if not section_items:
+                continue
             print(f"{removal_text} {label.lower()}:\n")
-            removed_mbody = f"\n{removal_text} {label.lower()}:\n\n"
-            removed_mbody_html = f"<br><b>{html.escape(removal_text)} {html.escape(label.lower())}:</b><br><br>"
-            for item in removed_items:
-                note = removed_item_note(label, item)
-                item_line = f"- {item} [ {github_web_base()}/{item}/ ]{note}" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}"
+            removed_list_str += f"\n{removal_text} {label.lower()}:\n\n"
+            removed_list_str_html += f"<br><b>{html.escape(removal_text)} {html.escape(label.lower())}:</b><br><br>"
+            for item in section_items:
+                note = missing_notes[item] or removed_item_note(label, item)
+                item_line = f"- {item} [ {github_web_base()}/{item}/ ]{note}" if label.lower() in ["stargazers", "watchers", "forks"] else f"- {item}{note}"
                 print(item_line)
                 removed_list_str += item_line + "\n"
 
@@ -6649,11 +6721,11 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
                     match = re.match(r'#(\d+)\s+(.+?)\s+\(([^)]+)\)\s+\[\s*([^\]]+)\s*\]', item)
                     if match:
                         num, title, user_item, url = (value.strip() for value in match.groups())
-                        removed_list_str_html += f"- <a href=\"{html.escape(url)}\"><b>#{num} {html.escape(title)}</b></a> ({html.escape(user_item)})<br>"
+                        removed_list_str_html += f"- <a href=\"{html.escape(url)}\"><b>#{num} {html.escape(title)}</b></a> ({html.escape(user_item)}){html.escape(note)}<br>"
                     else:
-                        removed_list_str_html += f"- {html.escape(item)}<br>"
+                        removed_list_str_html += f"- {html.escape(item)}{html.escape(note)}<br>"
                 else:
-                    removed_list_str_html += f"- {html.escape(item)}<br>"
+                    removed_list_str_html += f"- {html.escape(item)}{html.escape(note)}<br>"
 
                 try:
                     if csv_file_name:
@@ -6696,28 +6768,26 @@ def check_repo_list_changes(count_old, count_new, list_old, list_new, label, rep
     if diff == 0:
         m_subject = f"GitHub user {user} {label.lower()} list changed for repo '{repo_name}'!"
         m_body = (f"* Repo '{repo_name}': {label.lower()} list changed\n"
-                  f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
+                  f"* Repo URL: {repo_url}\n{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}")
         m_body_html = (
             f"<html><head></head><body>"
             f"* Repo '<b>{html.escape(repo_name)}</b>': {html.escape(label.lower())} list changed<br>"
             f"* Repo URL: <a href=\"{html.escape(repo_url)}\">{html.escape(repo_url)}</a><br>"
-            f"{removed_mbody_html}{removed_list_str_html}"
-            f"{added_mbody_html}{added_list_str_html}<br>"
+            f"{removed_list_str_html}{added_mbody_html}{added_list_str_html}<br>"
             f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
             f"</body></html>"
         )
     else:
         m_subject = f"GitHub user {user} number of {label.lower()} for repo '{repo_name}' has changed! ({diff_str}, {old_count} -> {new_count})"
         m_body = (f"* Repo '{repo_name}': number of {label.lower()} changed from {old_count} to {new_count} ({diff_str})\n"
-                  f"* Repo URL: {repo_url}\n{removed_mbody}{removed_list_str}{added_mbody}{added_list_str}\n"
+                  f"* Repo URL: {repo_url}\n{removed_list_str}{added_mbody}{added_list_str}\n"
                   f"Check interval: {check_window_text()}{get_cur_ts(nl_ch + 'Timestamp: ')}")
         m_body_html = (
             f"<html><head></head><body>"
             f"* Repo '<b>{html.escape(repo_name)}</b>': number of {html.escape(label.lower())} changed from <b>{old_count}</b> to <b>{new_count}</b> (<b>{html.escape(diff_str)}</b>)<br>"
             f"* Repo URL: <a href=\"{html.escape(repo_url)}\">{html.escape(repo_url)}</a><br>"
-            f"{removed_mbody_html}{removed_list_str_html}"
-            f"{added_mbody_html}{added_list_str_html}<br>"
+            f"{removed_list_str_html}{added_mbody_html}{added_list_str_html}<br>"
             f"Check interval: {check_window_html()}{get_cur_ts('<br>Timestamp: ')}"
             f"</body></html>"
         )
