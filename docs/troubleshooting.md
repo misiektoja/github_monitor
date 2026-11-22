@@ -1,3 +1,7 @@
+---
+description: "Fix github_monitor problems with the Doctor preflight check. Covers connection errors, open file limits, colours, logging levels and bad saved state."
+---
+
 # Troubleshooting
 
 Examples on this page use the PyPI command `github_monitor`. If you installed the manual script, replace that command with the matching [command prefix](usage.md#command-format-by-installation-method).

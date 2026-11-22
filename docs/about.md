@@ -1,3 +1,7 @@
+---
+description: "Project information for github_monitor: change log, contributing, security policy, maintainers, license and support."
+---
+
 # About
 
 <a id="change-log"></a>

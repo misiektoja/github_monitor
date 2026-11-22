@@ -1,3 +1,7 @@
+---
+description: "How to run github_monitor: monitoring and listing modes for repositories, followers and more, alerts, CSV export, check intervals and signals."
+---
+
 # Usage
 
 Setting flags in these examples apply to that run. Repeat them on later runs or [save the corresponding settings](configuration.md#configuration-file).
