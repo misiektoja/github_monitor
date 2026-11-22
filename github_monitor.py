@@ -1502,8 +1502,10 @@ def colorize_help_text(text, epilog=None):
 # repaint the finished help with the rules meant for monitoring output
 class ColoredHelpParser(argparse.ArgumentParser):
     # Returns the help screen with the help palette already applied
-    def format_help(self) -> str:
-        return colorize_help_text(super().format_help(), self.epilog)
+    def format_help(self, formatter: argparse.HelpFormatter | None = None) -> str:
+        # From Python 3.15 print_help passes the formatter it built for the output stream
+        text = super().format_help(formatter) if sys.version_info >= (3, 15) else super().format_help()
+        return colorize_help_text(text, self.epilog)
 
     # Writes one parser message straight to the terminal behind any colouring wrapper
     def _print_message(self, message, file=None) -> None:
