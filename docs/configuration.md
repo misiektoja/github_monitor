@@ -9,7 +9,7 @@ Examples on this page use the PyPI command `github_monitor`. Manual script users
 <a id="configuration-file"></a>
 ## Configuration File
 
-You can pass most settings as command-line options or save them in a configuration file for later runs.
+Command-line setting options apply to the current run and do not update the configuration file. Include them on every run that needs those settings. To reuse settings without repeating the options, save them through `--setup` or edit the configuration file. Commands such as `--setup` and `--set-smtp-password` save the values they collect.
 
 The easiest way to create this file is `github_monitor --setup`.
 
@@ -151,6 +151,8 @@ python3 -c "import pytz; print('\n'.join(pytz.all_timezones))"
 
 Email notifications need SMTP server details for the sending account. Add them to `github_monitor.conf` or use the setup wizard. Setup checks the login without sending an email. To replace only the password, run `github_monitor --set-smtp-password`. Password entry is hidden and preserves spaces.
 
+If email alerts are selected but local SMTP settings are missing or invalid, the startup summary shows `Unavailable` with the reason. Automatic email sends are skipped silently until the settings are fixed. `Off` means no email alert types are selected.
+
 Every alert is sent as both HTML and plain text in one message. Mail clients that render HTML show the account, the changed value and the check interval in bold, with repositories, commits, issues and profile addresses linked. Clients that do not fall back to the plain text, which is unchanged.
 
 Send one test message to verify the settings:
@@ -179,7 +181,7 @@ WEBHOOK_CONTRIB_NOTIFICATION = False
 WEBHOOK_ERROR_NOTIFICATION = True
 ```
 
-A `WEBHOOK_URL` left unset, or left at its `your_webhook_url` placeholder, switches webhook alerts off at startup instead of failing at the first alert. `--verbose` reports why.
+If webhook alerts are selected but the URL, provider or other local settings are invalid, the startup summary shows `Unavailable` with the reason. Automatic webhook sends are skipped silently until the settings are fixed. `Off` means the master switch or all webhook alert types are off.
 
 Known Discord and `ntfy.sh` URLs automatically select the matching request format even if the configured provider is stale. While `WEBHOOK_PROVIDER` is left at its default, that detection is silent and `--verbose` reports it. A warning appears only when your configuration file sets a provider the URL disagrees with. Set `WEBHOOK_PROVIDER` in `github_monitor.conf` or use `--webhook-provider {discord,ntfy}` for self-hosted ntfy or compatible endpoints.
 
@@ -227,6 +229,8 @@ WEBHOOK_HEADERS = {
 ```
 
 Header values support the same placeholders as `WEBHOOK_TEMPLATE`. GitHub Monitor validates header names and values before and after placeholder expansion so formatted values cannot introduce line breaks or invalid headers. Headers apply to both Discord and ntfy. Prefer `NTFY_ACCESS_TOKEN` for ntfy bearer authentication. Basic authentication remains available through a custom `Authorization` header. Customize ntfy delivery further through `WEBHOOK_HEADERS`, for example `X-Priority` or `X-Tags`.
+
+A header value that contains emoji or other non-ASCII text after placeholder expansion is sent in RFC 2047 encoded form (`=?UTF-8?B?...?=`), since a plain HTTP header cannot carry it. ntfy decodes it back to the original text. Other receivers see the encoded form unless they decode RFC 2047. ASCII values are sent exactly as written, including values you already encoded yourself, such as an emoji tag from the ntfy documentation.
 
 <a id="discord"></a>
 ### Discord

@@ -213,9 +213,10 @@ def webhook_state_after_startup(gm_module, monkeypatch, request, webhook_url):
     return gm_module.WEBHOOK_ENABLED
 
 
-# Verifies an unedited webhook destination switches the channel off instead of being treated as configured
-def test_a_placeholder_webhook_url_switches_the_channel_off(gm_module, monkeypatch, request, restored_globals):
-    assert webhook_state_after_startup(gm_module, monkeypatch, request, "your_webhook_url") is False
+# Verifies an unedited webhook destination keeps the selected channel unavailable
+def test_a_placeholder_webhook_url_keeps_the_channel_unavailable(gm_module, monkeypatch, request, restored_globals, capsys):
+    assert webhook_state_after_startup(gm_module, monkeypatch, request, "your_webhook_url") is True
+    assert "Notifications (webhook):      Unavailable (WEBHOOK_URL" in capsys.readouterr().out
 
 
 # Verifies a real destination still leaves the webhook channel on

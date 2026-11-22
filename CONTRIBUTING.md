@@ -44,7 +44,7 @@ The default suite is offline. It never contacts GitHub and network calls are rep
 
 CodeQL runs the extended security queries. For a verified false positive, put a `codeql[rule-id]` comment immediately above the reported line and explain why it is safe. The workflow filters results with accepted source suppressions before upload. Other findings remain reportable.
 
-CI runs the same three checks on every push and pull request, across Python 3.10 through 3.14. The linter is pinned in the `lint` extra so a new ruff release cannot fail a build on a rule that did not exist when the change was written; the pre-commit hook pins the same version.
+CI runs the same three checks on every push and pull request, across Python 3.10 through 3.15. The linter is pinned in the `lint` extra so a new ruff release cannot fail a build on a rule that did not exist when the change was written; the pre-commit hook pins the same version.
 
 A change to the monitoring loop, authentication or GitHub data handling is not verified by the offline suite alone. Exercise it against a real account and say so in the pull request, without usernames or credentials.
 
@@ -59,4 +59,4 @@ Pull requests target `dev`. The pull request template lists the checks to report
 
 ## Code style
 
-The codebase favors complete implementations over minimal patches, explicit validation of anything GitHub supplies and one concise summary comment directly above each shared function. Follow the surrounding code rather than introducing a new style.
+Use complete implementations and validate data supplied by GitHub. Place a concise comment immediately before every function and method, including private helpers. Summarize its purpose or contract. Use additional comments for non-obvious constraints and reasons. Follow the surrounding code.

@@ -32,7 +32,7 @@ pip install -r docs/requirements.txt
 mkdocs build --strict
 ```
 
-CI runs all three on every push and pull request, across Python 3.10 through 3.14, and again before anything is published to PyPI.
+CI runs all three on every push and pull request, across Python 3.10 through 3.15, and again before anything is published to PyPI.
 
 <a id="what-is-covered"></a>
 ## What is covered

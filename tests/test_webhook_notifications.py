@@ -35,10 +35,13 @@ class FakeResponse:
         return self.payload
 
 
-# Gives both channels a destination, since the rollup rows report a channel with none as off whatever its alert types are
+# Gives both channels valid local settings for startup and delivery tests
 def configure_channel_destinations(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "SMTP_HOST", "smtp.example.com")
     monkeypatch.setattr(gm_module, "SMTP_PORT", 587)
+    monkeypatch.setattr(gm_module, "SMTP_USER", "sender@example.com")
+    monkeypatch.setattr(gm_module, "SMTP_PASSWORD", "test-password")
+    monkeypatch.setattr(gm_module, "SENDER_EMAIL", "sender@example.com")
     monkeypatch.setattr(gm_module, "RECEIVER_EMAIL", "michal.k@example.com")
     monkeypatch.setattr(gm_module, "WEBHOOK_PROVIDER", "discord")
     monkeypatch.setattr(gm_module, "WEBHOOK_URL", "https://discord.com/api/webhooks/123/private-token")
@@ -56,6 +59,21 @@ def configure_webhook(gm_module, monkeypatch, provider="discord"):
     monkeypatch.setattr(gm_module, "NTFY_ACCESS_TOKEN", "")
     monkeypatch.setattr(gm_module, "WEBHOOK_PROFILE_NOTIFICATION", True)
     monkeypatch.setattr(gm_module, "WEBHOOK_TEMPLATE", {"username": "{username}", "avatar_url": "{avatar_url}", "allowed_mentions": {"parse": []}, "embeds": [{"title": "{title}", "description": "{description}", "color": "{color}", "timestamp": "{timestamp}"}]})
+
+
+# Verifies unavailable automatic channels make no attempt or status line
+def test_unavailable_channels_are_silent(gm_module, monkeypatch, capsys):
+    email = Mock()
+    webhook = Mock()
+    monkeypatch.setattr(gm_module, "SMTP_PASSWORD", "")
+    monkeypatch.setattr(gm_module, "WEBHOOK_ENABLED", True)
+    monkeypatch.setattr(gm_module, "WEBHOOK_URL", "")
+    monkeypatch.setattr(gm_module, "send_email", email)
+    monkeypatch.setattr(gm_module, "send_webhook", webhook)
+    assert gm_module.send_notification_channels("error", "Subject", "Body", email_enabled=True, webhook_enabled=True) == (False, False)
+    email.assert_not_called()
+    webhook.assert_not_called()
+    assert capsys.readouterr().out == ""
 
 
 # Verifies startup summaries use short labels and unstarred bounded continuation lines

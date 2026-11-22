@@ -4,6 +4,8 @@ description: "How to run github_monitor: monitoring and listing modes for reposi
 
 # Usage
 
+Setting flags in these examples apply to that run. Repeat them on later runs or [save the corresponding settings](configuration.md#configuration-file).
+
 <a id="command-format-by-installation-method"></a>
 ## Command Format by Installation Method
 
@@ -52,7 +54,11 @@ github_monitor github_username -j
 
 By default, missing issues, pull requests and discussions are reported as closed only after a separate lookup confirms their closed state. Verification uses at most five extra HTTP requests per monitoring cycle across all repositories, with no automatic retries or redirects. Pending items take turns across cycles. Title and author edits do not count as closures or additions.
 
-Items that remain open, cannot be verified or exceed the budget stay in the previous snapshot, preventing false closure and addition alerts when they reappear. Deleted, transferred or inaccessible items are not reported as closed without confirmation, so their counts can remain unchanged. Set `VERIFY_REPOSITORY_CLOSURES = False` in the configuration file to restore immediate disappearance-based alerts without verification requests.
+Items that remain open, cannot be verified or exceed the budget stay in the previous snapshot, preventing false closure and addition alerts when they reappear. Transferred or inaccessible items are not reported as closed without confirmation, so their counts can remain unchanged.
+
+An item GitHub no longer serves, such as an issue deleted as spam, is confirmed over three cycles and then reported under `Removed` with a `(no longer exists)` note rather than as a closure. The count drops with it. A single failed lookup never drops an item, and no error alert is raised for one that is gone.
+
+Set `VERIFY_REPOSITORY_CLOSURES = False` in the configuration file to restore immediate disappearance-based alerts without verification requests.
 
 By default, only user-owned repos are tracked. To include forks and collaborations, set `GET_ALL_REPOS` to `True` or use the `-a` flag:
 
@@ -306,7 +312,7 @@ It is generally not recommended to use values lower than 10 minutes as new event
 
 `NET_MAX_RETRIES` defaults to 5 and counts the first request as an attempt. `NET_BASE_BACKOFF_SEC` sets the base retry delay and defaults to 5 seconds. GitHub rate-limit headers can specify a different wait. If a monitored feed remains unavailable after its attempts, its previous snapshot is kept and monitoring tries again on the next check.
 
-`VERIFY_REPOSITORY_CLOSURES` defaults to `True`. Missing issues, pull requests and discussions require confirmation of their closed state, with a separate fixed limit of five extra HTTP requests per monitoring cycle across all repositories. These lookups do not use `NET_MAX_RETRIES` or follow redirects. Unverified items stay in the previous snapshot and are checked again on later cycles. Set `VERIFY_REPOSITORY_CLOSURES = False` to restore immediate disappearance-based alerts without verification requests. The verbose/debug startup summary shows the setting and shared budget. The budget shows `Inactive` when repository tracking or verification is disabled. See [Monitoring Mode](usage.md#monitoring-mode).
+`VERIFY_REPOSITORY_CLOSURES` defaults to `True`. Missing issues, pull requests and discussions require confirmation of their closed state, with a separate fixed limit of five extra HTTP requests per monitoring cycle across all repositories. These lookups do not use `NET_MAX_RETRIES` or follow redirects. Unverified items stay in the previous snapshot and are checked again on later cycles. An item the API answers with `404` on three consecutive checks is reported as removed with a `(no longer exists)` note instead of a closure. Set `VERIFY_REPOSITORY_CLOSURES = False` to restore immediate disappearance-based alerts without verification requests. The verbose/debug startup summary shows the setting and shared budget. The budget shows `Inactive` when repository tracking or verification is disabled. See [Monitoring Mode](usage.md#monitoring-mode).
 
 An interval below 30 seconds invites the GitHub rate limiter, which stops the tool seeing anything. `--doctor` warns when the configured interval is that short.
 <a id="liveness-reminder"></a>

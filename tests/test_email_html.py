@@ -60,6 +60,8 @@ def changed_user():
 # Runs the real loop against the scripted lookups and returns every alert it handed to the delivery helper
 def alerts_from_loop(gm_module, monkeypatch, tmp_path, lookups, stop_after, visibility=None, blocked=None):
     captured = []
+    for name, value in (("SMTP_HOST", "smtp.example.com"), ("SMTP_PORT", 587), ("SMTP_USER", "sender@example.com"), ("SMTP_PASSWORD", "test-password"), ("SENDER_EMAIL", "sender@example.com"), ("RECEIVER_EMAIL", "receiver@example.com"), ("WEBHOOK_PROVIDER", "discord"), ("WEBHOOK_URL", "https://discord.com/api/webhooks/123/private-token")):
+        monkeypatch.setattr(gm_module, name, value)
     sleeps = []
     now = [1_800_000_000.0]
 

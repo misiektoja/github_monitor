@@ -104,6 +104,8 @@ def test_repository_snapshot_includes_discussions(gm_module):
 
 # Confirms newly opened discussions generate repository notifications with links
 def test_opened_discussion_sends_repository_notification(gm_module, monkeypatch, capsys):
+    for name, value in (("SMTP_HOST", "smtp.example.com"), ("SMTP_PORT", 587), ("SMTP_USER", "sender@example.com"), ("SMTP_PASSWORD", "test-password"), ("SENDER_EMAIL", "sender@example.com"), ("RECEIVER_EMAIL", "receiver@example.com")):
+        monkeypatch.setattr(gm_module, name, value)
     emails = []
     item = "#7 How should this work? (octocat) [ https://github.example/owner/monitor/discussions/7 ]"
     monkeypatch.setattr(gm_module, "REPO_NOTIFICATION", True)

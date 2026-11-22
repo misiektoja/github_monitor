@@ -27,7 +27,7 @@ It should work on other versions of macOS, Linux, Unix and Windows as well.
 <a id="new-to-python-check-and-install"></a>
 ## New to Python: check and install
 
-Use this section if you are new to Python or do not know what is already installed. The platform sections only prepare Python and `pip`. Everyone then uses the same GitHub Monitor installation and setup commands. GitHub Monitor requires Python 3.10 or newer.
+Use this section if you are new to Python or do not know what is already installed. The platform sections only prepare Python and `pip`. Everyone then uses the same GitHub Monitor installation and setup commands. GitHub Monitor requires Python 3.10 or newer and is currently tested through Python 3.15.
 
 <a id="check-whether-github-monitor-is-already-installed"></a>
 ### Check whether GitHub Monitor is already installed

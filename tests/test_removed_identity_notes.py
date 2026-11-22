@@ -3,6 +3,12 @@
 from types import SimpleNamespace
 
 
+# Gives mocked alert senders valid local settings for tests of message content
+def configure_notifications(gm_module, monkeypatch):
+    for name, value in (("SMTP_HOST", "smtp.example.com"), ("SMTP_PORT", 587), ("SMTP_USER", "sender@example.com"), ("SMTP_PASSWORD", "test-password"), ("SENDER_EMAIL", "sender@example.com"), ("RECEIVER_EMAIL", "receiver@example.com"), ("WEBHOOK_ENABLED", True), ("WEBHOOK_PROVIDER", "discord"), ("WEBHOOK_URL", "https://discord.com/api/webhooks/123/private-token")):
+        monkeypatch.setattr(gm_module, name, value)
+
+
 # Confirms removed_item_note covers each supported list type and stays quiet for other labels
 def test_removed_item_note_variants(gm_module, monkeypatch):
     monkeypatch.setattr(gm_module, "github_account_exists", lambda login: False)
@@ -27,6 +33,7 @@ def test_removed_item_note_requires_confirmed_absence(gm_module, monkeypatch):
 
 # Confirms removed stargazers with deleted accounts are annotated in console output and email HTML
 def test_removed_stargazer_notes_deleted_account(gm_module, monkeypatch, capsys):
+    configure_notifications(gm_module, monkeypatch)
     emails = []
     monkeypatch.setattr(gm_module, "GITHUB_API_URL", "https://api.github.com")
     monkeypatch.setattr(gm_module, "REPO_NOTIFICATION", True)
@@ -41,6 +48,7 @@ def test_removed_stargazer_notes_deleted_account(gm_module, monkeypatch, capsys)
 
 # Confirms webhook alerts carry the deleted-account note in the plain-text body
 def test_removed_stargazer_note_reaches_webhook_body(gm_module, monkeypatch):
+    configure_notifications(gm_module, monkeypatch)
     webhooks = []
     monkeypatch.setattr(gm_module, "GITHUB_API_URL", "https://api.github.com")
     monkeypatch.setattr(gm_module, "webhook_event_enabled", lambda notification_type: True)
