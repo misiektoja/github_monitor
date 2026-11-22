@@ -2,12 +2,19 @@
 
 This is a high-level summary of the most important changes.
 
-# Changes in 2.8.1 (TBD)
+# Changes in 2.9 (22 Nov 2026)
 
-Version **2.8.1** reports unavailable notification channels and skips automatic sends until their settings are fixed. It fixes webhook delivery with non-ASCII custom headers and keeps generated recovery commands usable. Settings guidance explains which options need repeating and Doctor includes selected monitoring options in its start command.
+Version **2.9** adds official support for **Python 3.15**. It reports unavailable notification channels and skips automatic sends until their settings are fixed. A deleted issue, pull request or discussion is reported as removed instead of raising an error alert on every check. It fixes webhook delivery with non-ASCII custom headers and keeps generated recovery commands usable. Settings guidance explains which options need repeating and Doctor includes selected monitoring options in its start command.
+
+**Features and improvements**:
+
+- **IMPROVE:** **Python 3.15 support** - GitHub Monitor is now tested on **Python 3.15** and PyPI lists it as a supported version. Python 3.10 is still the minimum
 
 **Bug fixes**:
 
+- **BUGFIX:** **A deleted issue no longer alerts on every check** - An item GitHub stopped serving, such as an issue deleted as spam, could never be confirmed closed, so every check reported **`GitHub could not find the requested resource`** as a monitoring failure and sent an error alert. Three consecutive missing answers now settle it: the item is listed under **`Removed`** with a **`(no longer exists)`** note, the repository count drops with it and no error alert is sent. A single failed lookup still never drops an item
+- **BUGFIX:** **A deferred closure check no longer flips between failure and recovery** - With more than five unverified items the shared request allowance skips some of them each cycle. A skipped item was read as working again, which sent a recovery alert and then a fresh failure alert on the next check. Its outage now stays open until a lookup answers
+- **BUGFIX:** **Closure notices name the item type** - A notice read **`issues closure verification for owner/repo #11`**, opening a line with an API path segment. It now reads **`Issue closure verification`**, **`Pull request closure verification`** or **`Discussion closure verification`**
 - **BUGFIX:** **Recovery commands and saved settings** - Guidance distinguishes saved settings from command-line options needed on each run. Doctor's monitoring command retains the selected options and shows placeholders for private values. Generated commands keep paths, targets and flags intact when they match stored credentials. Error summaries and technical details still redact credentials
 - **BUGFIX:** **Unavailable notification channels stay quiet** - The startup summary shows **`Unavailable`** and names the missing or invalid local setting. Automatic email and webhook alerts make no send attempt and print no delivery line until that channel is configured. **`Off`** means alerts are disabled for that channel
 - **BUGFIX:** **Custom headers with emoji no longer drop webhook alerts** - A **`WEBHOOK_HEADERS`** value built from a placeholder such as `{title}` failed the whole alert with `'latin-1' codec can't encode character` when the expanded text held emoji or letters outside Latin-1. Such values are now sent RFC 2047 encoded (`=?UTF-8?B?...?=`) and the alert is delivered. ntfy decodes them back to the original text. Other receivers see the encoded form. ASCII values, including ones you already encoded, are sent unchanged
