@@ -198,3 +198,12 @@ def test_the_minimum_python_version_is_declared_once():
     assert min(tuple(int(part) for part in version.split(".")) for version in classifiers) == monitor.MINIMUM_PYTHON_VERSION
     # The startup gate runs before the module is importable, so its message has to read the constant rather than a literal
     assert 'print(f"* Error: Python version {MINIMUM_PYTHON_VERSION_TEXT} or higher required !")' in read_asset("github_monitor.py")
+
+
+# Verifies CI runs the suite on every Python version the packaging metadata declares
+def test_ci_covers_every_declared_python_version():
+    pyproject = read_asset("pyproject.toml")
+    workflow = read_yaml_asset(".github/workflows/tests.yml")
+
+    declared = re.findall(r"Programming Language :: Python :: (\d+\.\d+)", pyproject)
+    assert set(workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]) == set(declared)
